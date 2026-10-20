@@ -1,3 +1,4 @@
+import { isValidScxmlEventDescriptor } from "../../../utils/transitionEventValidation.js";
 import { isNodeInsideContainer } from "../../../utils/editorGeometry";
 import { getTransitionScope } from "../../../utils/transitionScopes";
 import {
@@ -74,6 +75,12 @@ const buildContainerDrawerData = ({
     };
 
     const availableTargetMap = new Map();
+    // Even an empty Parallel must offer external targets for new transitions.
+    if (sourceNode.type === "parallel") {
+        nodes.filter((node) => !isInsideContainer(node.id) &&
+            canTargetVisualNode(sourceNode, node, nodes))
+            .forEach((node) => availableTargetMap.set(node.id, toTargetOption(node)));
+    }
     const transitions = suppliedTransitions
         .map((transition, index) => {
             const logicalSourceNode = nodeById.get(transition.sourceNodeId);
@@ -116,8 +123,8 @@ const buildContainerDrawerData = ({
                 transition.sourceDisplayName ||
                 logicalSourceNode.data?.label ||
                 logicalSourceNode.id;
-            const eventDisplayName =
-                transition.eventDisplayName || `${sourceDisplayName}.${eventId}`;
+            const eventDisplayName = String(existingEdge?.data?.boundaryImportedRawEvent ||
+                transition.eventDisplayName || `${sourceDisplayName}.${eventId}`);
 
             return {
                 transitionId:
@@ -126,7 +133,7 @@ const buildContainerDrawerData = ({
                 edgeId: transition.edgeId || null,
                 sourceNodeId: logicalSourceNode.id,
                 sourceNodeName: sourceDisplayName,
-                event: eventId,
+                event: sourceNode.type === "parallel" ? eventDisplayName : eventId,
                 eventDisplayName,
                 target: transition.targetNodeId || "",
                 originalTarget: transition.targetNodeId || "",
@@ -160,10 +167,16 @@ const buildContainerDrawerData = ({
         initialTransitionId: initialTransition?.transitionId || null,
         initialFocusSection: options?.focusSection || null,
         candidateTransitions: transitions,
-        availableEvents: [],
+        availableEvents: sourceNode.type === "parallel"
+            ? [...new Set(transitions.map(t => t.event))]
+                .filter(isValidScxmlEventDescriptor)
+                .map(id => ({ id, description: "" }))
+            : [],
         availableTargets: [...availableTargetMap.values()],
         targetOnlyMode: true,
+        containerEventMode: sourceNode.type === "parallel",
         containerNodeId: sourceNode.id,
+        defaultScope: { id: sourceNode.id, label: sourceNode.data?.label || sourceNode.id, depth: 0 },
     };
 };
 
@@ -298,7 +311,8 @@ export const buildConditionDrawerData = ({
 
     const eventMap = new Map();
     sourceEvents.forEach((event) => {
-        if (!event?.id || eventMap.has(event.id)) return;
+        if (!isValidScxmlEventDescriptor(event?.id) || event.editorBoundarySynthetic ||
+            event.editorImportedSynthetic || event.sourceNodeId || eventMap.has(event.id)) return;
         eventMap.set(event.id, {
             id: event.id,
             description: event.description || "",
@@ -306,7 +320,7 @@ export const buildConditionDrawerData = ({
     });
     outgoingEdges.forEach((edge) => {
         const eventId = edge.sourceHandle || edge.label;
-        if (!eventId || eventMap.has(eventId)) return;
+        if (!isValidScxmlEventDescriptor(eventId) || eventMap.has(eventId)) return;
         eventMap.set(eventId, { id: eventId, description: "" });
     });
 

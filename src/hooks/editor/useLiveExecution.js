@@ -1,7 +1,9 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { getExportFullSkillName, getSharedScxmlStateKey } from "../../utils/editorScxml.js";
 import { isEditorCloneNode } from "../../utils/editorClones.js";
+import { findRuntimeTransitionEdgeIds } from "../../utils/runtimeTransitionMatching.js";
 import { useDerivedGraphSnapshot } from "../graph/useEditorGraphMaintenance.js";
+import { getActiveParallelViews, getExitedParallelKeys, parallelOf, firstActiveSubMachine } from "../../utils/runtimeParallelContexts.js";
 
 const EMPTY = [];
 const MAX_CONTEXTS = 256;
@@ -49,7 +51,8 @@ function compileDocument(tab) {
         const group = groupByNodeId.get(node.data.cloneOfNodeId);
         if (group) group.visualIds.push(node.id);
     });
-    return { tab, byId, groups: [...groups.values()] };
+    return { tab, byId, groups: [...groups.values()],
+        containers: nodes.filter((node) => ["parallel", "parallelLane", "compound"].includes(node.type)) };
 }
 
 function sourceMatchesFile(source, parent, child, includeMapping) {
@@ -94,11 +97,20 @@ function compileContexts(workflow, tabsSnapshot) {
     duplicates.forEach((id) => documents.delete(id));
     const contexts = [{ document: documents.get(workflow.id), suffix: "", parent: null, wrapper: null }];
     const states = new Map();
+    const containerStates = new Map();
     const wrappers = [];
     // An invocation is a context, not a tab: the same child file can be invoked
     // more than once. Exact source + parent links prove association, not titles.
     for (let index = 0; index < contexts.length; index += 1) {
         const context = contexts[index];
+        context.document.containers.forEach((node) => {
+            const identity = text(node.data?.scxmlStateId || node.data?.label || node.id);
+            const id = runnerId(identity + context.suffix);
+            if (!id) return;
+            if (!containerStates.has(id)) containerStates.set(id, []);
+            containerStates.get(id).push({ context, group: { id: node.id,
+                identity, type: node.type, visualIds: [node.id] } });
+        });
         context.document.groups.forEach((group) => {
             if (group.type === "custom" && !group.src) {
                 const id = runnerId(group.identity + context.suffix);
@@ -119,7 +131,7 @@ function compileContexts(workflow, tabsSnapshot) {
             }
         });
     }
-    return { workflow, contexts, states, wrappers };
+    return { workflow, contexts, states, containerStates, wrappers };
 }
 
 function projectEntry(entry, tabId, validTabs, visibleById) {
@@ -149,7 +161,7 @@ function projectLive(previous, model, stateIds, validTabs, activeTabId, visibleN
     const unresolvedStates = [];
     const entries = [];
     stateIds.forEach((id) => {
-        const matches = model?.states.get(id) || EMPTY;
+        const matches = model?.states.get(id) || model?.containerStates.get(id) || EMPTY;
         if (matches.length === 1) entries.push(matches[0]);
         else {
             unresolvedStates.push(id);
@@ -190,8 +202,11 @@ function projectLive(previous, model, stateIds, validTabs, activeTabId, visibleN
         !entries.some((entry) => entry.contextual || entry.context !== entries[0].context);
     let target = uniqueContext ? entries[0].context : null;
     while (target && !contextValid(target, validTabs)) target = target.parent;
+    // An active child view must not be pulled back to the root merely because
+    // another Parallel lane is running in a different invocation context.
+    const currentViewActive = entries.some((entry) => entry.context.document.tab.id === activeTabId);
     return { nodes, painted, cameraIds: [...camera].sort(), unresolvedStates,
-        targetTabId: target?.document.tab.id || model?.workflow.id };
+        targetTabId: currentViewActive ? activeTabId : target?.document.tab.id || model?.workflow.id };
 }
 
 /** Read-only, loaded-version-bound active-runner paint and optional camera follow.
@@ -225,8 +240,10 @@ export function useLiveExecution({
             !atLoad.has(tab.id) && !tab.isModified && tab.fingerprint === tab.savedFingerprint)];
         return compileContexts(workflow, available);
     }, [workflow, tabsSnapshot, tabs]);
-    const statesKey = JSON.stringify([...new Set((liveExecution?.snapshot?.currentStates || EMPTY)
-        .map(runnerId).filter(Boolean))].sort());
+    // Preserve WebSocket entry order for deterministic first-lane following.
+    const orderedStates = [...new Set((liveExecution?.snapshot?.currentStates || EMPTY)
+        .map(runnerId).filter(Boolean))];
+    const statesKey = JSON.stringify(orderedStates);
     const validTabs = useMemo(() => {
         const result = new Set();
         const currentTabs = new Map(tabs.map((tab) => [tab.id, tab]));
@@ -247,38 +264,165 @@ export function useLiveExecution({
     const liveActive = rootValid && Boolean(model?.contexts.some((context) =>
         context.document.tab.id === activeTabId && contextValid(context, validTabs))) &&
         following && ["RUNNING", "PAUSED"].includes(status);
+    const transition = liveExecution?.snapshot?.transition;
+    const transitions = liveExecution?.snapshot?.transitions?.length
+        ? liveExecution.snapshot.transitions : transition ? [transition] : EMPTY;
+    const parallelViews = useMemo(() => {
+        const snapshot = liveExecution?.snapshot || {};
+        return getActiveParallelViews(model, orderedStates, {
+            exitingStates: snapshot.exitingStates,
+            completedStates: snapshot.finishedStates || snapshot.completedStates,
+            exitedParallelKeys: getExitedParallelKeys(model, snapshot.transitions),
+        });
+    }, [model, statesKey, liveExecution?.snapshot?.exitingStates,
+        liveExecution?.snapshot?.finishedStates, liveExecution?.snapshot?.completedStates,
+        liveExecution?.snapshot?.transitions]);
+    const focusedParallel = parallelViews.find((view) => !view.exiting && view.context.document.tab.id === activeTabId);
+    const activeTransition = useMemo(() => {
+        if (!transitions.length || !model || !liveActive) return null;
+        const find = (state) => {
+            const matches = model.states.get(runnerId(state)) || model.containerStates.get(runnerId(state)) || EMPTY;
+            if (matches.length === 1) return matches[0];
+            const stateId = runnerId(state);
+            const context = model.contexts.find((entry) => entry.document.tab.id === activeTabId);
+            const candidates = [...(context?.document.byId.values() || [])].filter((node) =>
+                [node.data?.scxmlStateId, node.data?.fullSkillName, node.data?.label, node.id]
+                    .some((value) => runnerId(value) === stateId));
+            return candidates.length === 1 ? { context, group: { visualIds: [candidates[0].id] } } : null;
+        };
+        const ids = new Set();
+        const sourceIds = new Set();
+        const targetIds = new Set();
+        for (const item of transitions) {
+            const source = find(item.source);
+            const target = find(item.target);
+            if (!source || !target || source.context.document.tab.id !== activeTabId) continue;
+            const from = new Set(source.group.visualIds);
+            const to = new Set(target.group.visualIds);
+            findRuntimeTransitionEdgeIds(visibleEdges, from, to, item).forEach((id) => ids.add(id));
+            from.forEach((id) => sourceIds.add(id));
+            to.forEach((id) => targetIds.add(id));
+        }
+        return { ids, cameraIds: [...new Set([...sourceIds, ...targetIds])], sourceIds, targetIds };
+    }, [transitions, model, liveActive, activeTabId, visibleEdges]);
+    const runtimeEdges = useMemo(() => {
+        if (!activeTransition?.ids.size) return visibleEdges;
+        return visibleEdges.map((edge) => activeTransition.ids.has(edge.id) ? {
+            ...edge, className: [...new Set(`${edge.className || ""} runtime-live-active-edge`.split(/\s+/))].join(" "),
+            animated: true,
+            markerEnd: edge.markerEnd ? { ...edge.markerEnd, color: "#eab308" } : edge.markerEnd,
+        } : edge);
+    }, [visibleEdges, activeTransition]);
     const projection = useDerivedGraphSnapshot(
         [model, statesKey, validTabs, activeTabId, visibleNodes, liveActive],
         (previous) => projectLive(previous, model, JSON.parse(statesKey), validTabs, activeTabId, visibleNodes, liveActive),
     );
+    const runtimeNodes = useMemo(() => {
+        if (!activeTransition?.ids.size) return projection.nodes;
+        return projection.nodes.map((node) => {
+            if (!activeTransition.sourceIds.has(node.id) && !activeTransition.targetIds.has(node.id)) return node;
+            // Transition focus is a second overlay. Never remove the active
+            // state highlight while decorating its incoming/outgoing edge.
+            const existing = String(node.className || "").split(/\s+/).filter(Boolean);
+            existing.push(activeTransition.sourceIds.has(node.id)
+                ? "runtime-live-transition-source" : "runtime-live-transition-target");
+            return { ...node, className: existing.join(" ") };
+        });
+    }, [projection.nodes, activeTransition]);
     const wantsCamera = following && Boolean(liveExecution?.followCamera) && status === "RUNNING";
     const action = liveExecution?.action;
     const followRef = useRef({ model: null, statesKey: null, enabled: false, pending: null });
-    const attemptedOpenRef = useRef({ workflow: null, keys: new Set() });
+    const attemptedOpenRef = useRef({ workflow: null, keys: new Set(), parallelLocks: new Map(), manualTab: false,
+        lastTab: null, expectedTab: null });
+    const activeSubMachines = useMemo(() => model?.wrappers.map((wrapper) => {
+        const matchingStates = orderedStates.filter((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix));
+        if (!matchingStates.length) return null;
+        const parallel = parallelOf(wrapper.context, wrapper.group.id);
+        return { key: `${wrapper.context.suffix}:${wrapper.group.id}`, src: wrapper.group.src,
+            identity: wrapper.group.identity, name: wrapper.group.identity.split(".").at(-1),
+            parallelKey: parallel?.key || null, parallelName: parallel?.node.data?.label || "",
+            lane: parallel?.lane?.data?.label || "", activeStates: matchingStates };
+    }).filter(Boolean) || [], [model, statesKey]);
 
     useLayoutEffect(() => {
-        if (attemptedOpenRef.current.workflow !== workflow) {
-            attemptedOpenRef.current = { workflow, keys: new Set() };
+        const navigation = attemptedOpenRef.current;
+        if (navigation.workflow !== workflow) {
+            attemptedOpenRef.current = { workflow, keys: new Set(), parallelLocks: new Map(),
+                manualTab: false, lastTab: activeTabId, expectedTab: null };
         }
+        const nav = attemptedOpenRef.current;
+        if (nav.lastTab !== null && nav.lastTab !== activeTabId) {
+            // Switching tabs manually takes precedence until a new Parallel run.
+            if (nav.expectedTab !== "*" && nav.expectedTab !== activeTabId) nav.manualTab = true;
+            nav.expectedTab = null;
+        }
+        nav.lastTab = activeTabId;
+        const currentStates = orderedStates;
+        const activeKeys = new Set(parallelViews.map((view) => view.key));
+        for (const key of nav.parallelLocks.keys()) {
+            if (!activeKeys.has(key)) nav.parallelLocks.delete(key);
+        }
+        if (!activeKeys.size) nav.manualTab = false;
         if (!following || status !== "RUNNING" || suspendFollow || !rootValid || !model) return;
-        const currentStates = JSON.parse(statesKey);
 
-        // A user-selected "Highlight only" mode never switches tabs, even if
-        // automatic child navigation is enabled.
-        if (wantsCamera && liveExecution?.autoOpenSubMachines && onOpenSubMachine) {
+        // When the followed invocation has finished, return to its Parallel.
+        // Do NOT jump to a different lane, and do not override manual tabs.
+        for (const [key, suffix] of nav.parallelLocks) {
+            if (nav.manualTab || currentStates.some((state) =>
+                state.length > suffix.length && state.endsWith(suffix))) continue;
+            const owner = parallelViews.find((view) => view.key === key);
+            if (owner && !owner.exiting && activeTabId !== owner.context.document.tab.id && switchTab) {
+                nav.expectedTab = owner.context.document.tab.id;
+                switchTab(nav.expectedTab);
+                return;
+            }
+        }
+
+        // Pick the first entered sourced state machine in a Parallel, based on
+        // the WebSocket state-entry order. Once selected, other lanes cannot
+        // steal navigation even when the first lane finishes earlier.
+        if (wantsCamera && liveExecution?.autoOpenSubMachines && onOpenSubMachine && !nav.manualTab) {
+            const history = liveExecution?.snapshot?.stateEntryHistory || [];
+            for (const view of parallelViews) {
+                if (nav.parallelLocks.has(view.key) || view.exiting) continue;
+                // Restrict the history to the current entry of this Parallel:
+                // earlier invocations must never claim the followed lane.
+                const label = runnerId(view.node.data?.scxmlStateId || view.node.data?.label || view.node.id)
+                    + view.context.suffix;
+                const index = history.findLastIndex((item) => runnerId(item.state) === label);
+                const candidates = (index < 0 ? history : history.slice(index + 1)).map((item) => runnerId(item.state));
+                const first = firstActiveSubMachine(model, candidates.length ? candidates : currentStates, view.key);
+                if (first) nav.parallelLocks.set(view.key, first.wrapper.suffix);
+            }
             const wrappers = model.wrappers.filter((wrapper) =>
                 wrapper.context.document.tab.id === activeTabId &&
                 contextValid(wrapper.context, validTabs) &&
-                !model.contexts.some((ctx) => ctx.parent === wrapper.context && ctx.wrapper === wrapper.group) &&
-                currentStates.some((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix)));
-            // Require one unambiguous wrapper at the deepest matching suffix.
-            const longest = Math.max(0, ...wrappers.map((wrapper) => wrapper.suffix.length));
-            const matching = wrappers.filter((wrapper) => wrapper.suffix.length === longest);
-            if (matching.length === 1) {
-                const wrapper = matching[0];
+                currentStates.some((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix)) &&
+                // Already entered a child invocation? Don't reopen its wrapper.
+                !model.contexts.some((ctx) => ctx.parent === wrapper.context && ctx.wrapper === wrapper.group));
+            const eligible = wrappers.filter((wrapper) => {
+                const owner = parallelOf(wrapper.context, wrapper.group.id);
+                if (!owner) return true; // Outside Parallels, retain normal auto-open.
+                const lock = nav.parallelLocks.get(owner.key);
+                // A nested invocation in the chosen branch has the selected
+                // suffix as its own suffix tail.
+                return lock && wrapper.suffix.endsWith(lock);
+            });
+            // Chronological priority first, deeper invocation only on the
+            // already-followed branch; never open two siblings simultaneously.
+            eligible.sort((a, b) => {
+                const order = (wrapper) => currentStates.findIndex((state) =>
+                    state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix));
+                return order(a) - order(b) || b.suffix.length - a.suffix.length;
+            });
+            const wrapper = eligible[0];
+            if (wrapper) {
                 const key = `${activeTabId}:${wrapper.group.id}:${wrapper.suffix}`;
-                if (!attemptedOpenRef.current.keys.has(key)) {
-                    attemptedOpenRef.current.keys.add(key);
+                if (!nav.keys.has(key)) {
+                    nav.keys.add(key);
+                    // The child is opened by the existing navigation callback;
+                    // don't concurrently switch tabs based on other lanes.
+                    nav.expectedTab = "*";
                     void onOpenSubMachine(wrapper.group.src, wrapper.group.identity, { runtimeNavigation: true });
                 }
             }
@@ -290,7 +434,7 @@ export function useLiveExecution({
         if (onExpandContainer && (liveExecution?.autoExpandCompounds || liveExecution?.autoExpandParallels)) {
             const toExpand = new Set();
             currentStates.forEach((state) => {
-                const matches = model.states.get(state) || EMPTY;
+                const matches = model.states.get(state) || model.containerStates.get(state) || EMPTY;
                 if (matches.length !== 1) return;
                 const entry = matches[0];
                 if (entry.context.document.tab.id !== activeTabId || !contextValid(entry.context, validTabs)) return;
@@ -311,11 +455,14 @@ export function useLiveExecution({
         }
     }, [workflow, following, status, suspendFollow, rootValid, model, statesKey,
         wantsCamera, liveExecution?.autoOpenSubMachines, liveExecution?.autoExpandCompounds,
-        liveExecution?.autoExpandParallels, activeTabId, validTabs, onOpenSubMachine, onExpandContainer]);
+        liveExecution?.autoExpandParallels, activeTabId, validTabs, onOpenSubMachine, onExpandContainer,
+        parallelViews, switchTab]);
 
     useLayoutEffect(() => {
         const follow = followRef.current;
-        const changed = follow.model !== model || follow.statesKey !== statesKey;
+        const changed = follow.model !== model || follow.statesKey !== statesKey ||
+            follow.focusRequest !== liveExecution?.focusRequest;
+        follow.focusRequest = liveExecution?.focusRequest;
         const explicitlyEnabled = wantsCamera && (!follow.enabled ||
             (action !== follow.action && ["start", "resume"].includes(action)));
         follow.model = model;
@@ -350,15 +497,17 @@ export function useLiveExecution({
             });
             frames.add(frame);
         };
-        if (projection.targetTabId && projection.targetTabId !== activeTabId && switchTab) {
+        if (!parallelViews.length && projection.targetTabId && projection.targetTabId !== activeTabId && switchTab) {
             schedule(() => {
                 request.expectedTabId = projection.targetTabId;
                 switchTab(projection.targetTabId);
             });
-        } else if (projection.cameraIds.length && fitView) {
+        } else if ((focusedParallel || activeTransition?.cameraIds.length || projection.cameraIds.length) && fitView) {
             const fit = () => {
                 follow.pending = null;
-                fitView({ nodes: projection.cameraIds.map((id) => ({ id })), padding: 0.55, duration: 320, maxZoom: 1.15 });
+                const ids = focusedParallel ? [focusedParallel.node.id]
+                    : activeTransition?.cameraIds.length ? activeTransition.cameraIds : projection.cameraIds;
+                fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55, duration: 320, maxZoom: 1.15 });
             };
             // Tab restoration owns two frames; fit after its viewport restore.
             schedule(() => arrived ? schedule(fit) : fit());
@@ -368,8 +517,11 @@ export function useLiveExecution({
             frames.forEach((frame) => window.cancelAnimationFrame(frame));
         };
     }, [model, statesKey, wantsCamera, action, liveActive, rootValid, activeTabId,
-        activeDocumentGeneration, activeFingerprint, suspendFollow, projection, fitView, switchTab, getActiveDocumentIdentity]);
+        activeDocumentGeneration, activeFingerprint, suspendFollow, projection, activeTransition,
+        liveExecution?.focusRequest, fitView, switchTab, getActiveDocumentIdentity, focusedParallel?.key,
+        parallelViews.length]);
 
-    return { liveVisibleNodes: projection.nodes, liveVisibleEdges: visibleEdges,
-        liveActive, unresolvedStates: projection.unresolvedStates };
+    return { liveVisibleNodes: runtimeNodes, liveVisibleEdges: runtimeEdges,
+        liveActive, unresolvedStates: projection.unresolvedStates, runtimeParallelViews: parallelViews,
+        runtimeActiveSubMachines: activeSubMachines };
 }

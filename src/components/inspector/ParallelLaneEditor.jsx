@@ -1,5 +1,5 @@
 import { memo, useRef, useState } from "react";
-import { FiArrowDown, FiArrowUp, FiPlus, FiTrash2 } from "react-icons/fi";
+import { FiArrowDown, FiArrowUp, FiPlus, FiTrash2, FiMenu } from "react-icons/fi";
 
 const ParallelLaneRow = memo(function ParallelLaneRow({
                              lane,
@@ -8,6 +8,12 @@ const ParallelLaneRow = memo(function ParallelLaneRow({
                              onRename,
                              onMove,
                              onDelete,
+                             draggedLaneId,
+                             dropPosition,
+                             onDragStart,
+                             onDragOver,
+                             onDrop,
+                             onDragEnd,
                          }) {
     const laneLabel = String(lane?.data?.label || `Lane_${index + 1}`);
     const [draft, setDraft] = useState({ source: laneLabel, value: laneLabel, committed: laneLabel });
@@ -31,10 +37,29 @@ const ParallelLaneRow = memo(function ParallelLaneRow({
     const childCount = Number(lane?.childCount || 0);
 
     return (
-        <div className="parallel-lane-editor-card">
+        <div
+            className={`parallel-lane-editor-card ${draggedLaneId === lane.id ? "dragging" : ""} ${dropPosition?.laneId === lane.id ? `drop-${dropPosition.placement}` : ""}`}
+            onDragOver={(event) => onDragOver?.(event, lane.id)}
+            onDrop={(event) => onDrop?.(event, lane.id)}
+            onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget)) onDragOver?.(null, lane.id);
+            }}
+        >
             <div className="parallel-lane-editor-index" aria-hidden="true">
                 {index + 1}
             </div>
+            <span
+                className="parallel-lane-drag-handle"
+                role="button"
+                tabIndex={-1}
+                draggable
+                title={`Drag to reorder ${laneLabel}`}
+                aria-label={`Drag to reorder ${laneLabel}`}
+                onDragStart={(event) => onDragStart?.(event, lane.id)}
+                onDragEnd={onDragEnd}
+            >
+                <FiMenu size={14} />
+            </span>
 
             <div className="parallel-lane-editor-main">
                 <div className="parallel-lane-editor-label-row">
@@ -116,6 +141,40 @@ function ParallelLaneEditor({
                                 onMove,
                                 onDelete,
                             }) {
+    const [draggedLaneId, setDraggedLaneId] = useState(null);
+    const [dropPosition, setDropPosition] = useState(null);
+    const onDragStart = (event, laneId) => {
+        event.stopPropagation();
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", laneId);
+        setDraggedLaneId(laneId);
+    };
+    const onDragOver = (event, laneId) => {
+        if (!event || !draggedLaneId || draggedLaneId === laneId) {
+            setDropPosition(null);
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = "move";
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const placement = event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+        setDropPosition((previous) => previous?.laneId === laneId && previous.placement === placement
+            ? previous : { laneId, placement });
+    };
+    const onDrop = (event, laneId) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const sourceId = draggedLaneId;
+        const placement = dropPosition?.laneId === laneId ? dropPosition.placement : "after";
+        setDraggedLaneId(null);
+        setDropPosition(null);
+        if (sourceId && sourceId !== laneId) onMove?.(sourceId, { targetLaneId: laneId, placement });
+    };
+    const onDragEnd = () => {
+        setDraggedLaneId(null);
+        setDropPosition(null);
+    };
     return (
         <section className="parallel-lane-editor">
             <div className="parallel-lane-editor-header">
@@ -149,6 +208,12 @@ function ParallelLaneEditor({
                         onRename={onRename}
                         onMove={onMove}
                         onDelete={onDelete}
+                        draggedLaneId={draggedLaneId}
+                        dropPosition={dropPosition}
+                        onDragStart={onDragStart}
+                        onDragOver={onDragOver}
+                        onDrop={onDrop}
+                        onDragEnd={onDragEnd}
                     />
                 ))}
 

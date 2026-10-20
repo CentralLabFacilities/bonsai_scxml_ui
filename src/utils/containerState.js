@@ -1,9 +1,13 @@
+import { traceResizeForContainer, traceResizeNodeMutation } from "./resizeDiagnostics.js";
 import {
     COLLAPSED_CONTAINER_HEIGHT,
     COLLAPSED_CONTAINER_WIDTH,
     PARALLEL_BOTTOM_PADDING,
     PARALLEL_HEADER_HEIGHT,
     layoutStateContainerForExpansion,
+    measureParallelMinimumSize,
+    getNodeSize,
+    growAllStateContainersToContents,
 } from "./editorGeometry.js";
 
 export function getContainerExitEvents(data, type) {
@@ -38,50 +42,162 @@ export function getContainerExitEvents(data, type) {
     return uniqueEvents;
 }
 
-export function resizeParallelLanes(nodes, parallelId, width, height) {
+// Group boundary ports by target (stable order within each group). Each event
+// retains its own handle ID; merging handles would corrupt edge references.
+export function getCollapsedBoundaryLayout(events = []) {
+    const groups = new Map();
+    events.forEach((event) => {
+        const target = String(event?.target || "");
+        if (!groups.has(target)) groups.set(target, []);
+        groups.get(target).push(event);
+    });
+    let y = 47;
+    const positions = new Map();
+    for (const group of groups.values()) {
+        for (const event of group) {
+            positions.set(event.id, y);
+            y += 24;
+        }
+        y += 9;
+    }
+    return {
+        positions,
+        height: Math.max(COLLAPSED_CONTAINER_HEIGHT, groups.size ? y + 10 : COLLAPSED_CONTAINER_HEIGHT),
+    };
+}
+
+/**
+ * Cheap geometry projection during a NodeResizer gesture. React Flow has
+ * already supplied the new parallel rectangle; only its structural lane
+ * frames (and historical automatic wrappers) need to follow it. Never run
+ * intrinsic-size measurement, content fitting or transition routing here.
+ * The content-aware minimum is enforced by resizeParallelLanes on release.
+ */
+export function followParallelResizeGesture(nodes, parallelId, width, height) {
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return nodes;
+    const parallel = nodes.find((node) => node.id === parallelId && node.type === "parallel");
+    if (!parallel) return nodes;
+    const lanes = nodes
+        .filter((node) => node.type === "parallelLane" && node.parentId === parallelId)
+        .sort((a, b) => (a.position?.y || 0) - (b.position?.y || 0));
+    if (!lanes.length) return nodes;
+
+    const laneFloor = 90;
+    const available = Math.max(0, height - PARALLEL_HEADER_HEIGHT - PARALLEL_BOTTOM_PADDING);
+    const extra = Math.max(0, available - lanes.length * laneFloor);
+    const weights = lanes.map((lane) => Math.max(0, getNodeSize(lane).height - laneFloor));
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    const frames = new Map();
+    let y = PARALLEL_HEADER_HEIGHT;
+    lanes.forEach((lane, index) => {
+        const laneHeight = laneFloor + extra * (totalWeight > 0 ? weights[index] / totalWeight : 1 / lanes.length);
+        frames.set(lane.id, { width, height: laneHeight, x: 0, y });
+        y += laneHeight;
+    });
+
+    let changed = false;
+    const result = nodes.map((node) => {
+        const lane = frames.get(node.id);
+        const parentLane = frames.get(node.parentId);
+        const isWrapper = parentLane && node.type === "compound" &&
+            (node.data?.autoParallelLaneCompound || node.className === "compound-in-lane");
+        const frame = lane || (isWrapper ? { width: parentLane.width, height: parentLane.height, x: 0, y: 0 } : null);
+        if (node.id === parallelId) {
+            if (node.width === width && node.height === height &&
+                node.style?.width === width && node.style?.height === height) return node;
+            changed = true;
+            return { ...node, width, height, style: { ...node.style, width, height } };
+        }
+        if (!frame) return node;
+        if (node.width === frame.width && node.height === frame.height &&
+            node.style?.width === frame.width && node.style?.height === frame.height &&
+            node.position?.x === frame.x && node.position?.y === frame.y &&
+            node.expandParent === false && node.extent !== "parent") return node;
+        changed = true;
+        const { extent, ...withoutExtent } = node;
+        return {
+            ...withoutExtent,
+            expandParent: false,
+            width: frame.width,
+            height: frame.height,
+            style: { ...node.style, width: frame.width, height: frame.height },
+            position: { ...node.position, x: frame.x, y: frame.y },
+        };
+    });
+    return changed ? result : nodes;
+}
+
+export function resizeParallelLanes(nodes, parallelId, width, height, cachedMinimum = null) {
     const lanes = nodes
         .filter((node) => node.parentId === parallelId && node.type === "parallelLane")
         .sort((a, b) => Number(a.position?.y || 0) - Number(b.position?.y || 0));
-
     if (lanes.length === 0) return nodes;
 
-    const minLaneHeight = 90;
-    const firstLaneY = Math.max(
-        PARALLEL_HEADER_HEIGHT,
-        Number(lanes[0].position?.y || PARALLEL_HEADER_HEIGHT)
-    );
-    const availableHeight = Math.max(
-        lanes.length * minLaneHeight,
-        height - firstLaneY - PARALLEL_BOTTOM_PADDING
-    );
-    const oldHeights = lanes.map((lane) => Number(lane.style?.height) || minLaneHeight);
-    const oldTotalHeight = oldHeights.reduce((sum, laneHeight) => sum + laneHeight, 0);
+    // This is the release-time content-aware fit. The pointer hot path uses
+    // followParallelResizeGesture() and never measures descendant subtrees.
+    const minimum = cachedMinimum || measureParallelMinimumSize(nodes, parallelId);
+    if (!minimum) return nodes;
+    const actualWidth = Math.max(Number(width) || 0, minimum.width);
+    const actualHeight = Math.max(Number(height) || 0, minimum.height);
+    traceResizeForContainer(parallelId, 'geometry:resizeParallelLanes:constraints', {
+        requested: { width, height },
+        minimum: { width: minimum.width, height: minimum.height },
+        actual: { width: actualWidth, height: actualHeight },
+        existingLaneWidths: lanes.map((lane) => ({
+            id: lane.id, width: getNodeSize(lane).width,
+        })),
+    });
+    const firstLaneY = PARALLEL_HEADER_HEIGHT;
+    const minimumHeights = lanes.map((lane) => minimum.laneHeights.get(lane.id) || 90);
+    const contentHeight = minimumHeights.reduce((sum, h) => sum + h, 0);
+    const availableHeight = actualHeight - firstLaneY - PARALLEL_BOTTOM_PADDING;
+    const surplus = Math.max(0, availableHeight - contentHeight);
+    const oldExtra = lanes.map((lane, index) => Math.max(0, getNodeSize(lane).height - minimumHeights[index]));
+    const totalOldExtra = oldExtra.reduce((sum, value) => sum + value, 0);
     let nextY = firstLaneY;
-    const laneGeometry = new Map();
-
+    const geometryById = new Map();
     lanes.forEach((lane, index) => {
-        const proportionalHeight = oldTotalHeight > 0
-            ? (availableHeight * oldHeights[index]) / oldTotalHeight
-            : availableHeight / lanes.length;
-        const laneHeight = index === lanes.length - 1
-            ? Math.max(minLaneHeight, firstLaneY + availableHeight - nextY)
-            : Math.max(minLaneHeight, proportionalHeight);
-
-        laneGeometry.set(lane.id, { y: nextY, width, height: laneHeight });
+        const extra = surplus * (totalOldExtra > 0 ? oldExtra[index] / totalOldExtra : 1 / lanes.length);
+        const laneHeight = minimumHeights[index] + extra;
+        geometryById.set(lane.id, { y: nextY, width: actualWidth, height: laneHeight });
         nextY += laneHeight;
     });
 
-    return nodes.map((node) => {
-        const geometry = laneGeometry.get(node.id);
-        if (!geometry) return node;
+    const result = nodes.map((node) => {
+        if (node.id === parallelId) {
+            return {
+                ...node,
+                width: actualWidth,
+                height: actualHeight,
+                style: { ...(node.style || {}), width: actualWidth, height: actualHeight },
+            };
+        }
+        const geometry = geometryById.get(node.id);
+        if (geometry) {
+            return {
+                ...node,
+                // Lane frames cannot expand the parallel back to their previous
+                // size while the parallel itself is being shrunk.
+                expandParent: false,
+                width: geometry.width,
+                height: geometry.height,
+                position: { ...node.position, x: 0, y: geometry.y },
+                style: { ...node.style, width: geometry.width, height: geometry.height },
+            };
+        }
+        const parentGeometry = geometryById.get(node.parentId);
+        if (!parentGeometry || node.type !== "compound" ||
+            !(node.data?.autoParallelLaneCompound || node.className === "compound-in-lane")) return node;
         return {
             ...node,
-            width: geometry.width,
-            height: geometry.height,
-            position: { ...node.position, x: 0, y: geometry.y },
-            style: { ...node.style, width: geometry.width, height: geometry.height },
+            width: parentGeometry.width,
+            height: parentGeometry.height,
+            position: { x: 0, y: 0 },
+            style: { ...node.style, width: parentGeometry.width, height: parentGeometry.height },
         };
     });
+    traceResizeNodeMutation('geometry:resizeParallelLanes:output', nodes, result);
+    return result;
 }
 
 export function toggleContainerCollapse(nodes, containerId) {
@@ -97,7 +213,7 @@ export function toggleContainerCollapse(nodes, containerId) {
         : COLLAPSED_CONTAINER_WIDTH;
     const height = isCollapsed
         ? Number(savedSize.height) || defaultHeight
-        : COLLAPSED_CONTAINER_HEIGHT;
+        : getCollapsedBoundaryLayout(getContainerExitEvents(container.data || {}, container.type)).height;
     const style = { ...(container.style || {}), width, height };
 
     if (!isCollapsed) {
@@ -119,7 +235,9 @@ export function toggleContainerCollapse(nodes, containerId) {
 
     const nextNodes = nodes.map((node) => node.id === containerId ? { ...node, width, height, style, data } : node);
     // Expansion must settle descendants before fitting the restored frame.
-    return isCollapsed ? layoutStateContainerForExpansion(nextNodes, containerId) : nextNodes;
+    return isCollapsed
+        ? layoutStateContainerForExpansion(nextNodes, containerId)
+        : growAllStateContainersToContents(nextNodes);
 }
 
 export function getParallelLaneSummaries(node, childrenByParent) {

@@ -166,6 +166,15 @@ export default function CanvasContextMenu({ contextMenu, activeMode, hasGraphCli
                         </>
                     )}
 
+                    {contextMenu.canResizeContainer && (
+                        <button
+                            className="context-menu-item"
+                            onClick={() => handleSelectAction("resize-container")}
+                        >
+                            Resize
+                        </button>
+                    )}
+
                     {(contextMenu.canCreateReference || contextMenu.canAddState || contextMenu.canAddLane) && (
                         <div className="context-menu-divider" aria-hidden="true" />
                     )}

@@ -1,8 +1,9 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 
 import { getCollapsedTransitionSource } from "../../utils/editorGraph.js";
-import { toggleContainerCollapse as expandRuntimeContainer } from "../../utils/containerState.js";
+import { getCollapsedBoundaryLayout, getContainerExitEvents, toggleContainerCollapse as expandRuntimeContainer } from "../../utils/containerState.js";
 import { getLocalDataModelEntries } from "../../utils/editorScxml.js";
+import { growAllStateContainersToContents } from "../../utils/editorGeometry.js";
 import { useDerivedGraphSnapshot, useSemanticNodeSnapshot } from "./useEditorGraphMaintenance.js";
 
 export function projectOutgoingTransitionHandles(previous, edges) {
@@ -46,8 +47,10 @@ function useNodeActionForwarders(handlers) {
     const onOpenTransition = useCallback((...args) => handlersRef.current.handleOpenTransition?.(...args), []);
     const onOpenSubMachine = useCallback((...args) => handlersRef.current.handleOpenSubMachine?.(...args), []);
     const onToggleCollapse = useCallback((...args) => handlersRef.current.handleToggleContainerCollapse?.(...args), []);
+    const onContainerResizeStart = useCallback((...args) => handlersRef.current.onContainerResizeStart?.(...args), []);
+    const onContainerResizeEnd = useCallback((...args) => handlersRef.current.onContainerResizeEnd?.(...args), []);
     return { onAddLane, onOpenStateActions, onOpenParameter, onOpenSlot,
-        onOpenTransition, onOpenSubMachine, onToggleCollapse };
+        onOpenTransition, onOpenSubMachine, onToggleCollapse, onContainerResizeStart, onContainerResizeEnd };
 }
 
 /**
@@ -73,6 +76,9 @@ export function useEditorPresentationGraph({
     handleOpenTransition,
     handleOpenSubMachine,
     handleToggleContainerCollapse,
+    onContainerResizeStart,
+    onContainerResizeEnd,
+    resizingContainerId = null,
 }) {
     // Clone the *full* editor nodes when revealing containers. The semantic
     // snapshot intentionally omits positions and dimensions, so expanding it
@@ -101,9 +107,12 @@ export function useEditorPresentationGraph({
     }, [baseSemanticNodes, displayNodes, runtimeExpandedContainerIds]);
     const semanticSlotNodes = useSemanticNodeSnapshot(slotNodes, isDraggingNode);
     const { onAddLane, onOpenStateActions, onOpenParameter, onOpenSlot,
-        onOpenTransition, onOpenSubMachine, onToggleCollapse } = useNodeActionForwarders({
+        onOpenTransition, onOpenSubMachine, onToggleCollapse,
+        onContainerResizeStart: forwardResizeStart,
+        onContainerResizeEnd: forwardResizeEnd } = useNodeActionForwarders({
         handleAddLaneToParallel, handleOpenStateActions, handleOpenParameter,
-        handleOpenSlot, handleOpenTransition, handleOpenSubMachine, handleToggleContainerCollapse,
+        handleOpenSlot, handleOpenTransition, handleOpenSubMachine,
+        handleToggleContainerCollapse, onContainerResizeStart, onContainerResizeEnd,
     });
 
     // Build the semantic hierarchy once per real topology/data change. Compound
@@ -334,6 +343,7 @@ export function useEditorPresentationGraph({
                     name: collapsedSource.label,
                     sourceNodeId: collapsedSource.logicalSourceId,
                     transitionHandleId: collapsedSource.logicalHandle,
+                    target: edge.data?.boundaryOriginalTarget || edge.target,
                 });
             }
         });
@@ -399,6 +409,9 @@ export function useEditorPresentationGraph({
         onOpenTransition,
         onOpenSubMachine,
         onToggleCollapse,
+        forwardResizeStart,
+        forwardResizeEnd,
+        resizingContainerId,
         hiddenNodeIds,
         slotConnectionDrag,
     ], (injectedNodeSnapshot = { cache: new Map(), nodes: [] }) => {
@@ -422,7 +435,7 @@ export function useEditorPresentationGraph({
                     ? reconnectableIncomingEdgeByNodeId.get(n.id) || null
                     : null;
             const collapsedTransitionSignature = collapsedTransitionHandles
-                .map((event) => `${event.id}:${event.name}:${event.sourceNodeId}:${event.transitionHandleId}`)
+                .map((event) => `${event.id}:${event.name}:${event.sourceNodeId}:${event.transitionHandleId}:${event.target}`)
                 .join("\u001f");
             const childTab =
                 n.type === "submachine"
@@ -435,6 +448,7 @@ export function useEditorPresentationGraph({
                 cached &&
                 cached.sourceNode === n &&
                 cached.hidden === hidden &&
+                cached.resizingContainerId === resizingContainerId &&
                 cached.outgoingTransitionSignature ===
                     outgoingTransitionSignature &&
                 cached.unexposedTransitionSignature ===
@@ -455,6 +469,7 @@ export function useEditorPresentationGraph({
             const injectedData = {
                 ...n.data,
                 mode: activeMode,
+                initialScope: n.parentId ? "container" : "root",
                 outgoingTransitionHandles:
                     outgoingTransitionInfo?.handles || [],
                 unexposedTransitionHandles,
@@ -466,6 +481,8 @@ export function useEditorPresentationGraph({
                 onOpenTransition,
                 slotConnectionDrag,
                 onToggleCollapse,
+                onContainerResizeStart: forwardResizeStart,
+                onContainerResizeEnd: forwardResizeEnd,
             };
 
             if (n.type === "submachine") {
@@ -482,15 +499,41 @@ export function useEditorPresentationGraph({
                 injectedData.onAddLane = onAddLane;
             }
 
+            // A collapsed Parallel's handles come from the projected edges,
+            // not only from the saved node.events. Size the *rendered* node
+            // against those handles so ports never extend beyond its border.
+            const collapsedHeight = n.data?.isCollapsed &&
+                (n.type === "parallel" || n.type === "compound")
+                ? getCollapsedBoundaryLayout(getContainerExitEvents(injectedData, n.type)).height
+                : 0;
+            const intrinsicHeight = Number(n.height) || Number(n.style?.height) || 80;
+            const visibleHeight = Math.max(intrinsicHeight, collapsedHeight);
             const value = {
                 ...n,
+                // React Flow's expandParent is useful for a node drag, but it
+                // fights against manually shrinking an enclosing container.
+                // Lane frames are managed exclusively by our layout code.
+                ...((n.type === "parallelLane" || (resizingContainerId && n.parentId))
+                    ? { expandParent: false }
+                    : {}),
+                // Existing documents may still contain extent="parent" on
+                // structural lane frames. Strip it before React Flow sees the
+                // nodes, even before graph maintenance has normalized them.
+                ...(n.type === "parallelLane" ? { extent: undefined } : {}),
                 hidden,
                 data: injectedData,
+                ...(visibleHeight > intrinsicHeight
+                    ? {
+                        height: visibleHeight,
+                        style: { ...(n.style || {}), height: visibleHeight },
+                    }
+                    : {}),
             };
 
             nextCache.set(n.id, {
                 sourceNode: n,
                 hidden,
+                resizingContainerId,
                 outgoingTransitionSignature,
                 unexposedTransitionSignature,
                 collapsedTransitionSignature,
@@ -504,13 +547,27 @@ export function useEditorPresentationGraph({
             return value;
         });
 
+        // Projected collapsed Parallel ports can increase the visible height
+        // after ordinary collapse-time fitting. Refit their ancestors in the
+        // presentation graph too; otherwise a collapsed node's last ports
+        // could still protrude beyond its enclosing Compound/Parallel lane.
+        const hasExtraCollapsedHeight = result.some((node, index) =>
+            node.data?.isCollapsed &&
+            (Number(node.height) || 0) >
+                (Number(displayNodes[index]?.height) ||
+                    Number(displayNodes[index]?.style?.height) || 80)
+        );
+        const fittedResult = hasExtraCollapsedHeight
+            ? growAllStateContainersToContents(result)
+            : result;
+
         if (
-            result.length === injectedNodeSnapshot.nodes.length &&
-            result.every((node, index) => node === injectedNodeSnapshot.nodes[index])
+            fittedResult.length === injectedNodeSnapshot.nodes.length &&
+            fittedResult.every((node, index) => node === injectedNodeSnapshot.nodes[index])
         ) {
             return injectedNodeSnapshot;
         }
-        return { cache: nextCache, nodes: result };
+        return { cache: nextCache, nodes: fittedResult };
     });
     const injectedNodes = injectedGraph.nodes;
 

@@ -560,6 +560,19 @@
     font-weight: 600;
 }
 
+.skill-tooltip-package {
+    margin-bottom: 7px;
+    color: #aeb8c3;
+    font-size: 10px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+}
+
+.skill-tooltip-package-label {
+    color: #939fab;
+    font-weight: 600;
+}
+
 .skill-tooltip-text {
     color: #b8c0c8;
     font-size: 12px;
@@ -9534,10 +9547,11 @@ dialog.skill-paste-choice-overlay {
 }
 .runtime-commander-dialog {
     position: fixed;
-    left: 50%;
+    /* Avoid transform: transformed parents trap position:fixed option drawers. */
+    left: calc((100vw - min(620px, calc(100vw - 104px))) / 2);
     bottom: 18px;
     top: auto;
-    transform: translateX(-50%);
+    transform: none;
     display: flex;
     align-items: stretch;
     width: min(620px, calc(100vw - 104px));
@@ -9667,11 +9681,13 @@ dialog.skill-paste-choice-overlay {
 .runtime-commander-ledge span { writing-mode: vertical-rl; font-size: 10px; font-weight: 700; }
 .runtime-commander-ledge:hover, .runtime-commander-ledge[aria-expanded="true"] { background: #e2e8f0; color: #0f172a; }
 .runtime-commander-drawer {
-    position: absolute;
-    right: 0;
-    bottom: calc(100% + 8px);
-    width: min(460px, 100%);
-    max-height: min(650px, calc(100dvh - 155px));
+    /* Keep the close button reachable even if the paused run panel grows. */
+    position: fixed;
+    right: max(12px, calc((100vw - 620px) / 2));
+    top: 12px;
+    bottom: auto;
+    width: min(460px, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
     display: flex;
     flex-direction: column;
     border: 1px solid #cbd5e1;
@@ -9769,11 +9785,11 @@ dialog.skill-paste-choice-overlay {
 }
 
 @media (max-width: 600px) {
-    .runtime-commander-dialog { width: calc(100vw - 24px); bottom: 12px; }
+    .runtime-commander-dialog { left: 12px; width: calc(100vw - 24px); bottom: 12px; }
     .runtime-commander-toolbar.runtime-log-controls { gap: 4px; }
     .runtime-commander-toolbar.runtime-log-controls button { min-width: auto; padding: 0 7px; font-size: 10px; }
     .runtime-commander-toolbar.runtime-log-controls button.runtime-log-play-button { min-width: auto; }
-    .runtime-commander-drawer { width: 100%; max-height: calc(100dvh - 140px); }
+    .runtime-commander-drawer { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); }
 }
 .runtime-commander-toggle-stack { display: grid; gap: 6px; }
 .runtime-commander-toggle {
@@ -10070,4 +10086,365 @@ dialog.skill-paste-choice-overlay {
 }
 .node-slot-row:has(> .skill-slot-handle.slot-handle-incompatible):hover :is(.node-slot-entry, .node-slot-type-badge) {
     opacity: 0.7;
+}
+
+/* WebSocket runtime timeline and assignment inspection */
+.runtime-event-timeline { display: grid; gap: 5px; padding: 8px 12px 5px; border-bottom: 1px solid #e2e8f0; }
+.runtime-event-timeline-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 11px; color: #475569; }
+.runtime-event-timeline-header strong { color: #0f172a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-event-timeline input[type="range"] { width: 100%; accent-color: #d4a500; cursor: pointer; }
+.runtime-event-timeline-navigation { display: flex; align-items: center; justify-content: space-between; gap: 5px; }
+.runtime-event-timeline-navigation button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 5px; cursor: pointer; font-size: 11px; }
+.runtime-event-timeline-navigation button:disabled { opacity: .35; cursor: default; }
+.runtime-event-timeline-navigation button[aria-pressed="true"] { background: #fef9c3; border-color: #eab308; }
+.runtime-event-timeline-alert { margin: 0; color: #92400e; font-size: 11px; }
+/* Overlay the existing right inspector. The tab's own ledge is at 50%,
+   whereas this ledge sits at 20%, so they never cover each other. */
+.runtime-assignments-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: min(var(--inspector-drawer-width, 400px), calc(100% - 32px));
+    height: 100%;
+    z-index: 132;
+    display: flex;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+.runtime-assignments-ledge {
+    position: absolute;
+    right: 100%;
+    top: 17%;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 27px;
+    min-width: 27px;
+    min-height: 132px;
+    padding: 8px 3px;
+    background: #1e293b;
+    color: #cbd5e1;
+    border: 1px solid #5a6e82;
+    border-radius: 6px 0 0 6px;
+    cursor: pointer;
+    box-sizing: border-box;
+}
+/* The Run panel owns its open/close state regardless of Details visibility.
+   When Details is closed, keep the Run ledge reachable at the viewport edge. */
+.runtime-assignments-panel.closed[data-details-open="false"] .runtime-assignments-ledge {
+    right: 0;
+}
+.runtime-assignments-ledge span { writing-mode: vertical-rl; font-size: 11px; font-weight: 700; }
+.runtime-assignments-ledge:hover { background: #334155; color: #fff; }
+.runtime-assignments-content {
+    pointer-events: auto;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--sidebar-background);
+    color: var(--ui-text-primary, #e2e8f0);
+    border: 1px solid var(--secondary-color);
+    border-radius: 8px;
+    box-sizing: border-box;
+    box-shadow: -7px 2px 18px rgba(0, 0, 0, 0.22);
+    transition: transform 200ms ease, visibility 200ms ease;
+}
+.runtime-assignments-panel.closed .runtime-assignments-content {
+    pointer-events: none;
+    visibility: hidden;
+    transform: translateX(100%);
+}
+.runtime-assignments-header {
+    display: grid;
+    gap: 5px;
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--secondary-color);
+    background: #0b1120;
+}
+.runtime-assignments-header strong { display: flex; gap: 7px; align-items: center; font-size: 13px; }
+.runtime-assignments-header small, .runtime-assignments-header span {
+    color: var(--ui-text-secondary, #94a3b8);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+.runtime-assignments-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
+.runtime-values-section { border: 1px solid var(--secondary-color); border-radius: 8px; padding: 10px; margin-bottom: 12px; min-width: 0; }
+.runtime-values-section h4 { display: flex; justify-content: space-between; align-items: baseline; margin: 0 0 9px; font-size: 12px; }
+.runtime-values-section h4 span { font-size: 10px; color: var(--ui-text-secondary, #94a3b8); }
+.runtime-values-list, .runtime-assignments-list { display: grid; gap: 7px; align-content: start; }
+.runtime-readonly-value {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    user-select: text;
+    cursor: text;
+}
+.runtime-value-row, .runtime-assignment-row {
+    border: 1px solid var(--secondary-color);
+    border-left-width: 4px;
+    border-left-style: solid;
+    border-radius: 6px;
+    background: var(--sidebar-background);
+    padding: 9px;
+    min-width: 0;
+    font-size: 12px;
+}
+.runtime-value-row { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+.runtime-value-row > div { display: grid; gap: 2px; min-width: 0; }
+.runtime-value-row code, .runtime-assignment-row code { overflow-wrap: anywhere; }
+.runtime-value-row small { color: var(--ui-text-secondary, #94a3b8); font-size: 10px; overflow-wrap: anywhere; }
+.runtime-value-row > span { text-align: right; overflow-wrap: anywhere; }
+/* The runtime card border rule comes after the shared datamodel palette.
+   Restore type-specific accents here rather than losing them to `border:`. */
+:is(.runtime-value-row, .runtime-assignment-row).datamodel-type-accent-string { border-left-color: #38bdf8; }
+:is(.runtime-value-row, .runtime-assignment-row).datamodel-type-accent-boolean { border-left-color: #a855f7; }
+:is(.runtime-value-row, .runtime-assignment-row).datamodel-type-accent-integer { border-left-color: #14b8a6; }
+:is(.runtime-value-row, .runtime-assignment-row).datamodel-type-accent-double { border-left-color: #f59e0b; }
+:is(.runtime-value-row, .runtime-assignment-row).datamodel-type-accent-other { border-left-color: #64748b; }
+.runtime-assignment-row { animation: runtime-event-change-enter .24s both ease-out; }
+.runtime-assignment-row.slot { border-left-color: var(--editor-slot-write, #d946ef); }
+.runtime-assignment-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.runtime-assignment-row-heading code { font-weight: 650; }
+.runtime-assignment-row-heading span, .runtime-assignment-row > small { color: var(--ui-text-secondary, #94a3b8); font-size: 10px; }
+.runtime-assignment-values { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 7px 0 3px; font-size: 12px; overflow-wrap: anywhere; }
+.runtime-assignment-values span { color: var(--ui-text-secondary, #94a3b8); }
+.runtime-assignment-values strong { color: var(--ui-text-primary, #e2e8f0); }
+.runtime-assignments-empty { margin: 0; color: var(--ui-text-secondary, #94a3b8); font-size: 11px; }
+.runtime-assignments-warning { color: #fbbf24; font-size: 11px; }
+@keyframes runtime-event-change-enter { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: translateX(0); } }
+@media (prefers-reduced-motion: reduce) { .runtime-assignment-row { animation: none; } }
+.react-flow__edge.runtime-live-active-edge { visibility: visible !important; opacity: 1 !important; filter: drop-shadow(0 0 4px rgba(234,179,8,.8)); }
+.react-flow__edge.runtime-live-active-edge .react-flow__edge-path { stroke: #eab308 !important; stroke-width: 4px !important; }
+
+.app[data-panel-mode="drawers"] .runtime-assignments-panel { right: 0; }
+.app[data-panel-mode="drawers"] .runtime-assignments-panel.closed[data-details-open="true"] .runtime-assignments-ledge {
+    right: min(var(--inspector-drawer-width, 400px), calc(100vw - 32px));
+}
+
+/* Current parameter values precede their small type badge. */
+.runtime-value-row .runtime-parameter-value { margin-left: auto; min-width: 0; overflow-wrap: anywhere; }
+.runtime-value-row .datamodel-value-type-badge { flex-shrink: 0; }
+.runtime-commander-toolbar .runtime-commander-auto-events { gap: 4px; }
+.runtime-commander-toolbar .runtime-commander-auto-events[aria-pressed="true"] {
+    background: #e9f8ed; color: #166534; border-color: #65a87a;
+}
+.runtime-commander-auto-state { font-size: 10px; font-weight: 700; }
+@media (max-width: 680px) {
+    .runtime-commander-drawer { right: 12px; }
+}
+
+/* Live skill parameter values use the Run accent rather than replay blue. */
+.costum-node:not(.terminal-final-node):not(.behavior-exit-node) .node-parameter-row-runtime {
+    background: rgba(254, 240, 138, 0.2);
+    box-shadow: inset 0 0 0 1px rgba(202, 138, 4, 0.28);
+}
+.node-parameter-runtime-badge {
+    border-color: rgba(202, 138, 4, 0.54);
+    background: #fef3c7;
+    color: #92400e;
+}
+.runtime-commander-event-select {
+    flex: 1 1 180px;
+    min-width: 0;
+    border: 1px solid var(--secondary-color, #526173);
+    border-radius: 5px;
+    padding: 7px 9px;
+    background: var(--sidebar-background, #1e293b);
+    color: var(--ui-text-primary, #e2e8f0);
+    font: inherit;
+}
+/* The inspector and run drawer overlap intentionally; user interaction selects the front panel. */
+.app .editor-side-panel-inspector { position: relative; z-index: 100; }
+.app[data-panel-mode="drawers"] .editor-side-panel-inspector { position: absolute; }
+.app[data-runtime-front="details"] .editor-side-panel-inspector[data-open="true"] { z-index: 148; }
+.app[data-runtime-front="details"] .editor-panel-ledge-inspector { z-index: 149; }
+.app[data-runtime-front="details"] .runtime-assignments-panel { z-index: 132; }
+.app[data-runtime-front="run"] .runtime-assignments-panel { z-index: 152; }
+.app[data-runtime-front="run"] .editor-side-panel-inspector { z-index: 120; }
+.app[data-runtime-front="run"] .editor-panel-ledge-inspector { z-index: 121; }
+
+/* Active states and transition focus are independent layers during Parallel runs. */
+.react-flow__node.runtime-live-transition-source {
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, .85), 0 0 8px rgba(56, 189, 248, .3);
+}
+.react-flow__node.runtime-live-transition-target {
+    box-shadow: 0 0 0 3px rgba(234, 179, 8, .85), 0 0 8px rgba(234, 179, 8, .3);
+}
+.runtime-parallel-overview {
+    border: 1px solid var(--editor-border, #334155);
+    border-radius: 9px;
+    padding: 10px 12px;
+    display: grid;
+    gap: 8px;
+    max-height: 175px;
+    overflow-y: auto;
+    background: var(--editor-surface, #172033);
+}
+.runtime-parallel-heading, .runtime-parallel-lane,
+.runtime-parallel-submachines > button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.runtime-parallel-heading { justify-content: space-between; }
+.runtime-parallel-heading span,
+.runtime-parallel-lane small,
+.runtime-parallel-submachines small { font-size: 11px; opacity: .7; }
+.runtime-parallel-group { display: grid; gap: 4px; }
+.runtime-parallel-group > strong { font-size: 12px; }
+.runtime-parallel-lane { font-size: 12px; padding-left: 7px; }
+.runtime-parallel-lane small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runtime-parallel-running-dot { flex: 0 0 7px; height: 7px; border-radius: 50%; background: #009e73; }
+.runtime-parallel-submachines { display: grid; gap: 5px; }
+.runtime-parallel-submachines > span { font-size: 11px; opacity: .8; }
+.runtime-parallel-submachines > button {
+    font: inherit;
+    font-size: 12px;
+    justify-content: space-between;
+    border: 1px solid var(--editor-border, #334155);
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    padding: 5px 8px;
+    cursor: pointer;
+}
+.runtime-parallel-submachines > button:hover { border-color: #56b4e9; }
+
+.runtime-parallel-running-dot.completed { background: #009e73; border-radius: 2px; }
+.runtime-parallel-running-dot.exited { background: #f59e0b; }
+.runtime-parallel-running-dot.pending { background: #64748b; }
+
+/* Keep Run controls in the original compact layout when Parallel execution
+   becomes active. The additional lane overview stays available on demand. */
+.runtime-commander-dialog .runtime-parallel-overview {
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    gap: 0;
+}
+.runtime-commander-dialog .runtime-parallel-heading {
+    cursor: pointer;
+    list-style: none;
+    padding: 8px 12px;
+}
+.runtime-commander-dialog .runtime-parallel-heading::-webkit-details-marker { display: none; }
+.runtime-commander-dialog .runtime-parallel-heading::after {
+    content: "▸";
+    margin-left: 4px;
+    color: var(--ui-text-secondary, #64748b);
+}
+.runtime-commander-dialog .runtime-parallel-overview[open] .runtime-parallel-heading::after { content: "▾"; }
+.runtime-commander-dialog .runtime-parallel-overview-body {
+    display: grid;
+    gap: 8px;
+    max-height: 175px;
+    padding: 0 12px 10px;
+    overflow-y: auto;
+}
+.runtime-commander-toolbar .runtime-commander-primary-actions {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 7px;
+}
+@media (max-width: 600px) {
+    .runtime-commander-toolbar .runtime-commander-primary-actions { gap: 4px; }
+}
+
+/* Local SCXML initials are visually distinct from the root initial state. */
+.initial-state-badge-local {
+    background: #dbeafe;
+    border-color: #2563eb;
+    color: #1d4ed8;
+    border-radius: 4px;
+    letter-spacing: 0.35px;
+}
+.costum-node.initial-node:has(.initial-state-badge-local),
+.submachine-node.initial-node:has(.initial-state-badge-local),
+.compound-frame-node.initial-compound:has(.initial-state-badge-local),
+.parallel-group-container.initial-parallel:has(.initial-state-badge-local) {
+    outline-color: #2563eb;
+}
+
+/* Container exit routes: preserve clickable source/target cards, but show the
+   direction explicitly. The minmax columns prevent long skill names from
+   forcing the inspector wider. */
+.exit-token-node-references {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+}
+.exit-token-route-reference {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+.exit-token-route-reference .compact-slot-header {
+    min-width: 0;
+    flex-wrap: wrap;
+    gap: 3px;
+}
+.exit-token-route-reference .compact-slot-name {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+.exit-token-route-arrow {
+    color: #94a3b8;
+    flex-shrink: 0;
+}
+.state-name-error {
+    display: block;
+    flex: 0 0 100%;
+    box-sizing: border-box;
+    padding-left: 88px;
+    color: #ef4444;
+    font-size: 11px;
+    line-height: 1.3;
+}
+.text-field[aria-invalid="true"] {
+    border-color: #ef4444;
+}
+
+/* Parallel lane order uses the same insert indicator as the transition editor. */
+.parallel-lane-editor-card { position: relative; grid-template-columns: 28px 18px minmax(0, 1fr) auto; }
+.parallel-lane-editor-card.dragging { opacity: .45; }
+.parallel-lane-editor-card.drop-before::before,
+.parallel-lane-editor-card.drop-after::after {
+    content: ""; position: absolute; left: 0; right: 0; height: 3px;
+    background: #38bdf8; border-radius: 3px; pointer-events: none;
+    box-shadow: 0 0 7px rgba(56,189,248,.35);
+}
+.parallel-lane-editor-card.drop-before::before { top: -5px; }
+.parallel-lane-editor-card.drop-after::after { bottom: -5px; }
+.parallel-lane-drag-handle { display: flex; align-items: center; justify-content: center;
+    cursor: grab; color: #94a3b8; user-select: none; }
+.parallel-lane-drag-handle:active { cursor: grabbing; }
+.parallel-lane-drag-handle:hover { color: #e2e8f0; }
+
+/* Lane entry is an understated, display-only point, not another interactive
+   parallel input. Override ConnectionHandle's 24px hitbox and its two solid
+   pseudo-element circles: those were drawing an apparent square/extra ring. */
+.react-flow__handle.connection-handle.parallel-lane-entry-handle {
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+    box-sizing: border-box;
+    border: 1.5px dotted #80b8d1 !important;
+    border-radius: 50% !important;
+    background: #ecf7fc !important;
+    box-shadow: none !important;
+    outline: none !important;
+    opacity: 0.75;
+    pointer-events: none !important;
+}
+.react-flow__handle.connection-handle.parallel-lane-entry-handle::before,
+.react-flow__handle.connection-handle.parallel-lane-entry-handle::after {
+    content: none !important;
+    display: none !important;
 }

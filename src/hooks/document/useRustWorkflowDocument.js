@@ -14,18 +14,14 @@ import {
     buildRustStateParameters,
 } from "../../utils/scxmlRustExport";
 import { buildRustTransitionSyncPlan } from "../../utils/rustTransitionSync";
-import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
+import { reconcileRustBoundaryPatch } from "../../utils/rustBoundaryProjection.js";
 import {
     editorPerfNow,
     logEditorQueueWait,
     measureEditorAsync,
     measureEditorTask,
 } from "../../utils/editorPerf";
-import {
-    applyRustWorkflowDataModelPatch,
-    applyRustWorkflowStatePatch,
-    applyRustWorkflowTransitionPatch,
-} from "../../utils/rustWorkflowPatch";
+import { applyRustWorkflowDataModelPatch } from "../../utils/rustWorkflowPatch";
 import {
     slotDebug,
     summarizeRustSlotSnapshot,
@@ -122,6 +118,7 @@ export function useRustWorkflowDocument({
     manualSlots,
     setNodes,
     setEdges,
+    updateGraph,
     setGlobalDataModel,
 }) {
     const revisionRef = useRef(null);
@@ -217,61 +214,26 @@ export function useRustWorkflowDocument({
             // view-only topology (Parallel lanes, boundary helpers, callbacks,
             // selection, etc.) instead of replacing the graph with the flatter
             // semantic Rust model.
-            const current = editorStateRef.current || {};
-            const nextNodes = applyRustWorkflowStatePatch(
-                current.nodes || [],
-                patch,
-                { mode: policy.stateMode }
+            const hasStatePatch = Boolean(
+                (patch.states?.length || 0) > 0 || (patch.removedStateIds?.length || 0) > 0
             );
-            const nextEdges = applyRustWorkflowTransitionPatch(
-                current.edges || [],
-                nextNodes,
-                patch,
-                { applyChanges: policy.applyTransitions }
+            const hasTransitionPatch = Boolean(
+                (patch.transitions?.length || 0) > 0 || (patch.removedTransitionIds?.length || 0) > 0
             );
-            const nextDataModel = applyRustWorkflowDataModelPatch(
-                current.globalDataModel || [],
-                patch
-            );
-
-            editorStateRef.current = {
-                ...current,
-                nodes: nextNodes,
-                edges: nextEdges,
-                globalDataModel: nextDataModel,
-            };
-
-            if (
-                (patch.states?.length || 0) > 0 ||
-                (patch.removedStateIds?.length || 0) > 0
-            ) {
-                setNodes?.((currentNodes) =>
-                    applyRustWorkflowStatePatch(currentNodes, patch, {
-                        mode: policy.stateMode,
-                    })
-                );
-            }
-            if (
-                (patch.transitions?.length || 0) > 0 ||
-                (patch.removedTransitionIds?.length || 0) > 0
-            ) {
-                setEdges?.((currentEdges) => {
-                    const patchedEdges = applyRustWorkflowTransitionPatch(
-                        currentEdges,
-                        editorStateRef.current?.nodes || nextNodes,
-                        patch,
-                        { applyChanges: policy.applyTransitions }
+            if (hasStatePatch || hasTransitionPatch) {
+                // A Rust canonical patch is one graph transaction. Rebuilding
+                // edges alone discards regenerated lane handles and leaves
+                // boundary edges attached to ports that no longer exist.
+                updateGraph(({ nodes: liveNodes, edges: liveEdges }) => {
+                    const nextGraph = reconcileRustBoundaryPatch(
+                        liveNodes, liveEdges, patch, policy
                     );
-
-                    // Rust patches update logical transitions. Boundary edges
-                    // (child -> compound border -> target) are a visual
-                    // projection and must be rebuilt afterwards. Otherwise the
-                    // internal boundary helper survives while the container
-                    // exit edge can disappear.
-                    return rebuildBoundaryTransitions(
-                        editorStateRef.current?.nodes || nextNodes,
-                        patchedEdges
-                    ).edges;
+                    editorStateRef.current = {
+                        ...(editorStateRef.current || {}),
+                        nodes: nextGraph.nodes,
+                        edges: nextGraph.edges,
+                    };
+                    return nextGraph;
                 });
             }
             if (Array.isArray(patch.dataModel)) {
@@ -280,7 +242,7 @@ export function useRustWorkflowDocument({
                 );
             }
         },
-        [setEdges, setGlobalDataModel, setNodes]
+        [setGlobalDataModel, updateGraph]
     );
 
     const syncEditorStateNow = useCallback(async (editorState, expectedRevision = null) => {

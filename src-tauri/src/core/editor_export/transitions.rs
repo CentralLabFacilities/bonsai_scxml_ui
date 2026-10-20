@@ -22,6 +22,21 @@ fn edge_event(edge: &EditorExportEdgeDto, source: Option<&&EditorExportNodeDto>)
     scxml_transition_event(raw, &source.map(|node| state_name(node)).unwrap_or_default())
 }
 
+// Return the semantic source of an editor edge. A boundary edge's visible
+// source/handle are rendering artifacts and must not become SCXML events.
+fn semantic_edge_source<'a>(edge: &'a EditorExportEdgeDto) -> (&'a str, &'a str) {
+    let logical = edge.logical_sources.iter().find(|source| {
+        !source.state_id.trim().is_empty() && !source.handle.trim().is_empty()
+    });
+    let state_id = logical.map(|source| source.state_id.as_str())
+        .unwrap_or(edge.source.as_str());
+    let handle = logical.map(|source| source.handle.trim())
+        .or_else(|| (!edge.source_handle.trim().is_empty()).then_some(edge.source_handle.trim()))
+        .or_else(|| (!edge.label.trim().is_empty()).then_some(edge.label.trim()))
+        .unwrap_or("success");
+    (state_id, handle)
+}
+
 fn edge_logical_sources(
     edge: &EditorExportEdgeDto,
     fallback_state_id: &str,
@@ -266,17 +281,16 @@ fn build_container_transitions(
         if !index.nodes_by_id.contains_key(index.semantic_state_id(&edge.target).as_str()) {
             continue;
         }
-        let source = index.nodes_by_id.get(edge.source.as_str());
-        let raw_handle = if !edge.source_handle.trim().is_empty() {
-            edge.source_handle.trim()
-        } else if !edge.label.trim().is_empty() {
-            edge.label.trim()
-        } else {
-            "success"
-        };
+        // Boundary projections use a synthetic display source/handle. Resolve
+        // the SCXML event against the actual logical state, otherwise export
+        // can write e.g. "parallel_1.success" or a generated boundary ID.
+        let (logical_state_id, raw_handle) = semantic_edge_source(edge);
+        let source = index.nodes_by_id.get(logical_state_id);
         let full_event = if !edge.imported_raw_event.trim().is_empty() {
             edge.imported_raw_event.trim().to_string()
-        } else if edge.source == node.id && raw_handle.contains('.') {
+        } else if edge.source == node.id && logical_state_id == node.id && raw_handle.contains('.') {
+            // Direct container transitions can use global/dotted SCXML event
+            // descriptors. Do not prefix those with the container label.
             raw_handle.to_string()
         } else {
             scxml_transition_event(
@@ -293,7 +307,7 @@ fn build_container_transitions(
             source_state_id: node.id.clone(),
             target_state_id,
             target_scxml_id,
-            logical_sources: edge_logical_sources(edge, &edge.source, raw_handle),
+            logical_sources: edge_logical_sources(edge, logical_state_id, raw_handle),
             event: full_event,
             condition: edge.condition.clone(),
             assignments: edge.assignments.iter().map(assignment).collect(),
@@ -440,4 +454,38 @@ pub(super) fn build_transitions(
     }
 
     transitions
+}
+
+#[cfg(test)]
+mod boundary_event_regression_tests {
+    use super::semantic_edge_source;
+    use crate::core::editor_export::types::{EditorExportEdgeDto, EditorTransitionSourceDto};
+    use crate::core::transitions::events::scxml_transition_event;
+
+    #[test]
+    fn boundary_handle_cannot_replace_logical_skill_event() {
+        let edge = EditorExportEdgeDto {
+            source: "parallel-1".into(),
+            source_handle: "skill-node-123-error.cancelled".into(),
+            logical_sources: vec![EditorTransitionSourceDto {
+                state_id: "skill-node-123".into(),
+                handle: "error.cancelled".into(),
+            }],
+            ..EditorExportEdgeDto::default()
+        };
+        let (id, handle) = semantic_edge_source(&edge);
+        assert_eq!(id, "skill-node-123");
+        assert_eq!(handle, "error.cancelled");
+        assert_eq!(scxml_transition_event(handle, "Grasp#42"), "Grasp.error.cancelled");
+    }
+
+    #[test]
+    fn direct_edge_still_uses_its_own_handle() {
+        let edge = EditorExportEdgeDto {
+            source: "skill-42".into(),
+            source_handle: "success".into(),
+            ..EditorExportEdgeDto::default()
+        };
+        assert_eq!(semantic_edge_source(&edge), ("skill-42", "success"));
+    }
 }

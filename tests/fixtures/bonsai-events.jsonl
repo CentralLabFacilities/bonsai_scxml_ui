@@ -1,0 +1,69 @@
+{"type":"status","timestamp":"2026-10-11T15:46:35.173065275Z","data":{"value":"LOADING"}}
+{"type":"status","timestamp":"2026-10-11T15:46:37.645385492Z","data":{"value":"INITIALIZED_BUT_WARNINGS"}}
+{"type":"status","timestamp":"2026-10-11T15:46:42.032360150Z","data":{"value":"RUNNING"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.070750807Z","data":{"state":"slots.SlotIO#A"}}
+{"type":"parameter","timestamp":"2026-10-11T15:46:42.075485351Z","data":{"name":"#_WRITE","value":"1","expression":"@test_val","state":"slots.SlotIO#A","source":null}}
+{"type":"slot_written","timestamp":"2026-10-11T15:46:42.104760503Z","data":{"slot":"/A#test","dataType":"java.lang.String","value":"1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.112964153Z","data":{"state":"slots.SlotIO#A"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.115979478Z","data":{"source":"slots.SlotIO#A","target":"slots.SlotIO#B","event":"SlotIO.success"}}
+{"type":"datamodel_assignment","timestamp":"2026-10-11T15:46:42.118795487Z","data":{"sourceState":"slots.SlotIO#B","location":"test_val","expression":"'test_val - 1'","value":"test_val - 1"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.119030387Z","data":{"state":"slots.SlotIO#B"}}
+{"type":"parameter","timestamp":"2026-10-11T15:46:42.120427740Z","data":{"name":"#_WRITE","value":"test_val - 1","expression":"@test_val","state":"slots.SlotIO#B","source":null}}
+{"type":"slot_written","timestamp":"2026-10-11T15:46:42.124145983Z","data":{"slot":"/B","dataType":"java.lang.String","value":"test_val - 1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.125111111Z","data":{"state":"slots.SlotIO#B"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.126330682Z","data":{"source":"slots.SlotIO#B","target":"CompareSlots#AB","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.127251470Z","data":{"state":"CompareSlots#AB"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.132728480Z","data":{"state":"CompareSlots#AB"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.133518534Z","data":{"source":"CompareSlots#AB","target":"s1","event":"CompareSlots.success.misMatch"}}
+{"type":"datamodel_assignment","timestamp":"2026-10-11T15:46:42.134901980Z","data":{"sourceState":"s1","location":"test_val_s1","expression":"test_val","value":"test_val - 1"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.135063312Z","data":{"state":"s1"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.138244439Z","data":{"state":"slots.SlotIO#s1"}}
+{"type":"parameter","timestamp":"2026-10-11T15:46:42.139207417Z","data":{"name":"#_WRITE","value":"intermediate","expression":"intermediate","state":"slots.SlotIO#s1","source":null}}
+{"type":"slot_written","timestamp":"2026-10-11T15:46:42.141285975Z","data":{"slot":"/A#test","dataType":"java.lang.String","value":"intermediate"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.141982682Z","data":{"state":"slots.SlotIO#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.142796774Z","data":{"source":"slots.SlotIO#s1","target":"slots.SlotIO#1#s1","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.143214318Z","data":{"state":"slots.SlotIO#1#s1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.146993366Z","data":{"state":"slots.SlotIO#1#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.147870342Z","data":{"source":"slots.SlotIO#1#s1","target":"slots.SlotIO#2#s1","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.149034239Z","data":{"state":"slots.SlotIO#2#s1"}}
+{"type":"parameter","timestamp":"2026-10-11T15:46:42.150467741Z","data":{"name":"#_WRITE","value":"test_val - 1","expression":"@test_val_s1","state":"slots.SlotIO#2#s1","source":null}}
+{"type":"slot_written","timestamp":"2026-10-11T15:46:42.155297934Z","data":{"slot":"/C#s1","dataType":"java.lang.String","value":"test_val - 1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.156810629Z","data":{"state":"slots.SlotIO#2#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.158309787Z","data":{"source":"slots.SlotIO#2#s1","target":"s2#s1","event":"SlotIO.success"}}
+{"type":"datamodel_assignment","timestamp":"2026-10-11T15:46:42.160548943Z","data":{"sourceState":"s2#s1","location":"test_val_s2_s1","expression":"test_val_s1","value":"test_val - 1"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.160882266Z","data":{"state":"s2#s1"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.162039361Z","data":{"state":"slots.SlotIO#s2#s1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.167134735Z","data":{"state":"slots.SlotIO#s2#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.169009264Z","data":{"source":"slots.SlotIO#s2#s1","target":"slots.SlotIO#1#s2#s1","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.169993194Z","data":{"state":"slots.SlotIO#1#s2#s1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.175247478Z","data":{"state":"slots.SlotIO#1#s2#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.176229146Z","data":{"source":"slots.SlotIO#1#s2#s1","target":"slots.SlotIO#2#s2#s1","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.177384649Z","data":{"state":"slots.SlotIO#2#s2#s1"}}
+{"type":"parameter","timestamp":"2026-10-11T15:46:42.179050663Z","data":{"name":"#_WRITE","value":"test_val - 1","expression":"@test_val_s2_s1","state":"slots.SlotIO#2#s2#s1","source":null}}
+{"type":"slot_written","timestamp":"2026-10-11T15:46:42.182893286Z","data":{"slot":"/D#s2#s1","dataType":"java.lang.String","value":"test_val - 1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.184072042Z","data":{"state":"slots.SlotIO#2#s2#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.185772865Z","data":{"source":"slots.SlotIO#2#s2#s1","target":"Nop#s2#s1","event":"SlotIO.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.186448312Z","data":{"state":"Nop#s2#s1"}}
+{"type":"send_requested","timestamp":"2026-10-11T15:46:42.192585782Z","data":{"id":null,"target":null,"targetType":"http://www.w3.org/TR/scxml/#SCXMLEventProcessor","event":"s2.success","data":null,"delayMillis":0}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.192830763Z","data":{"source":"Nop#s2#s1","target":"Nop#s2#s1","event":"Nop.fatal"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.193726983Z","data":{"state":"Nop#s2#s1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.194431647Z","data":{"state":"s2#s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.194950029Z","data":{"source":"s2#s1","target":"Nop#s1","event":"s2.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.195381496Z","data":{"state":"Nop#s1"}}
+{"type":"send_requested","timestamp":"2026-10-11T15:46:42.198980334Z","data":{"id":null,"target":null,"targetType":"http://www.w3.org/TR/scxml/#SCXMLEventProcessor","event":"s1.success","data":null,"delayMillis":0}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.199275872Z","data":{"source":"Nop#s1","target":"Nop#s1","event":"Nop.fatal"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.200471024Z","data":{"state":"Nop#s1"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.201885153Z","data":{"state":"s1"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.202909108Z","data":{"source":"s1","target":"CompareSlots#AB2","event":"s1.success"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.203613344Z","data":{"state":"CompareSlots#AB2"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.210031243Z","data":{"state":"CompareSlots#AB2"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.210994326Z","data":{"source":"CompareSlots#AB2","target":"CompareSlots#BC","event":"CompareSlots.success.misMatch"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.211429239Z","data":{"state":"CompareSlots#BC"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.215764078Z","data":{"state":"CompareSlots#BC"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.216887583Z","data":{"source":"CompareSlots#BC","target":"CompareSlots#CD","event":"CompareSlots.success.match"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.217274085Z","data":{"state":"CompareSlots#CD"}}
+{"type":"state_exited","timestamp":"2026-10-11T15:46:42.220229743Z","data":{"state":"CompareSlots#CD"}}
+{"type":"transition","timestamp":"2026-10-11T15:46:42.221095218Z","data":{"source":"CompareSlots#CD","target":"CompareData","event":"CompareSlots.success.match"}}
+{"type":"state_entered","timestamp":"2026-10-11T15:46:42.221476321Z","data":{"state":"CompareData"}}
+{"type":"stopped","timestamp":"2026-10-11T15:47:02.892141180Z","data":{}}
+{"type":"status","timestamp":"2026-10-11T15:47:02.892335168Z","data":{"value":"INITIALIZED_BUT_WARNINGS"}}

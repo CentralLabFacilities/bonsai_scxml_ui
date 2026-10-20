@@ -18,6 +18,7 @@ import RuntimeLogPlayer from "../inspector/RuntimeLogPlayer.jsx";
 import CanvasContextMenu from "./CanvasContextMenu.jsx";
 import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
 import { boundaryTransitionKeys, buildBoundaryHelperIndex } from "../../utils/transitionBoundaryHighlight.js";
+import { traceResizeSnapshot } from "../../utils/resizeDiagnostics.js";
 
 function EditorConnectionLine({ fromHandle, fromX, fromY, toX, toY, fromPosition, toPosition,
     connectionLineStyle }) {
@@ -151,6 +152,8 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
+    // Read-only: tell the resize trace what React Flow actually receives.
+    useEffect(() => traceResizeSnapshot('ReactFlow:visibleNodes', visibleNodes), [visibleNodes]);
 
     // Canvas hover must not travel through App state. A React-state hover used
     // to rebuild the display graph and rerender unrelated panels every time the

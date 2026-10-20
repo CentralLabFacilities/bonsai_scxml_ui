@@ -41,7 +41,9 @@ export function inferLiteralValueType(value) {
         return VALUE_TYPES.INTEGER;
     }
 
-    if (DOUBLE_PATTERN.test(trimmed)) {
+    // JEXL/Java Double.NaN is a numeric literal, not an unquoted String.
+    // Keep the canonical case for round-tripping the SCXML expression.
+    if (trimmed === "NaN" || DOUBLE_PATTERN.test(trimmed)) {
         return VALUE_TYPES.DOUBLE;
     }
 

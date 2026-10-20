@@ -237,7 +237,9 @@ export const workflowDtoToScxmlDocument = (workflow) => {
             {
                 id: state?.scxmlId || state?.fullSkillName || state?.label || "",
                 src: state?.source || undefined,
-                initial: state?.initialChildScxmlId || undefined,
+                initial: state?.kind === "parallel"
+                    ? undefined
+                    : state?.initialChildScxmlId || undefined,
                 final: state?.kind === "final" ? "true" : undefined,
             },
             children

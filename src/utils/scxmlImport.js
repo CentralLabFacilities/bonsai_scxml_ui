@@ -3,8 +3,9 @@ import { parseScxmlWorkflow } from "../tauri-client.js";
 import { workflowDtoToScxmlDocument } from "./scxmlRustDocument.js";
 import { getLayoutedElements } from "./layoutUtils";
 import { parseStateAssignments } from "./stateActions.js";
-import { getTransitionExitToken, transitionDescriptorCovers } from "./transitionEvents.js";
-import { normalizeSlotPath } from "./editorGraph.js";
+import { getTransitionExitToken } from "./transitionEvents.js";
+import { normalizeSlotPath, createEditorNodeIndex } from "./editorGraph.js";
+import { findContainerEventSources } from "./parallelTransitionSources.js";
 import {
     deserializeScxmlConditionForEditor,
     deserializeScxmlValueForEditor,
@@ -33,8 +34,8 @@ const makeImportedSelfLoopControlPoints = () => [
     { id: `cp-${crypto.randomUUID()}`, anchor: "target", dx: -76, dy: -92 },
 ];
 
-const getImportedBoundaryLogicalSources = (sourceNode, sourceHandle, allNodes, handlersByNodeId) => {
-    if (!sourceNode || !["compound", "parallelLane"].includes(sourceNode.type)) {
+const getImportedBoundaryLogicalSources = (sourceNode, sourceHandle, allNodes, handlersByNodeId, graphIndex) => {
+    if (!sourceNode || !["compound", "parallelLane", "parallel"].includes(sourceNode.type)) {
         return [];
     }
 
@@ -43,90 +44,27 @@ const getImportedBoundaryLogicalSources = (sourceNode, sourceHandle, allNodes, h
     );
     if (sourceEvents.length === 0) return [];
 
-    const nestedSkills = allNodes.filter((node) => {
-        if (node.type !== "custom" && node.type !== "submachine") return false;
-        if (node.data?.isSkillClone || node.data?.isStateClone) return false;
-
-        return sourceNode.type === "parallelLane"
-            ? getLaneForNode(node, allNodes)?.id === sourceNode.id
-            : isNodeInsideContainer(node, sourceNode.id, allNodes);
-    });
-
-    /*
-     * IMPORTANT: transitions declared directly on a Compound are event
-     * handlers for events emitted by skills inside that Compound. For example
-     *
-     *   <transition event="Talk.*" target="ExecSpeech"/>
-     *
-     * on ExecSetup applies to every eligible nested Talk instance. A deeper,
-     * unconditional handler covering the entire descriptor takes precedence.
-     * Partial and conditional handlers must retain the ancestor fallback.
-     *
-     * Match by the longest available skill-name prefix rather than splitting
-     * on the last dot, because exit-token ids may themselves contain dots.
-     */
+    const byId = new Map(allNodes.map((node) => [node.id, node]));
     const matches = [];
     sourceEvents.forEach((event) => {
-        const rawEvent = String(event.rawEvent || event.name || "").trim();
-        if (!rawEvent) return;
-
-        nestedSkills.forEach((node) => {
-            const fullName = String(node.data?.fullSkillName || "").trim();
-            const withoutInstance = fullName.split("#")[0];
-            const simpleName =
-                withoutInstance.split(".").filter(Boolean).pop() || "";
-            const label = String(node.data?.label || "").trim();
-            const prefixes = Array.from(
-                new Set(
-                    [fullName, withoutInstance, simpleName, label]
-                        .map((value) => String(value || "").trim())
-                        .filter(Boolean)
-                )
-            ).sort((a, b) => b.length - a.length);
-
-            const matchedPrefix = prefixes.find(
-                (prefix) => rawEvent.startsWith(`${prefix}.`)
-            );
-            if (!matchedPrefix) return;
-
-            const normalizeDescriptor = (value) => String(value || "").trim().split(/\s+/)
-                .filter(Boolean).map((token) => getTransitionExitToken(token,
-                    node.data?.scxmlStateId || fullName || simpleName)).join(" ");
-            let current = node;
-            const visited = new Set();
-            let shadowed = false;
-            while (current && current.id !== sourceNode.id && !visited.has(current.id)) {
-                visited.add(current.id);
-                if ((handlersByNodeId.get(current.id) || []).some((handler) =>
-                    !handler.cond && handler.eventId && transitionDescriptorCovers(
-                        normalizeDescriptor(handler.eventId), normalizeDescriptor(rawEvent),
-                    ))) {
-                    shadowed = true;
-                    break;
-                }
-                current = allNodes.find((candidate) => candidate.id === current.parentId);
-            }
-            if (shadowed) return;
-
-            matches.push({
-                logicalSourceNode: node,
-                logicalHandle: getTransitionExitToken(rawEvent, matchedPrefix),
+        const rawEvent = String(event.rawEvent || event.name || '').trim();
+        findContainerEventSources({
+            owner: sourceNode, rawEvent, nodes: allNodes, handlersByNodeId, index: graphIndex,
+        }).forEach(({ sourceId, sourceHandle }) => {
+            const logicalSourceNode = byId.get(sourceId);
+            if (logicalSourceNode) matches.push({
+                logicalSourceNode,
+                logicalHandle: sourceHandle,
                 rawEvent,
-                matchedPrefix,
             });
         });
     });
-
-    const uniqueByNodeAndHandle = new Map();
+    const unique = new Map();
     matches.forEach((match) => {
         const key = `${match.logicalSourceNode.id}|${match.logicalHandle}`;
-        const current = uniqueByNodeAndHandle.get(key);
-        if (!current || match.matchedPrefix.length > current.matchedPrefix.length) {
-            uniqueByNodeAndHandle.set(key, match);
-        }
+        if (!unique.has(key)) unique.set(key, match);
     });
-
-    return [...uniqueByNodeAndHandle.values()];
+    return [...unique.values()];
 };
 
 const ensureImportedBoundarySourceHandle = (boundarySource) => {
@@ -220,6 +158,7 @@ const materializeImportedBoundaryTransitions = (allNodes, sourceEdges, handlersB
         (edge) => !String(edge.id || "").startsWith("edge-internal-")
     );
     const result = [];
+    const graphIndex = createEditorNodeIndex(allNodes);
     const boundaryEvents = new Map();
 
     const ensureBoundaryEvent = (anchor, exitId, label, logicalSourceNode, logicalHandle, targetId) => {
@@ -248,6 +187,7 @@ const materializeImportedBoundaryTransitions = (allNodes, sourceEdges, handlersB
             edge.sourceHandle,
             allNodes,
             handlersByNodeId,
+            graphIndex,
         );
         boundarySources.forEach(ensureImportedBoundarySourceHandle);
 
@@ -1123,12 +1063,12 @@ export const parseScxmlFile = async (
 
     const getParallelImportMetrics = (parallelElem) => {
         const branchElements = Array.from(parallelElem.children).filter(
-            (child) => child.localName === "state"
+            (child) => child.localName === "state" || child.localName === "parallel"
         );
         let maxStatesInAnyLane = 1;
         branchElements.forEach((branchElem) => {
             const innerStates = Array.from(branchElem.children).filter(
-                (child) => child.localName === "state"
+                (child) => child.localName === "state" || child.localName === "parallel"
             );
             maxStatesInAnyLane = Math.max(
                 maxStatesInAnyLane,
@@ -1139,7 +1079,7 @@ export const parseScxmlFile = async (
         const hasCompoundLane = branchElements.some(
             (branchElem) =>
                 Array.from(branchElem.children).some(
-                    (child) => child.localName === "state"
+                    (child) => child.localName === "state" || child.localName === "parallel"
                 )
         );
         const laneHeight = hasCompoundLane ? 150 : 110;
@@ -1202,7 +1142,7 @@ export const parseScxmlFile = async (
         const fullSkillName = parallelElem.getAttribute("id") || "Parallel";
         const parallelNodeId = getNodeId();
         const branchElements = Array.from(parallelElem.children).filter(
-            (child) => child.localName === "state"
+            (child) => child.localName === "state" || child.localName === "parallel"
         );
         const branchNames = branchElements.map((branch) =>
             branch.getAttribute("id")
@@ -1280,7 +1220,7 @@ export const parseScxmlFile = async (
                 id: laneNodeId,
                 position: { x: 0, y: headerHeight + laneIdx * laneHeight },
                 parentId: parallelNodeId,
-                extent: "parent",
+                // Lanes resize with their parallel, rather than constraining it.
                 type: "parallelLane",
                 draggable: false,
                 selectable: true,
@@ -1303,10 +1243,21 @@ export const parseScxmlFile = async (
                 },
             });
 
-            // A branch state with children is represented by the lane plus its
-            // real child states. This preserves semantic compounds/parallels as
-            // selectable nodes instead of converting them into lane wrappers.
-            if (branchChildren.length > 0) {
+            // A direct nested <parallel> is itself the branch state; do not
+            // flatten its children into the outer lane (that changes SCXML
+            // semantics and discards the nested parallel boundary).
+            if (branchElem.localName === "parallel") {
+                const result = await appendNestedParallel(branchElem, {
+                    parentId: laneNodeId,
+                    position: { x: 24, y: 35 },
+                    isInitial: true,
+                });
+                const importedLane = newNodes.find((node) => node.id === laneNodeId);
+                if (importedLane) importedLane.data.initialChildId = result.nodeId;
+            } else if (branchChildren.length > 0) {
+                // A compound branch is represented by the lane and its
+                // actual children, preserving the initial child selection.
+
                 let childX = 24;
                 for (const childElem of branchChildren) {
                     const childId = childElem.getAttribute("id") || "";
@@ -1843,7 +1794,7 @@ export const parseScxmlFile = async (
 
         if (!targetNode) return;
 
-        const isFromCompound = sourceNode.type === "compound";
+        const isFromCompound = sourceNode.type === "compound" || sourceNode.type === "parallel";
 
         // Compound-level SCXML transitions such as `Talk.*` are temporary
         // boundary declarations. Keep their complete raw event until

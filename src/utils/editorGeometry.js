@@ -1,4 +1,5 @@
 import { measureContainerTask } from "./containerPerf.js";
+import { traceResizeForContainer, traceResizeNodeMutation } from "./resizeDiagnostics.js";
 import { resolveCollisionScope, resolveCollisions } from "./nodeCollisions.js";
 import { createEditorNodeIndex } from "./editorGraph.js";
 
@@ -7,6 +8,17 @@ export const getNodeId = () => `skill-node-${crypto.randomUUID()}`;
 export const COLLAPSED_CONTAINER_WIDTH = 210;
 export const COLLAPSED_CONTAINER_HEIGHT = 80;
 export const PARALLEL_EXIT_GUTTER = 170;
+// A lane with no exit ports does not need the historical 170px blank gutter.
+// Reserve just the space required by *visible* labels when exits are present.
+// The fixed constant remains a generous initial layout spacing, not a hard
+// minimum constraint on manual resizing.
+export const getParallelLaneExitGutterWidth = (events = []) => {
+    const longestLabel = (events || []).reduce((longest, event) => {
+        const label = String(event?.name || event?.rawEvent || event?.id || "");
+        return Math.max(longest, label.length);
+    }, 0);
+    return longestLabel ? Math.max(48, Math.min(220, 40 + longestLabel * 7.2)) : 0;
+};
 export const PARALLEL_NODE_GAP = 45;
 export const PARALLEL_HEADER_HEIGHT = 64;
 export const PARALLEL_LANE_CHILD_LEFT_INSET = 40;
@@ -217,7 +229,7 @@ const fitCompoundToChildrenInContext = (context, compoundId) => {
             ...withNodeDimensions(
                 compound,
                 COLLAPSED_CONTAINER_WIDTH,
-                COLLAPSED_CONTAINER_HEIGHT
+                Math.max(COLLAPSED_CONTAINER_HEIGHT, currentSize.height)
             ),
             data: {
                 ...(compound.data || {}),
@@ -547,37 +559,50 @@ const layoutSiblingScopeInContext = (
 
     if (originalChildren.length === 0) return;
 
-    const resolved = resolveCollisions(originalChildren, {
-        maxIterations: 300,
-        overlapThreshold: 0.1,
-        // resolveCollisions expands both sides of a node by margin, so half
-        // the desired visual gap produces approximately that final gap.
-        margin: Math.max(4, gap / 2),
-    });
+    // A container becoming visible must not reshuffle nodes that the user
+    // positioned deliberately. Only translate the entire sibling scope if an
+    // imported/legacy position lies outside the available header/inset area.
+    const shiftX = Math.max(0, minX - Math.min(
+        ...originalChildren.map((node) => Number(node.position?.x || 0))
+    ));
+    const shiftY = Math.max(0, minY - Math.min(
+        ...originalChildren.map((node) => Number(node.position?.y || 0))
+    ));
+    if (!shiftX && !shiftY) return;
 
-    const minResolvedX = Math.min(
-        ...resolved.map((node) => Number(node.position?.x || 0))
-    );
-    const minResolvedY = Math.min(
-        ...resolved.map((node) => Number(node.position?.y || 0))
-    );
-    const shiftX = minX - minResolvedX;
-    const shiftY = minY - minResolvedY;
-
-    resolved.forEach((node) => {
-        const liveNode = context.byId.get(node.id) || node;
-        const nextX = Number(node.position?.x || 0) + shiftX;
-        const nextY = Number(node.position?.y || 0) + shiftY;
-        const currentX = Number(liveNode.position?.x || 0);
-        const currentY = Number(liveNode.position?.y || 0);
-
-        if (nextX === currentX && nextY === currentY) return;
-
+    originalChildren.forEach((node) => {
         context.replaceNode(node.id, {
-            ...liveNode,
-            position: { x: nextX, y: nextY },
+            ...node,
+            position: {
+                x: Number(node.position?.x || 0) + shiftX,
+                y: Number(node.position?.y || 0) + shiftY,
+            },
         });
     });
+};
+
+// Generated lane wrappers are invisible coordinate layers, not physical
+// content boxes. Measure through them, without counting their saved width or
+// adding a second exit gutter. Ordinary nested containers remain real bounds.
+const measureParallelLaneContentInContext = (context, lane) => {
+    let right = PARALLEL_LANE_CHILD_LEFT_INSET;
+    let bottom = PARALLEL_LANE_CHILD_TOP_INSET;
+    const exitEvents = [...(Array.isArray(lane.data?.events) ? lane.data.events : [])];
+    const visit = (member, offsetX = 0, offsetY = 0) => {
+        if (member.hidden) return;
+        const x = offsetX + Number(member.position?.x || 0);
+        const y = offsetY + Number(member.position?.y || 0);
+        if (isAutoParallelLaneCompound(member)) {
+            if (Array.isArray(member.data?.events)) exitEvents.push(...member.data.events);
+            context.getChildren(member.id).forEach((child) => visit(child, x, y));
+            return;
+        }
+        const size = getNodeSize(member);
+        right = Math.max(right, x + size.width);
+        bottom = Math.max(bottom, y + size.height);
+    };
+    context.getChildren(lane.id).forEach((child) => visit(child));
+    return { right, bottom, gutter: getParallelLaneExitGutterWidth(exitEvents) };
 };
 
 const getExactCompoundContentSizeInContext = (context, compound) => {
@@ -611,10 +636,10 @@ const getExactCompoundContentSizeInContext = (context, compound) => {
     if (isLaneWrapper) {
         return {
             width: Math.max(
-                420,
+                280,
                 right +
                     PARALLEL_LANE_CHILD_RIGHT_INSET +
-                    PARALLEL_EXIT_GUTTER
+                    getParallelLaneExitGutterWidth(compound.data?.events || [])
             ),
             height: Math.max(
                 130,
@@ -653,6 +678,18 @@ export const normalizeContainerAutoExpansion = (allNodes) => {
             parent?.type === "parallel" ||
             parent?.type === "parallelLane";
 
+        // Lane frames and generated lane wrappers are sized from their
+        // contents by our container layout. React Flow's automatic parent
+        // growth conflicts with manual shrink and even persisted dimensions.
+        if (node.type === "parallelLane" || isAutoParallelLaneCompound(node)) {
+            // Removing expandParent alone is insufficient. React Flow's
+            // NodeResizer also treats children with extent="parent" as hard
+            // bounds; a full-width lane would make its parallel unshrinkable.
+            if (node.expandParent === false && node.extent !== "parent") return node;
+            changed = true;
+            const { extent, ...withoutExtent } = node;
+            return { ...withoutExtent, expandParent: false };
+        }
         if (!shouldExpandParent || node.expandParent === true) {
             return node;
         }
@@ -692,62 +729,28 @@ const growParallelToLaneContentsInContext = (context, parallelId) => {
 
     if (parallelLanes.length === 0) return;
 
-    // Fit automatic lane compounds first, because their required dimensions
-    // determine how large the surrounding lane and parallel must become.
-    parallelLanes.forEach((lane) => {
-        const wrapper = context
-            .getChildren(lane.id)
-            .find(isAutoParallelLaneCompound);
-
-        if (wrapper) {
-            fitCompoundToChildrenInContext(context, wrapper.id);
-        }
-    });
+    // A generated lane wrapper is only a coordinate/routing layer. Fitting it
+    // as a normal Compound would add the Compound exit gutter to a frame that
+    // already occupies the entire lane. That caused every grow-only pass to
+    // undo manual shrinking (and can repeatedly grow the parallel).
+    // Its children's intrinsic content is measured separately below.
 
     const liveParallel = context.byId.get(parallel.id) || parallel;
     const currentParallelSize = getNodeSize(liveParallel);
 
-    let requiredParallelWidth = Math.max(420, currentParallelSize.width);
+    let requiredParallelWidth = Math.max(280, currentParallelSize.width);
     const laneHeights = new Map();
 
     parallelLanes.forEach((originalLane) => {
         const lane = context.byId.get(originalLane.id) || originalLane;
         const currentLaneSize = getNodeSize(lane);
-        const laneChildren = context.getChildren(lane.id);
-        const wrapper = laneChildren.find(isAutoParallelLaneCompound);
-        const directReferences = laneChildren.filter(isEditorReferenceNode);
-        const laneMembers = wrapper
-            ? [context.byId.get(wrapper.id) || wrapper, ...directReferences]
-            : laneChildren.filter(
-                  (child) =>
-                      isParallelLaneSkillCandidate(child) ||
-                      isEditorReferenceNode(child)
-              );
-
-        let maxRight = 0;
-        let maxBottom = 0;
-
-        laneMembers.forEach((member) => {
-            const size = getNodeSize(member);
-            maxRight = Math.max(
-                maxRight,
-                Number(member.position?.x || 0) + size.width
-            );
-            maxBottom = Math.max(
-                maxBottom,
-                Number(member.position?.y || 0) + size.height
-            );
-        });
-
-        const requiredLaneWidth = wrapper
-            ? Math.max(420, maxRight + PARALLEL_LANE_CHILD_RIGHT_INSET)
-            : Math.max(
-                  420,
-                  maxRight + PARALLEL_LANE_CHILD_RIGHT_INSET + PARALLEL_EXIT_GUTTER
-              );
-        const requiredLaneHeight = wrapper
-            ? Math.max(150, maxBottom + PARALLEL_LANE_CHILD_BOTTOM_INSET)
-            : Math.max(130, maxBottom + PARALLEL_LANE_CHILD_BOTTOM_INSET);
+        const bounds = measureParallelLaneContentInContext(context, lane);
+        const requiredLaneWidth = Math.max(
+            280, bounds.right + PARALLEL_LANE_CHILD_RIGHT_INSET + bounds.gutter
+        );
+        const requiredLaneHeight = Math.max(
+            130, bounds.bottom + PARALLEL_LANE_CHILD_BOTTOM_INSET
+        );
 
         requiredParallelWidth = Math.max(
             requiredParallelWidth,
@@ -789,7 +792,7 @@ const growParallelToLaneContentsInContext = (context, parallelId) => {
             ...withNodeDimensions(
                 liveParallel,
                 COLLAPSED_CONTAINER_WIDTH,
-                COLLAPSED_CONTAINER_HEIGHT
+                Math.max(COLLAPSED_CONTAINER_HEIGHT, currentParallelSize.height)
             ),
             data: {
                 ...(liveParallel.data || {}),
@@ -831,7 +834,7 @@ const growParallelToLaneContentsInContext = (context, parallelId) => {
                 x: 0,
                 y: geometry.y,
             },
-            expandParent: true,
+            expandParent: false,
         });
     });
 
@@ -849,7 +852,7 @@ const growParallelToLaneContentsInContext = (context, parallelId) => {
                         geometry.width,
                         geometry.height
                     ),
-                    expandParent: true,
+                    expandParent: false,
                 });
             });
     });
@@ -922,7 +925,7 @@ function layoutParallelForExpansionInContext(context, parallelId) {
         );
 
     if (lanes.length === 0) {
-        const width = 420;
+        const width = 280;
         const height = Math.max(
             180,
             PARALLEL_HEADER_HEIGHT + PARALLEL_BOTTOM_PADDING + 90
@@ -942,7 +945,7 @@ function layoutParallelForExpansionInContext(context, parallelId) {
     }
 
     const laneIntrinsicSizes = new Map();
-    let requiredParallelWidth = 420;
+    let requiredParallelWidth = 280;
 
     lanes.forEach((originalLane) => {
         const lane = context.byId.get(originalLane.id) || originalLane;
@@ -998,28 +1001,15 @@ function layoutParallelForExpansionInContext(context, parallelId) {
             );
         });
 
-        const laneWidth = liveWrapper
-            ? Math.max(
-                  420,
-                  getNodeSize(liveWrapper).width,
-                  maxRight + PARALLEL_LANE_CHILD_RIGHT_INSET
-              )
-            : Math.max(
-                  420,
-                  maxRight +
-                      PARALLEL_LANE_CHILD_RIGHT_INSET +
-                      PARALLEL_EXIT_GUTTER
-              );
-        const laneHeight = liveWrapper
-            ? Math.max(
-                  130,
-                  getNodeSize(liveWrapper).height,
-                  maxBottom + PARALLEL_LANE_CHILD_BOTTOM_INSET
-              )
-            : Math.max(
-                  130,
-                  maxBottom + PARALLEL_LANE_CHILD_BOTTOM_INSET
-              );
+        // A lane's saved frame/wrapper dimensions are not content. The same
+        // content bounds drive both automatic expansion and manual shrinking.
+        const laneBounds = measureParallelLaneContentInContext(context, lane);
+        const laneWidth = Math.max(
+            280, laneBounds.right + PARALLEL_LANE_CHILD_RIGHT_INSET + laneBounds.gutter
+        );
+        const laneHeight = Math.max(
+            130, laneBounds.bottom + PARALLEL_LANE_CHILD_BOTTOM_INSET
+        );
 
         laneIntrinsicSizes.set(lane.id, {
             width: laneWidth,
@@ -1049,7 +1039,7 @@ function layoutParallelForExpansionInContext(context, parallelId) {
                 x: 0,
                 y: nextLaneY,
             },
-            expandParent: true,
+            expandParent: false,
         });
 
         // The automatic lane Compound is a structural routing wrapper whose UI
@@ -1066,7 +1056,7 @@ function layoutParallelForExpansionInContext(context, parallelId) {
                         laneHeight
                     ),
                     position: { x: 0, y: 0 },
-                    expandParent: true,
+                    expandParent: false,
                 });
             }
         }
@@ -1120,6 +1110,51 @@ const getTopmostExpandedStateContainerId = (context, containerId) => {
     return rootId;
 };
 
+
+// Compounds use the same intrinsic, bottom-up measurement as Parallels.
+// This prevents manual resizing from hiding nodes past a container border.
+export const measureCompoundMinimumSize = (allNodes, compoundId) => {
+    const context = createContainerGeometryContext(allNodes);
+    const compound = context.byId.get(compoundId);
+    if (!compound || compound.type !== "compound") return null;
+    layoutCompoundForExpansionInContext(context, compoundId);
+    return getNodeSize(context.byId.get(compoundId));
+};
+
+// Return the smallest parallel rectangle which can contain CURRENT child
+// positions. Lane frames (and old generated lane wrappers) must not contribute
+// their existing width/height: those frames are resized *with* the parallel.
+// Only their actual contents constrain the drag. This deliberately differs
+// from the expansion layout, which is allowed to normalize imported positions.
+export const measureParallelMinimumSize = (allNodes, parallelId) => {
+    const context = createContainerGeometryContext(allNodes);
+    const parallel = context.byId.get(parallelId);
+    if (!parallel || parallel.type !== "parallel") return null;
+    const lanes = context.getChildren(parallelId)
+        .filter((node) => node.type === "parallelLane")
+        .sort((a, b) => Number(a.position?.y || 0) - Number(b.position?.y || 0));
+    const laneHeights = new Map();
+    let width = 280;
+    let height = PARALLEL_HEADER_HEIGHT + PARALLEL_BOTTOM_PADDING;
+    for (const lane of lanes) {
+        const bounds = measureParallelLaneContentInContext(context, lane);
+        const laneWidth = Math.max(
+            280, bounds.right + PARALLEL_LANE_CHILD_RIGHT_INSET + bounds.gutter
+        );
+        const laneHeight = Math.max(130, bounds.bottom + PARALLEL_LANE_CHILD_BOTTOM_INSET);
+        width = Math.max(width, laneWidth);
+        laneHeights.set(lane.id, laneHeight);
+        height += laneHeight;
+    }
+    const result = { width, height: Math.max(180, height), laneHeights };
+    traceResizeForContainer(parallelId, 'geometry:measureParallelMinimumSize', {
+        minimum: { width: result.width, height: result.height },
+        laneHeights: [...laneHeights.entries()],
+        current: getNodeSize(parallel),
+    });
+    return result;
+};
+
 const layoutStateContainerForExpansionImpl = (allNodes, containerId) => {
     if (!Array.isArray(allNodes) || allNodes.length === 0 || !containerId) {
         return allNodes;
@@ -1149,6 +1184,82 @@ const layoutStateContainerForExpansionImpl = (allNodes, containerId) => {
     return orderNodesParentsFirst(context.nodes);
 };
 
+// Manual Resize action: fit the selected subtree from its leaves up, even
+// when descendants are collapsed. Collapsed nodes retain their compact visual
+// footprint; only their saved expanded sizes are recalculated. Finally refit
+// visible ancestors to the resulting (visible) child geometry.
+const resizeStateContainerTreeImpl = (allNodes, containerId) => {
+    if (!Array.isArray(allNodes) || !containerId) return allNodes;
+    const context = createContainerGeometryContext(allNodes);
+    const selected = context.byId.get(containerId);
+    if (!selected || !["compound", "parallel"].includes(selected.type)) return allNodes;
+
+    const isInSubtree = (node) => {
+        let parentId = node.parentId;
+        const seen = new Set();
+        while (parentId && !seen.has(parentId)) {
+            if (parentId === containerId) return true;
+            seen.add(parentId);
+            parentId = context.byId.get(parentId)?.parentId;
+        }
+        return false;
+    };
+    // Measure hidden/collapsed descendants first so they have an accurate
+    // expandedContainerSize for the next time the user opens them.
+    const collapsed = allNodes.filter((node) =>
+        ["compound", "parallel"].includes(node.type) &&
+        node.data?.isCollapsed && (node.id === containerId || isInSubtree(node))
+    ).sort((a, b) =>
+        getNodeNestingDepthFromContext(b, context) - getNodeNestingDepthFromContext(a, context)
+    );
+    collapsed.forEach(({ id }) => {
+        const current = context.byId.get(id);
+        if (!current?.data?.isCollapsed) return;
+        const originalSize = getNodeSize(current);
+        context.replaceNode(id, {
+            ...current,
+            data: { ...(current.data || {}), isCollapsed: false },
+        });
+        if (current.type === "compound") {
+            layoutCompoundForExpansionInContext(context, id);
+        } else {
+            layoutParallelForExpansionInContext(context, id);
+        }
+        const expanded = context.byId.get(id);
+        const size = getNodeSize(expanded);
+        // Collapsed height can be larger than the generic footprint because
+        // it carries several boundary exits. Do not truncate its handles.
+        context.replaceNode(id, {
+            ...withNodeDimensions(expanded, originalSize.width, originalSize.height),
+            data: {
+                ...(expanded.data || {}),
+                isCollapsed: true,
+                expandedContainerSize: {
+                    ...(expanded.data?.expandedContainerSize || {}),
+                    width: size.width,
+                    height: size.height,
+                },
+            },
+        });
+    });
+
+    const rootId = getTopmostExpandedStateContainerId(context, containerId);
+    const root = context.byId.get(rootId);
+    if (root?.type === "compound") {
+        layoutCompoundForExpansionInContext(context, root.id);
+    } else if (root?.type === "parallel") {
+        layoutParallelForExpansionInContext(context, root.id);
+    }
+    return orderNodesParentsFirst(context.nodes);
+};
+
+export const resizeStateContainerTree = (allNodes, containerId) =>
+    measureContainerTask(
+        "resize container subtree",
+        () => resizeStateContainerTreeImpl(allNodes, containerId),
+        { nodes: allNodes?.length || 0, containerId }
+    );
+
 // Re-evaluate nested state containers from the inside out using one shared
 // geometry context. Previously every container pass rescanned and remapped the
 // complete node array, which made Compound/Parallel-heavy graphs approach
@@ -1170,7 +1281,11 @@ const growAllStateContainersToContentsImpl = (allNodes) => {
 
     containers.forEach((container) => {
         if (container.type === "compound") {
-            fitCompoundToChildrenInContext(context, container.id);
+            // Generated lane wrappers are fitted by the lane itself below.
+            // Compounds inside them have already been fitted bottom-up.
+            if (!isAutoParallelLaneCompound(container)) {
+                fitCompoundToChildrenInContext(context, container.id);
+            }
         } else {
             growParallelToLaneContentsInContext(context, container.id);
         }
@@ -1314,6 +1429,10 @@ export const layoutStateContainerForExpansion = (allNodes, containerId) =>
 export const growAllStateContainersToContents = (allNodes) =>
     measureContainerTask(
         "grow all compound/parallel containers",
-        () => growAllStateContainersToContentsImpl(allNodes),
+        () => {
+            const result = growAllStateContainersToContentsImpl(allNodes);
+            traceResizeNodeMutation('geometry:growAllStateContainersToContents', allNodes, result);
+            return result;
+        },
         { nodes: allNodes?.length || 0 }
     );

@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { isSlotEdge } from "../../../utils/editorGraph";
 import { getForwardingNopScxmlStateId } from "../../../utils/editorScxml";
 import { validateParameterValue } from "../../../utils/valueValidation.js";
+import { validateStateRename } from "../../../utils/stateNameValidation.js";
 
 const getParameterNodeIdentity = (node) => [
     node.type,
@@ -60,8 +61,11 @@ export function useEditorNodeDataActions({
         (nodeId, name, commit = false) => {
             if (!nodeId) return;
 
-            const sourceNode = nodes.find((node) => node.id === nodeId);
-            if (!sourceNode) return;
+            const currentDocumentNodes = getDocumentSnapshot?.()?.nodes || nodes;
+            const sourceNode = currentDocumentNodes.find((node) => node.id === nodeId);
+            if (!sourceNode) return "State not found.";
+            const nameError = validateStateRename(currentDocumentNodes, nodeId, name);
+            if (nameError) return nameError;
 
             setNodes((currentNodes) =>
                 currentNodes.map((node) => {
@@ -170,6 +174,7 @@ export function useEditorNodeDataActions({
         },
         [
             nodes,
+            getDocumentSnapshot,
             setNodes,
             applyWorkflowCommand,
             syncStateEditorPositions,

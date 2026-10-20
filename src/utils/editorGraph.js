@@ -219,6 +219,22 @@ export const getCollapsedTransitionSource = (edge, nodeById) => {
 
     if (!collapsedAncestor) return null;
 
+    // A transition between two descendants of a collapsed container is an
+    // internal transition. It must stay hidden, not turn into a bogus border
+    // exit (including when the target is nested several containers deep).
+    const semanticTargetId =
+        edge.data?.boundaryOriginalTarget ||
+        edge.data?.compoundOriginalTarget ||
+        edge.data?.parallelOriginalTarget ||
+        edge.target;
+    let target = nodeById.get(semanticTargetId);
+    const targetVisited = new Set();
+    while (target && !targetVisited.has(target.id)) {
+        if (target.id === collapsedAncestor.id) return null;
+        targetVisited.add(target.id);
+        target = target.parentId ? nodeById.get(target.parentId) : null;
+    }
+
     const logicalSourceId =
         edge.data?.boundaryOriginalSource ||
         edge.data?.compoundOriginalSource ||

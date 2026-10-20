@@ -50,6 +50,9 @@ import { useEditorSelectionController } from "./hooks/interaction/useEditorSelec
 import { useEditorContextMenu } from "./hooks/interaction/useEditorContextMenu";
 import { useRuntimeReplay } from "./hooks/editor/useRuntimeReplay";
 import { useLiveExecution } from "./hooks/editor/useLiveExecution.js";
+import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
+import RuntimeAssignmentsDrawer from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
+import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
 import { useEditorFind } from "./hooks/interaction/useEditorFind";
 import { useGlobalEditorShortcuts } from "./hooks/interaction/useGlobalEditorShortcuts";
 import { useEditorLibraryDrop } from "./hooks/library/useEditorLibraryDrop";
@@ -73,9 +76,49 @@ const EMPTY_RUNTIME_CONTAINERS = [];
 function AppContent() {
     const { notify } = useFeedback();
     const [isRuntimeCommanderOpen, setIsRuntimeCommanderOpen] = useState(false);
+    const [runtimeAssignmentsOpen, setRuntimeAssignmentsOpen] = useState(false);
+    const [runtimePanelFront, setRuntimePanelFront] = useState("details");
+    const toggleRuntimeAssignments = useCallback(() => {
+        const next = !runtimeAssignmentsOpen;
+        setRuntimeAssignmentsOpen(next);
+        setRuntimePanelFront(next ? "run" : "details");
+    }, [runtimeAssignmentsOpen]);
+    const bringDetailsToFront = useCallback(() => setRuntimePanelFront("details"), []);
+    const showRuntimeAssignments = useCallback(() => {
+        setRuntimeAssignmentsOpen(true);
+        setRuntimePanelFront("run");
+    }, []);
     const [liveExecution, setLiveExecution] = useState(null);
     const [runtimeExpandedContainers, setRuntimeExpandedContainers] = useState({});
+    // Container resizing updates frame geometry continuously but defers
+    // expensive transition routing until the completed layout is committed.
+    const [resizingContainerId, setResizingContainerId] = useState(null);
+    const onContainerResizeStart = useCallback((id) => setResizingContainerId(id), []);
+    const onContainerResizeEnd = useCallback(() => setResizingContainerId(null), []);
     const liveRunRef = useRef(null);
+    const liveOptionsRef = useRef({ followCamera: true });
+    const { timeline: runtimeEventTimeline, frame: selectedRuntimeFrame,
+        ingest: ingestRuntimeEvent, reset: resetRuntimeEvents,
+        seek: seekRuntimeEvent, goLive: goLiveRuntimeEvent, markGap: markRuntimeGap,
+        seedBaseline: seedRuntimeBaseline } = useRuntimeEventTimeline();
+    // Fast automatic transitions may enter the next state before React paints.
+    // Keep the transition's canvas highlight briefly without delaying events.
+    const [recentRuntimeTransition, setRecentRuntimeTransition] = useState(null);
+    const runtimeTransitionTimerRef = useRef(null);
+    const handleRuntimeEvent = useCallback((message) => {
+        ingestRuntimeEvent(message);
+        if (message.type === "transition") {
+            const data = message.data || message.details || {};
+            clearTimeout(runtimeTransitionTimerRef.current);
+            setRecentRuntimeTransition({
+                source: String(data.source || ""), target: String(data.target || ""),
+                event: String(data.event || ""),
+            });
+            runtimeTransitionTimerRef.current = setTimeout(() => setRecentRuntimeTransition(null), 650);
+        }
+    }, [ingestRuntimeEvent]);
+    useEffect(() => () => clearTimeout(runtimeTransitionTimerRef.current), []);
+
     const flowStore = useStoreApi();
     const cancelFlowConnection = useCallback(() => flowStore.getState().cancelConnection(), [flowStore]);
     const {
@@ -108,7 +151,9 @@ function AppContent() {
     const {
         nodes,
         setNodes,
+        updateGraph,
         onNodesChange,
+        flushPendingNodeChanges,
         edges,
         setEdges,
         onEdgesChange,
@@ -172,7 +217,7 @@ function AppContent() {
         setActiveTab,
         rightPanelTab,
         setRightPanelTab,
-    } = useEditorUiState({ showPanel });
+    } = useEditorUiState({ showPanel, onDetailsRequested: bringDetailsToFront });
 
     const {
         selectedNodeId,
@@ -215,6 +260,7 @@ function AppContent() {
         manualSlots,
         setNodes,
         setEdges,
+        updateGraph,
         setGlobalDataModel,
     });
     const invalidateRustDocument = rustWorkflowDocument.invalidate;
@@ -339,16 +385,14 @@ function AppContent() {
         handleNodeDrag,
         handleNodeDragStop,
     } = useNodeDrag({
-        edges,
+        updateGraph,
         activeMode,
         setNodes,
-        setEdges,
-        setSlotEdges,
-        setSlotNodes,
         setSelectedNodeId,
         setHoveredEditorEdgeId,
         screenToFlowPosition,
         getNodes,
+        flushPendingNodeChanges,
         syncStatePosition: rustWorkflowDocument.syncStatePosition,
         syncStateEditorPositions:
             rustWorkflowDocument.syncStateEditorPositions,
@@ -360,7 +404,7 @@ function AppContent() {
         isDraggingNode,
         selectedNodeId,
         setNodes,
-        setEdges,
+        updateGraph,
         setSelectedNodeId,
     });
 
@@ -390,6 +434,7 @@ function AppContent() {
         selectedNodeId,
         setNodes,
         setEdges,
+        updateGraph,
         setSlotNodes,
         setSlotEdges,
         setManualSlots,
@@ -421,6 +466,7 @@ function AppContent() {
         handleEdgeMouseLeave,
     } = useEditorSelectionController({
         nodes,
+        edges,
         clearAllEdgeSelection,
         selectSlotEdge,
         selectTransitionEdge,
@@ -443,11 +489,11 @@ function AppContent() {
         handleCreateCompoundFromSelected,
         handleCreateParallelFromSelected,
     } = useContainerCreation({
+        updateGraph,
         nodes,
         edges,
         isDraggingNode,
         setNodes,
-        setEdges,
         setSelectedNodeId,
         setActiveTab,
         setContextMenu,
@@ -647,6 +693,9 @@ function AppContent() {
         handleOpenTransition,
         handleOpenSubMachine,
         handleToggleContainerCollapse: toggleContainerCollapse,
+        onContainerResizeStart,
+        onContainerResizeEnd,
+        resizingContainerId,
     });
 
     const selectedRawNode = useMemo(() => {
@@ -861,7 +910,7 @@ function AppContent() {
         colorblindMode,
         injectedNodes,
         injectedSlotNodes,
-        isDraggingNode,
+        isDraggingNode: isDraggingNode || Boolean(resizingContainerId),
         draggingNodeId,
         hiddenNodeIds,
         parallelDropTargetId,
@@ -906,25 +955,73 @@ function AppContent() {
         if (update.action === "load" && update.workflow) {
             liveRunRef.current = { workflow: update.workflow, tabsSnapshot: update.tabsSnapshot || [update.workflow] };
         }
-        if (!update.following || !update.workflow) {
-            setRuntimeExpandedContainers((current) => Object.keys(current).length ? {} : current);
-            setLiveExecution(null);
-            return;
-        }
-        if (liveRunRef.current?.workflow !== update.workflow) {
-            liveRunRef.current = { workflow: update.workflow, tabsSnapshot: [update.workflow] };
+        if (update.followCamera !== undefined) {
+            liveOptionsRef.current = {
+                ...liveOptionsRef.current, followCamera: update.followCamera,
+                autoOpenSubMachines: update.autoOpenSubMachines,
+                autoExpandCompounds: update.autoExpandCompounds,
+                autoExpandParallels: update.autoExpandParallels,
+            };
+            setLiveExecution((previous) => previous
+                ? { ...previous, ...liveOptionsRef.current } : previous);
         }
         if (update.action === "start" || update.action === "resume") {
             handleClearRuntimeLog();
             setActiveMode("overview");
         }
-        setLiveExecution({ ...update, tabsSnapshot: liveRunRef.current.tabsSnapshot });
+        if (!update.workflow || update.action === "stop" || update.action === "load") {
+            if (update.action === "stop" || !update.workflow) {
+                setRuntimeExpandedContainers((current) => Object.keys(current).length ? {} : current);
+                setLiveExecution(null);
+            }
+            return;
+        }
+        if (liveRunRef.current?.workflow !== update.workflow) {
+            liveRunRef.current = { workflow: update.workflow, tabsSnapshot: [update.workflow] };
+        }
+        // The selected event snapshot (including manual timeline scrubbing) owns the
+        // live canvas projection; control calls no longer overwrite it with polling.
     }, [handleClearRuntimeLog, setActiveMode]);
+
+    const handleRuntimeGap = useCallback((baseline) => {
+        resetRuntimeEvents();
+        markRuntimeGap();
+        seedRuntimeBaseline(baseline);
+        if (baseline && liveRunRef.current) {
+            setLiveExecution({ ...liveRunRef.current, following: true,
+                snapshot: baseline, ...liveOptionsRef.current });
+        }
+    }, [resetRuntimeEvents, markRuntimeGap, seedRuntimeBaseline]);
+
+    useEffect(() => {
+        const loaded = liveRunRef.current;
+        if (!loaded || !selectedRuntimeFrame) return;
+        const transition = runtimeEventTimeline.watching
+            ? recentRuntimeTransition || selectedRuntimeFrame.transition : selectedRuntimeFrame.transition;
+        // The selected snapshot owns the *entire* active configuration, even
+        // when a transition is focused and other Parallel lanes keep running.
+        const currentStates = selectedRuntimeFrame.activeStates || [];
+        const transitions = selectedRuntimeFrame.transitions?.length
+            ? selectedRuntimeFrame.transitions : selectedRuntimeFrame.transition
+                ? [selectedRuntimeFrame.transition] : [];
+        setLiveExecution({ ...loaded, following: true, followCamera: true,
+            ...liveOptionsRef.current, snapshot: {
+                status: "RUNNING", currentStates, transition, transitions,
+                enteredStates: selectedRuntimeFrame.enteredStates || [],
+                exitedStates: selectedRuntimeFrame.exitedStates || [],
+                exitingStates: selectedRuntimeFrame.exitingStates || [],
+                completedStates: selectedRuntimeFrame.completedStates || [],
+                finishedStates: selectedRuntimeFrame.finishedStates || [],
+                stateEntryHistory: selectedRuntimeFrame.stateEntryHistory || [],
+                checkedAt: Date.now(), stateIds: [],
+            }, action: "event_snapshot", focusRequest: selectedRuntimeFrame.id });
+    }, [selectedRuntimeFrame, runtimeEventTimeline.index, runtimeEventTimeline.watching, recentRuntimeTransition]);
 
     const {
         handleNodesChange,
         handleVisibleEdgesChange,
     } = useEditorFlowChanges({
+        updateGraph,
         nodeById,
         slotNodeIdSet,
         onNodesChange,
@@ -936,7 +1033,6 @@ function AppContent() {
         slotNodes,
         slotEdges,
         setNodes,
-        setEdges,
         setSlotEdges,
         manualSlots,
         setManualSlots,
@@ -952,6 +1048,8 @@ function AppContent() {
         handleContextMenuOpen,
         handleSelectAction,
     } = useEditorContextMenu({
+        updateGraph,
+        syncEditorStateAfterCommit: rustWorkflowDocument.syncEditorStateAfterCommit,
         contextMenu,
         setContextMenu,
         manualSlots,
@@ -1057,7 +1155,8 @@ function AppContent() {
         });
     }, []);
 
-    const { liveVisibleNodes, liveVisibleEdges, liveActive, unresolvedStates } = useLiveExecution({
+    const { liveVisibleNodes, liveVisibleEdges, liveActive, unresolvedStates,
+        runtimeParallelViews, runtimeActiveSubMachines } = useLiveExecution({
         liveExecution: runtimeLog ? null : liveExecution,
         onOpenSubMachine: handleOpenSubMachine,
         onExpandContainer: expandRuntimeContainer,
@@ -1096,6 +1195,7 @@ function AppContent() {
         createNode,
         checkSlotConnection,
         setNodes,
+        updateGraph,
         setManualSlots,
         setSelectedNodeId,
         syncInsertedEditorStatesAfterCommit:
@@ -1231,6 +1331,19 @@ function AppContent() {
         onNavigateAncestorSlot: handleNavigateAncestorSlot,
     });
 
+    // Any editor selection/focused field requests the real Details inspector.
+    useEffect(() => {
+        if (isRuntimeCommanderOpen && (selectedNodeId || parameterFocusRequest || slotFocusRequest || transitionFocusRequest)) {
+            setRuntimePanelFront("details");
+        }
+    }, [selectedNodeId, parameterFocusRequest, slotFocusRequest, transitionFocusRequest, isRuntimeCommanderOpen]);
+
+    const canvasRuntimeNodes = useMemo(() =>
+        !runtimeLog && isRuntimeCommanderOpen && liveActive
+            ? decorateLiveRuntimeNodes(liveVisibleNodes, selectedRuntimeFrame)
+            : liveVisibleNodes,
+    [runtimeLog, isRuntimeCommanderOpen, liveActive, liveVisibleNodes, selectedRuntimeFrame]);
+
     return (
         <div className="container">
             <Header
@@ -1241,6 +1354,10 @@ function AppContent() {
                 isSaving={isWorkflowSaving}
                 isOpening={isWorkflowOpening}
                 panels={panels}
+                runtimeAssignmentsVisible={isRuntimeCommanderOpen}
+                runtimeAssignmentsOpen={runtimeAssignmentsOpen}
+                onToggleRuntimeAssignments={toggleRuntimeAssignments}
+                onActivateInspector={bringDetailsToFront}
                 showTransitionEdges={showTransitionEdges}
                 onToggleTransitionEdges={() => setShowTransitionEdges((value) => !value)}
                 showSlotEdges={showSlotEdges}
@@ -1260,6 +1377,7 @@ function AppContent() {
             <EditorNotice notice={libraryDropError} onDismiss={dismissLibraryDropError} />
 
             <div className="app" data-panel-mode={panels.isDocked ? "docked" : "drawers"}
+                data-runtime-front={runtimePanelFront}
                 data-library-dragging={String(panels.libraryDragging)} data-panel-resizing={String(panels.resizing)}
                 style={{
                     "--library-width": `${panels.libraryWidth}px`,
@@ -1351,6 +1469,11 @@ function AppContent() {
                         aria-labelledby={`workflow-tab-${activeTabId}`}
                         tabIndex={0}
                         className="flow-container"
+                        onPointerDownCapture={(event) => {
+                            if (event.target.closest?.(".react-flow__node, .react-flow__edge, .node-parameter-row, .node-slot-entry")) {
+                                setRuntimePanelFront("details");
+                            }
+                        }}
                         onPointerMove={(event) => {
                             editorPointerPositionRef.current = {
                                 inside: true,
@@ -1380,7 +1503,7 @@ function AppContent() {
                             edges={edges}
                             globalDataModel={globalDataModel}
                             manualSlots={manualSlots}
-                            visibleNodes={liveVisibleNodes}
+                            visibleNodes={canvasRuntimeNodes}
                             visibleEdges={liveVisibleEdges}
                             documentKey={`${activeTabId}:${activeWorkflowTab?.documentGeneration ?? 0}`}
                             liveExecutionActive={liveActive}
@@ -1485,7 +1608,12 @@ function AppContent() {
                     />
                 </EditorPanel>
                 <EditorPanelLedge side="library" panels={panels} />
-                <EditorPanelLedge side="inspector" panels={panels} />
+                <EditorPanelLedge side="inspector" panels={panels}
+                    onActivate={bringDetailsToFront} />
+                {isRuntimeCommanderOpen && <RuntimeAssignmentsDrawer timeline={runtimeEventTimeline} frame={selectedRuntimeFrame}
+                    declaredVariables={[...(inheritedGlobalDataModel || []), ...(globalDataModel || [])]}
+                    detailsOpen={panels.inspectorOpen} open={runtimeAssignmentsOpen}
+                    onToggle={toggleRuntimeAssignments} onActivate={() => setRuntimePanelFront("run")} />}
                 {!panels.isDocked && panels.drawer && !panels.libraryDragging && (
                     <button type="button" className="editor-panel-backdrop" tabIndex={-1}
                         aria-label="Close side panel" onClick={() => panels.closePanel(panels.drawer)} />
@@ -1505,14 +1633,30 @@ function AppContent() {
             <EditorOverlays
                 runtimeCommander={{
                     isOpen: isRuntimeCommanderOpen,
-                    onClose: () => setIsRuntimeCommanderOpen(false),
+                    onClose: () => {
+                        setIsRuntimeCommanderOpen(false);
+                        setRuntimeAssignmentsOpen(false);
+                        setRuntimePanelFront("details");
+                    },
+                    onRuntimeStarted: showRuntimeAssignments,
                     workflowTab: activeWorkflowTab,
                     workflowFingerprint: activeWorkflowFingerprint,
                     getTabSnapshot,
                     getTabsSnapshot,
                     getActiveDocumentIdentity,
                     onExecutionUpdate: handleExecutionUpdate,
+                    onRuntimeEvent: handleRuntimeEvent,
+                    onRuntimeReset: resetRuntimeEvents,
+                    onRuntimeGap: handleRuntimeGap,
+                    onRuntimeBaseline: seedRuntimeBaseline,
+                    runtimeTimeline: runtimeEventTimeline,
+                    selectedRuntimeFrame,
+                    onRuntimeSeek: seekRuntimeEvent,
+                    onRuntimeLive: goLiveRuntimeEvent,
                     unresolvedStates,
+                    runtimeParallelViews,
+                    runtimeActiveSubMachines,
+                    onOpenRuntimeSubMachine: handleOpenSubMachine,
                     behaviorDirectories,
                 }}
                 slotRename={pendingSlotRename ? {

@@ -273,6 +273,7 @@ export default function EditorOverlays({
                         onHoverTransitionEdge={condition.onHoverTransitionEdge}
                         initialTargetId={condition.drawer.initialTargetId}
                         targetOnlyMode={condition.drawer.targetOnlyMode}
+                        containerEventMode={condition.drawer.containerEventMode}
                         defaultScope={condition.drawer.defaultScope}
                     />
                 )}

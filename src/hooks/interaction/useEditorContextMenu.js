@@ -1,6 +1,7 @@
+import { resolveCanonicalTransitionEdge } from "../../utils/transitionVisualOwnership.js";
 import { useCallback, useEffect, useMemo } from "react";
 import { isSlotDeletionProtected, isSlotEdge } from "../../utils/editorGraph";
-import { getAbsoluteNodePosition } from "../../utils/editorGeometry";
+import { getAbsoluteNodePosition, resizeStateContainerTree } from "../../utils/editorGeometry";
 import {
     isCloneableEditorNode,
     isEditorCloneNode,
@@ -35,6 +36,7 @@ export function useEditorContextMenu({
     selectEditorNode,
     setNodes,
     setSlotNodes,
+    updateGraph,
     setSelectedNodeId,
     setRightPanelTab,
     setActiveTab,
@@ -62,6 +64,7 @@ export function useEditorContextMenu({
     clearAllEdgeSelection,
     getNodes,
     setCenter,
+    syncEditorStateAfterCommit,
 }) {
     const selectedSlotNodes = useMemo(
         () => slotNodes.filter((node) => node.selected),
@@ -93,6 +96,14 @@ export function useEditorContextMenu({
                 }
 
                 const slotConnection = isSlotEdge(clickedEdge);
+                if (!slotConnection) {
+                    const canonical = resolveCanonicalTransitionEdge(clickedEdge, edges, nodes);
+                    if (!canonical) {
+                        setContextMenu(null);
+                        return;
+                    }
+                    clickedEdge = canonical;
+                }
                 if (slotConnection) {
                     selectSlotEdge(clickedEdge.id);
                 } else {
@@ -304,6 +315,9 @@ export function useEditorContextMenu({
                         clickedNode.type !== "slot",
                     canAddState: addStateTargets.length > 0,
                     canAddLane: clickedNode.type === "parallel",
+                    canResizeContainer:
+                        ["compound", "parallel"].includes(clickedNode.type) &&
+                        !isReference && !isStructuralHelper,
                     canDelete:
                         !protectedSlot &&
                         !isStructuralHelper &&
@@ -352,7 +366,14 @@ export function useEditorContextMenu({
                 return;
             }
 
-            if (type === "open-details" && contextNodeId) {
+            if (type === "resize-container" && contextNodeId) {
+                updateGraph(({ nodes: currentNodes }) => ({
+                    nodes: resizeStateContainerTree(currentNodes, contextNodeId),
+                }));
+                // One document snapshot is published before Rust synchronization.
+                // Node dimensions/positions are persistent editor geometry.
+                syncEditorStateAfterCommit?.();
+            } else if (type === "open-details" && contextNodeId) {
                 selectEditorNode(contextNodeId);
             } else if (type === "open-transitions" && contextNodeId) {
                 const node = nodes.find(
@@ -634,6 +655,8 @@ export function useEditorContextMenu({
             manualSlots,
             getDocumentSnapshot,
             updatePersistentEdgeControlPoints,
+            updateGraph,
+            syncEditorStateAfterCommit,
         ]
     );
 

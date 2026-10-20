@@ -2,15 +2,18 @@ import { Handle, NodeResizer, Position, useReactFlow, useUpdateNodeInternals } f
 import { useCallback, useEffect } from "react";
 import { FiChevronDown, FiChevronRight, FiPlus } from "react-icons/fi";
 import { ConnectionHandle, IncomingTransitionHandle, NodeTitle, StateActionBadges } from "./NodeChrome";
-import { getContainerExitEvents, resizeParallelLanes } from "../../utils/containerState.js";
-import { PARALLEL_BOTTOM_PADDING, PARALLEL_HEADER_HEIGHT } from "../../utils/editorGeometry.js";
+import { getCollapsedBoundaryLayout, getContainerExitEvents, resizeParallelLanes } from "../../utils/containerState.js";
+import { PARALLEL_BOTTOM_PADDING, PARALLEL_HEADER_HEIGHT, growAllStateContainersToContents, measureCompoundMinimumSize, measureParallelMinimumSize, withNodeDimensions } from "../../utils/editorGeometry.js";
+import { beginResizeTrace, finishResizeTrace, traceResizeForContainer, traceResizeGesture, traceResizeNodeMutation } from "../../utils/resizeDiagnostics.js";
 
 // A Compound/Parallel switches between a different set of handles when
 // collapsed, and imported boundary events may add handles after first render.
 // Invalidate React Flow's handle measurements when that topology changes.
 function useContainerHandleLayout(id, events, collapsed = false) {
     const updateNodeInternals = useUpdateNodeInternals();
-    const signature = `${collapsed}|${events.map((event) => String(event.id)).join("|")}`;
+    // A port can keep the same handle ID while its target changes; grouping
+    // then changes its Y coordinate and React Flow must remeasure it.
+    const signature = `${collapsed}|${events.map((event) => `${event.id}:${event.target || ""}`).join("|")}`;
     useEffect(() => {
         const frame = requestAnimationFrame(() => updateNodeInternals(id));
         return () => cancelAnimationFrame(frame);
@@ -26,6 +29,7 @@ function ContainerHeader({ id, data, type }) {
         <NodeTitle
             className={isParallel ? "parallel-group-header" : "compound-frame-header"}
             initial={data.isInitial && (isParallel || !data.autoParallelLaneCompound)}
+            initialScope={data.initialScope}
             typeLabel={isParallel ? "PARALLEL" : "COMPOUND"}
             badgeClassName={isParallel ? "parallel-badge" : "compound-frame-badge"}
             label={data.label || (isParallel ? id : "Compound")}
@@ -106,7 +110,35 @@ export function CompoundNode({ id, data = {}, selected = false }) {
     const isCollapsed = Boolean(data.isCollapsed);
     const isParallelLaneWrapper = Boolean(data.autoParallelLaneCompound);
     const events = getContainerExitEvents(data, "compound");
+    const collapsedLayout = getCollapsedBoundaryLayout(events);
     useContainerHandleLayout(id, events, isCollapsed);
+    const { setNodes, getNodes } = useReactFlow();
+    // Never cache intrinsic minimums for the whole selection lifetime: child
+    // positions/sizes may change without changing the stable getNodes callback.
+    // Let the gesture proceed down to a conservative floor; clamp to the
+    // *current* subtree only once when the gesture finishes.
+    const refitAfterResize = useCallback((_event, params) => {
+        setNodes((nodes) => {
+            const compound = nodes.find((node) => node.id === id);
+            if (!compound) return nodes;
+            const minimum = measureCompoundMinimumSize(nodes, id);
+            if (!minimum) return nodes;
+            traceResizeForContainer(id, 'compound:resizeEnd:minimum', {
+                requested: { width: params?.width, height: params?.height },
+                minimum,
+                prior: { width: compound.width, height: compound.height },
+            });
+            const width = Math.max(Number(params?.width) || 0, minimum.width);
+            const height = Math.max(Number(params?.height) || 0, minimum.height);
+            const result = growAllStateContainersToContents(nodes.map((node) =>
+                node.id === id ? withNodeDimensions(node, width, height) : node
+            ));
+            traceResizeNodeMutation('compound:resizeEnd:refit', nodes, result);
+            return result;
+        });
+        finishResizeTrace(id, params, getNodes);
+        data.onContainerResizeEnd?.(id);
+    }, [setNodes, getNodes, data.onContainerResizeEnd, id]);
 
     return (
         <div
@@ -122,6 +154,12 @@ export function CompoundNode({ id, data = {}, selected = false }) {
                 isVisible={selected && !isCollapsed && !isParallelLaneWrapper}
                 minWidth={220}
                 minHeight={120}
+                onResizeStart={(event) => {
+                    beginResizeTrace(id, 'compound', getNodes(), event);
+                    data.onContainerResizeStart?.(id);
+                }}
+                onResize={(_event, params) => traceResizeGesture(id, params)}
+                onResizeEnd={refitAfterResize}
                 color="#475569"
                 handleStyle={{ pointerEvents: "all" }}
                 lineStyle={{ pointerEvents: "all" }}
@@ -153,7 +191,7 @@ export function CompoundNode({ id, data = {}, selected = false }) {
                     type="source"
                     position={Position.Right}
                     className="compound-frame-source-handle compound-collapsed-source-handle"
-                    style={{ top: `calc(50% + ${(index - (events.length - 1) / 2) * 24}px)` }}
+                    style={{ top: collapsedLayout.positions.get(event.id) }}
                     isConnectableStart={true}
                     isConnectableEnd={false}
                     title={`Outgoing transition: ${event.name || event.rawEvent || event.id}`}
@@ -167,16 +205,47 @@ export function CompoundNode({ id, data = {}, selected = false }) {
 export function ParallelNode({ id, data, selected = false }) {
     const isCollapsed = Boolean(data.isCollapsed);
     const events = getContainerExitEvents(data, "parallel");
+    const collapsedLayout = getCollapsedBoundaryLayout(events);
     useContainerHandleLayout(id, events, isCollapsed);
-    const { setNodes } = useReactFlow();
+    const { setNodes, getNodes } = useReactFlow();
     const laneCount = Math.max(1, Array.isArray(data.lanes) ? data.lanes.length : 1);
+    // The intrinsic minimum belongs to the *resize transaction*, not to the
+    // selection. Otherwise the stable getNodes reference leaves a stale width
+    // limit in NodeResizer even after lane content has changed.
     const minHeight = PARALLEL_HEADER_HEIGHT + PARALLEL_BOTTOM_PADDING + laneCount * 90;
-    const handleResize = useCallback((_event, params) => {
+    // The graph change handler follows lane frames during the gesture without
+    // rebuilding transitions. Only the final content-aware constraints and
+    // nested-container fit run once when the gesture finishes.
+    const refitAfterResize = useCallback((_event, params) => {
         const width = Number(params?.width);
         const height = Number(params?.height);
-        if (!Number.isFinite(width) || !Number.isFinite(height)) return;
-        setNodes((nodes) => resizeParallelLanes(nodes, id, width, height));
-    }, [id, setNodes]);
+        setNodes((nodes) => {
+            const parallel = nodes.find((node) => node.id === id);
+            if (!parallel) return nodes;
+            const requestedWidth = Number.isFinite(width) ? width : Number(parallel.width || parallel.style?.width);
+            const requestedHeight = Number.isFinite(height) ? height : Number(parallel.height || parallel.style?.height);
+            // Re-measure the current descendants at release, after React
+            // Flow's intermediate dimensions have been applied. Do not trust
+            // a minimum cached at the time the container was selected.
+            const currentMinimum = measureParallelMinimumSize(nodes, id);
+            traceResizeForContainer(id, 'parallel:resizeEnd:minimum', {
+                requested: { width: requestedWidth, height: requestedHeight },
+                minimum: currentMinimum && {
+                    width: currentMinimum.width,
+                    height: currentMinimum.height,
+                    laneHeights: [...currentMinimum.laneHeights.entries()],
+                },
+                prior: { width: parallel.width, height: parallel.height },
+            });
+            const resized = resizeParallelLanes(nodes, id, requestedWidth, requestedHeight, currentMinimum);
+            traceResizeNodeMutation('parallel:resizeEnd:lanes', nodes, resized);
+            const fitted = growAllStateContainersToContents(resized);
+            traceResizeNodeMutation('parallel:resizeEnd:growAll', resized, fitted);
+            return fitted;
+        });
+        finishResizeTrace(id, params, getNodes);
+        data.onContainerResizeEnd?.(id);
+    }, [id, setNodes, getNodes, data.onContainerResizeEnd]);
 
     return (
         <div
@@ -191,12 +260,20 @@ export function ParallelNode({ id, data, selected = false }) {
                 color="#0284c7"
                 handleStyle={{ pointerEvents: "all" }}
                 lineStyle={{ pointerEvents: "all" }}
-                onResize={handleResize}
+                onResizeStart={(event) => {
+                    beginResizeTrace(id, 'parallel', getNodes(), event);
+                    data.onContainerResizeStart?.(id);
+                }}
+                onResize={(_event, params) => traceResizeGesture(id, params)}
+                onResizeEnd={refitAfterResize}
             />
             <StateActionBadges id={id} data={data} />
             <IncomingTransitionHandle handleId="target" className="parallel-group-handle" />
             <ContainerHeader id={id} data={data} type="parallel" />
             <CollapsedSlotAnchor data={data} />
+            {/* A Parallel can also catch global SCXML events without a skill
+                prefix. Those direct handlers belong on the Parallel itself. */}
+            {!isCollapsed && <BoundaryExits events={events.filter(event => event.editorDirectParallelEvent)} />}
             {isCollapsed && events.map((event, index) => (
                 <ConnectionHandle
                     key={`collapsed-parallel-source-${event.id}`}
@@ -205,7 +282,7 @@ export function ParallelNode({ id, data, selected = false }) {
                     position={Position.Right}
                     className="parallel-collapsed-source-handle"
                     style={{
-                        top: `calc(50% + ${(index - (events.length - 1) / 2) * 24}px)`,
+                        top: collapsedLayout.positions.get(event.id),
                         left: "auto",
                         right: "0",
                     }}
@@ -259,13 +336,12 @@ export function ParallelLaneNode({ id, data = {}, selected = false }) {
                 type="source"
                 position={Position.Right}
                 id="parallel-entry"
-                className="target-handle"
+                className="parallel-lane-entry-handle"
                 style={{
                     top: "50%",
                     left: "0",
                     right: "auto",
                     transform: "translate(-50%, -50%)",
-                    "--connection-handle-color": "#0284c7",
                 }}
                 isConnectableStart={false}
                 isConnectableEnd={false}

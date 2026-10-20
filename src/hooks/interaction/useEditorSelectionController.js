@@ -1,8 +1,10 @@
+import { resolveCanonicalTransitionEdge } from "../../utils/transitionVisualOwnership.js";
 import { useCallback } from "react";
 import { isSlotEdge } from "../../utils/editorGraph";
 
 export function useEditorSelectionController({
     nodes,
+    edges,
     clearAllEdgeSelection,
     selectSlotEdge,
     selectTransitionEdge,
@@ -27,12 +29,14 @@ export function useEditorSelectionController({
                 return;
             }
 
+            const canonical = resolveCanonicalTransitionEdge(edge, edges, nodes);
+            if (!canonical) return;
             selectTransitionEdge(
-                edge.id,
+                canonical.id,
                 Boolean(event.ctrlKey || event.metaKey)
             );
         },
-        [selectSlotEdge, selectTransitionEdge]
+        [selectSlotEdge, selectTransitionEdge, edges, nodes]
     );
 
     const handleEdgeDoubleClick = useCallback(
@@ -49,9 +53,10 @@ export function useEditorSelectionController({
                 return;
             }
 
-            onTransitionEdgeDoubleClick(event, edge);
+            const canonical = resolveCanonicalTransitionEdge(edge, edges, nodes);
+            if (canonical) onTransitionEdgeDoubleClick(event, canonical);
         },
-        [onTransitionEdgeDoubleClick, selectSlotEdge]
+        [onTransitionEdgeDoubleClick, selectSlotEdge, edges, nodes]
     );
 
     const handleNodeClick = useCallback(

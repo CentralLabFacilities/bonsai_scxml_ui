@@ -37,6 +37,7 @@ export function useTransitionGraph({
     manualSlots,
     setNodes,
     setEdges,
+    updateGraph,
     setSlotNodes,
     setSlotEdges,
     setManualSlots,
@@ -510,247 +511,92 @@ export function useTransitionGraph({
                     ? exitedBoundarySteps.slice(currentBoundaryIndex + 1)
                     : exitedBoundarySteps;
 
-            const logicalDuplicate = edges.some((edge) =>
-                !edge.data?.boundaryInternalEdge &&
-                !edge.data?.compoundInternalEdge &&
-                !edge.data?.parallelInternalEdge &&
-                getLogicalEdgeSourceId(edge) === logicalSourceId &&
-                String(getLogicalEdgeSourceHandle(edge)) === logicalSourceHandle &&
-                edge.target === params.target
-            );
+            const currentParallel = [...exitedBoundarySteps].reverse().find(
+                (step) => step.kind === "parallel"
+            )?.container?.id;
+            const logicalEventName = (state, handle) => {
+                const name = String(state?.data?.fullSkillName || state?.data?.label || state?.id || "")
+                    .split("#")[0].split(".").pop();
+                return `${name}.${handle}`;
+            };
+            const currentEventName = logicalEventName(logicalSourceNode, logicalSourceHandle);
+            const logicalDuplicate = edges.find((edge) => {
+                if (edge.data?.boundaryInternalEdge || edge.data?.compoundInternalEdge ||
+                    edge.data?.parallelInternalEdge || edge.target !== params.target) return false;
+                const otherSourceId = getLogicalEdgeSourceId(edge);
+                const otherHandle = String(getLogicalEdgeSourceHandle(edge));
+                if (otherSourceId === logicalSourceId && otherHandle === logicalSourceHandle) return true;
+                if (!currentParallel) return false;
+                const otherSource = nodes.find((node) => node.id === otherSourceId);
+                if (!otherSource || logicalEventName(otherSource, otherHandle) !== currentEventName) return false;
+                const otherParallel = [...getExitedBoundarySteps(
+                    otherSource, semanticTargetNode, nodes
+                )].reverse().find((step) => step.kind === "parallel")?.container?.id;
+                return otherParallel === currentParallel;
+            });
 
             if (logicalDuplicate) {
                 openConditionDrawer(
-                    logicalSourceId,
-                    logicalSourceHandle,
+                    getLogicalEdgeSourceId(logicalDuplicate),
+                    String(getLogicalEdgeSourceHandle(logicalDuplicate)),
                     params.target
                 );
                 return;
             }
 
-            // Any transition that crosses a Compound/Parallel boundary is
-            // represented as a chain of display-only helper edges. The final
-            // external edge keeps the original skill + exit token in metadata,
-            // so drawing onward from a border point preserves skill.event.
+            // Store ONE semantic edge and project it across every exited
+            // Compound/Parallel boundary. The projection also connects every
+            // matching skill in sibling parallel lanes (respecting nearer
+            // unconditional handlers); helper edges must never be persisted
+            // as separate SCXML transitions.
             if (boundarySource || boundaryStepsToCreate.length > 0) {
-                const baseName =
-                    logicalSourceNode.data?.label ||
-                    String(logicalSourceNode.data?.fullSkillName || "state")
-                        .split("#")[0]
-                        .split(".")
-                        .pop();
-                const exitLabel = `${baseName}.${logicalSourceHandle}`;
-                const sharedExitId = String(
-                    boundarySource?.event?.id ||
-                    `${logicalSourceId}-${logicalSourceHandle}`
-                );
-
-                let currentVisualSourceId = sourceNode.id;
-                let currentVisualSourceHandle =
-                    params.sourceHandle || logicalSourceHandle;
-                const helperEdges = [];
-                const anchorUpdates = new Map();
-                const crossedKinds = new Set();
-
-                boundaryStepsToCreate.forEach((step) => {
-                    crossedKinds.add(step.kind);
-                    const exitId = sharedExitId;
-
-                    helperEdges.push({
-                        id:
-                            `edge-internal-boundary-${logicalSourceId}-` +
-                            `${logicalSourceHandle}-${step.anchor.id}-${crypto.randomUUID()}`,
-                        source: currentVisualSourceId,
-                        target: step.anchor.id,
-                        sourceHandle: currentVisualSourceHandle,
-                        targetHandle: `target-${exitId}`,
-                        type: "smoothstep",
-                        selectable: false,
-                        focusable: false,
-                        style: {
-                            strokeDasharray: "4 4",
-                            stroke: "#0284c7",
-                            strokeWidth: 1.5,
-                        },
-                        data: {
-                            boundaryInternalEdge: true,
-                            boundaryKind: step.kind,
-                            boundaryExitId: exitId,
-                            boundaryOriginalSource: logicalSourceId,
-                            boundaryOriginalSourceHandle: logicalSourceHandle,
-                            ...(step.kind === "compound"
-                                ? {
-                                    compoundInternalEdge: true,
-                                    compoundExitId: exitId,
-                                }
-                                : {
-                                    parallelInternalEdge: true,
-                                    parallelExitId: exitId,
-                                }),
-                        },
-                    });
-
-                    anchorUpdates.set(step.anchor.id, {
-                        kind: step.kind,
-                        exitId,
-                    });
-                    currentVisualSourceId = step.anchor.id;
-                    currentVisualSourceHandle = exitId;
-                });
-
-                // If the drag started from an already existing border point,
-                // preserve which kinds of boundary have already been crossed.
-                exitedBoundarySteps
-                    .slice(0, Math.max(0, currentBoundaryIndex + 1))
-                    .forEach((step) => crossedKinds.add(step.kind));
-
-                const externalEdge = {
-                    id:
-                        `edge-${logicalSourceId}-${logicalSourceHandle}-` +
-                        `${params.target}-${crypto.randomUUID()}`,
-                    source: currentVisualSourceId,
+                const semanticEdge = {
+                    id: `edge-${logicalSourceId}-${logicalSourceHandle}-${params.target}-${crypto.randomUUID()}`,
+                    source: logicalSourceId,
                     target: params.target,
-                    sourceHandle: currentVisualSourceHandle,
+                    sourceHandle: logicalSourceHandle,
                     targetHandle: params.targetHandle,
                     label: logicalSourceHandle,
                     type: "smartTransition",
                     markerEnd: { type: MarkerType.ArrowClosed },
-                    data: {
-                        cond: "",
-                        assignments: [],
-                        assign: null,
-                        boundaryOriginalSource: logicalSourceId,
-                        boundaryOriginalSourceHandle: logicalSourceHandle,
-                        boundaryExitId: sharedExitId,
-                        ...(crossedKinds.has("compound") || sourceNode.type === "compound"
-                            ? {
-                                compoundOriginalSource: logicalSourceId,
-                                compoundOriginalSourceHandle: logicalSourceHandle,
-                                compoundExitId: sharedExitId,
-                            }
-                            : {}),
-                        ...(crossedKinds.has("parallel") || sourceNode.type === "parallelLane"
-                            ? {
-                                parallelOriginalSource: logicalSourceId,
-                                parallelOriginalSourceHandle: logicalSourceHandle,
-                                parallelExitId: sharedExitId,
-                            }
-                            : {}),
-                    },
+                    data: { cond: "", assignments: [], assign: null },
                 };
-
-                const nextEdges = [...edges, externalEdge, ...helperEdges];
-                setEdges(nextEdges);
-
-                setNodes((currentNodes) => {
-                    const childRightByCompound = new Map();
-                    return currentNodes.map((node) => {
-                        if (node.id === logicalSourceId) {
-                            const events = node.data?.events || [];
-                            if (events.some((event) => String(event.id) === logicalSourceHandle)) {
-                                return node;
-                            }
-                            return {
-                                ...node,
-                                data: {
-                                    ...node.data,
-                                    events: [
-                                        ...events,
-                                        {
-                                            id: logicalSourceHandle,
-                                            selectedPackage: getSkillPackageName(
-                                                targetNode?.data?.fullSkillName
-                                            ),
-                                            selectedSkill:
-                                                targetNode?.data?.fullSkillName?.split("#")[0] || "",
-                                            target: params.target,
-                                            cond: "",
-                                            assignments: [],
-                                            assignLocation: "",
-                                            assignExpr: "",
-                                        },
-                                    ],
-                                },
-                            };
-                        }
-
-                        const update = anchorUpdates.get(node.id);
-                        if (!update) return node;
-
-                        const currentEvents = (node.data?.events || []).filter(
-                            (event) => String(event?.id || "") !== "compound-entry"
-                        );
-                        const existingIndex = currentEvents.findIndex(
-                            (event) => String(event.id) === String(update.exitId)
-                        );
-                        const boundaryEvent = {
-                            ...(existingIndex >= 0 ? currentEvents[existingIndex] : {}),
-                            id: update.exitId,
-                            name: exitLabel,
-                            rawEvent: exitLabel,
-                            target: params.target,
-                            sourceNodeId: logicalSourceId,
-                            transitionHandleId: logicalSourceHandle,
-                        };
-                        const nextEvents = existingIndex >= 0
-                            ? currentEvents.map((event, index) =>
-                                index === existingIndex ? boundaryEvent : event
-                            )
-                            : [...currentEvents, boundaryEvent];
-
-                        if (node.type !== "compound") {
-                            return {
-                                ...node,
-                                data: { ...node.data, events: nextEvents },
-                            };
-                        }
-
-                        let childRight = childRightByCompound.get(node.id);
-                        if (childRight === undefined) {
-                            childRight = getCompoundChildrenRight(
-                                node.id,
-                                currentNodes
-                            );
-                            childRightByCompound.set(node.id, childRight);
-                        }
-                        const requiredWidth =
-                            childRight +
-                            COMPOUND_PADDING_X +
-                            getCompoundExitGutterWidth(nextEvents);
-
-                        return {
-                            ...node,
-                            style: {
-                                ...node.style,
-                                width: Math.max(
-                                    Number(node.style?.width) || 320,
-                                    requiredWidth
-                                ),
-                            },
-                            data: { ...node.data, events: nextEvents },
-                        };
-                    });
+                // An imported or editor-only event can be used as a handle.
+                // Adding its display metadata must not add an extra transition.
+                const nextNodes = nodes.map((node) => {
+                    if (node.id !== logicalSourceId ||
+                        (node.data?.events || []).some((event) =>
+                            String(event.id) === logicalSourceHandle)) return node;
+                    return {
+                        ...node,
+                        data: {
+                            ...(node.data || {}),
+                            events: [...(node.data?.events || []), {
+                                id: logicalSourceHandle,
+                                target: null,
+                                editorBoundarySynthetic: true,
+                            }],
+                        },
+                    };
                 });
-
-                requestAnimationFrame(() => {
-                    anchorUpdates.forEach((_, nodeId) =>
-                        updateNodeInternals(nodeId)
-                    );
-                });
-
-                const outgoingFromHandle = nextEdges.filter(
-                    (edge) =>
-                        !edge.data?.boundaryInternalEdge &&
-                        getLogicalEdgeSourceId(edge) === logicalSourceId &&
-                        String(getLogicalEdgeSourceHandle(edge)) === logicalSourceHandle
+                const normalized = rebuildBoundaryTransitionsIncremental(
+                    nextNodes, [...edges, semanticEdge], {
+                        previousEdges: edges,
+                        changedEdgeIds: [semanticEdge.id],
+                    }
                 );
-                if (outgoingFromHandle.length >= 2) {
-                    openConditionDrawer(
-                        logicalSourceId,
-                        logicalSourceHandle,
-                        params.target,
-                        nextEdges
-                    );
+                updateGraph({ nodes: normalized.nodes, edges: normalized.edges });
+                requestAnimationFrame(() => {
+                    normalized.affectedNodeIds.forEach((id) => updateNodeInternals(id));
+                });
+                const outgoing = normalized.edges.filter((edge) =>
+                    !edge.data?.boundaryInternalEdge &&
+                    getLogicalEdgeSourceId(edge) === logicalSourceId &&
+                    String(getLogicalEdgeSourceHandle(edge)) === logicalSourceHandle
+                );
+                if (outgoing.length > 1) {
+                    openConditionDrawer(logicalSourceId, logicalSourceHandle,
+                        params.target, normalized.edges);
                 }
                 void syncTransitionsForSource?.(logicalSourceId);
                 return;
@@ -1331,6 +1177,7 @@ export function useTransitionGraph({
             nodes,
             setEdges,
             setNodes,
+            updateGraph,
             updateNodeInternals,
             syncTransitionsForSource,
             handleFlowSlotConnect,
@@ -1357,6 +1204,7 @@ export function useTransitionGraph({
         setGlobalDataModel,
         setNodes,
         setEdges,
+        updateGraph,
         updateNodeInternals,
         syncTransitionsForSource,
         setDrawerData,

@@ -1,5 +1,5 @@
-import { memo, useMemo } from "react";
-import { FiActivity, FiExternalLink, FiLayers } from "react-icons/fi";
+import { memo, useEffect, useMemo, useState } from "react";
+import { FiActivity, FiArrowRight, FiExternalLink, FiLayers } from "react-icons/fi";
 import ParallelLaneEditor from "./ParallelLaneEditor.jsx";
 import { NodeReferenceCard } from "./DetailsPanelPrimitives.jsx";
 import {
@@ -169,6 +169,13 @@ function GeneralDetailsSection({
     onMoveParallelLane,
     onDeleteParallelLane,
 }) {
+    const [nameError, setNameError] = useState("");
+    useEffect(() => setNameError(""), [selectedNode.id]);
+    const editName = (value, commit = false) => {
+        const error = (commit ? onUpdateNameCommit : onUpdateName)?.(value);
+        setNameError(typeof error === "string" ? error : "");
+    };
+
     const targetNodeIndex = useMemo(
         () => createDetailsTargetIndex(availableTargetNodes, skillOutgoingTransitions, selectedNode.id),
         [availableTargetNodes, skillOutgoingTransitions, selectedNode.id]
@@ -248,13 +255,12 @@ function GeneralDetailsSection({
                             className="text-field"
                             type="text"
                             value={selectedNode.data.label}
-                            onChange={(e) =>
-                                onUpdateName(e.target.value)
-                            }
-                            onBlur={(e) =>
-                                onUpdateNameCommit?.(e.target.value)
-                            }
+                            onChange={(e) => editName(e.target.value)}
+                            onBlur={(e) => editName(e.target.value, true)}
+                            aria-invalid={Boolean(nameError)}
+                            aria-describedby={nameError ? "state-name-error" : undefined}
                         />
+                        {nameError && <span id="state-name-error" className="state-name-error" role="alert">{nameError}</span>}
                     </div>
 
                     <div className="field-row">
@@ -313,13 +319,12 @@ function GeneralDetailsSection({
                             className="text-field"
                             type="text"
                             value={selectedNode.data.label || ""}
-                            onChange={(e) =>
-                                onUpdateName(e.target.value)
-                            }
-                            onBlur={(e) =>
-                                onUpdateNameCommit?.(e.target.value)
-                            }
+                            onChange={(e) => editName(e.target.value)}
+                            onBlur={(e) => editName(e.target.value, true)}
+                            aria-invalid={Boolean(nameError)}
+                            aria-describedby={nameError ? "state-name-error" : undefined}
                         />
+                        {nameError && <span id="state-name-error" className="state-name-error" role="alert">{nameError}</span>}
                     </div>
 
                     {selectedNode.type === "parallel" && (
@@ -370,13 +375,12 @@ function GeneralDetailsSection({
                                     : selectedNode.data.fullSkillName
                                     ?.split("#")[1] || ""
                             }
-                            onChange={(e) =>
-                                onUpdateName(e.target.value)
-                            }
-                            onBlur={(e) =>
-                                onUpdateNameCommit?.(e.target.value)
-                            }
+                            onChange={(e) => editName(e.target.value)}
+                            onBlur={(e) => editName(e.target.value, true)}
+                            aria-invalid={Boolean(nameError)}
+                            aria-describedby={nameError ? "state-name-error" : undefined}
                         />
+                        {nameError && <span id="state-name-error" className="state-name-error" role="alert">{nameError}</span>}
                     </div>
 
                     <div className="field-row">
@@ -479,19 +483,22 @@ function GeneralDetailsSection({
                                         </div>
                                     </div>
 
-                                    <div className="exit-token-node-references">
+                                    <div className="exit-token-node-references" aria-label={`${transition.sourceDisplayName} to ${transition.targetDisplayName}`}>
                                         <NodeReferenceCard
                                             nodeId={transition.sourceNodeId}
                                             name={transition.sourceDisplayName}
                                             badge="Source skill"
+                                            className="slot-text-field compact-slot-card slot-access-skill-card exit-token-node-reference exit-token-route-reference"
                                             onNavigate={onNavigateTransitionNode}
                                             onHover={onHoverTransitionNode}
                                             hoverFallbackId={transition.targetNodeId}
                                         />
+                                        <FiArrowRight className="exit-token-route-arrow" size={16} aria-hidden="true" />
                                         <NodeReferenceCard
                                             nodeId={transition.targetNodeId}
                                             name={transition.targetDisplayName}
                                             badge="Target"
+                                            className="slot-text-field compact-slot-card slot-access-skill-card exit-token-node-reference exit-token-route-reference"
                                             onNavigate={onNavigateTransitionNode}
                                             onHover={onHoverTransitionNode}
                                             hoverFallbackId={transition.targetNodeId}

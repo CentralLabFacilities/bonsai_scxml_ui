@@ -2,46 +2,79 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveCollisionScope } from "../../utils/nodeCollisions";
 import { cleanEventsForDeletedStates } from "../../utils/transitionDeletion";
 import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
-import { getOverviewLayoutNodeSize } from "../../utils/layoutUtils";
 import { createEditorNodeIndex } from "../../utils/editorGraph";
 import {
-    COMPOUND_HEADER_HEIGHT,
-    COMPOUND_PADDING_X,
-    COMPOUND_BOTTOM_PADDING,
     NODE_COLLISION_OPTIONS,
-    PARALLEL_NODE_GAP,
-    PARALLEL_LANE_CHILD_TOP_INSET,
     fitCompoundAndAncestorCompounds,
-    getCompoundExitGutterWidth,
     getNodeSize,
     growParallelToLaneContents,
-    isParallelLaneSkillCandidate,
     isAutoParallelLaneCompound,
     findDropContainerAtPoint,
     resolveNodeCollisionsAndRefit,
+    orderNodesParentsFirst,
 } from "../../utils/editorGeometry";
 
-const CONTAINER_EXIT_RESISTANCE = 52;
+// A state moved between parallel regions loses its old incoming/outgoing
+// transitions. Keep multi-source boundary edges for the remaining sources.
+const disconnectCrossLaneTransitions = (edges, stateId) =>
+    edges.map((edge) => {
+        const targetsMovedState =
+            edge.target === stateId ||
+            edge.data?.boundaryOriginalTarget === stateId ||
+            edge.data?.compoundOriginalTarget === stateId ||
+            edge.data?.parallelOriginalTarget === stateId;
+        if (targetsMovedState) return null;
 
-const pointInsideBounds = (point, bounds, margin = 0) => Boolean(
-    bounds &&
-    point.x >= bounds.x - margin &&
-    point.x <= bounds.x + bounds.width + margin &&
-    point.y >= bounds.y - margin &&
-    point.y <= bounds.y + bounds.height + margin
-);
+        const logicalSources = Array.isArray(edge.data?.boundaryOriginalSources)
+            ? edge.data.boundaryOriginalSources
+            : [];
+        const remainingSources = logicalSources.filter(
+            (source) => (source?.sourceId || source?.nodeId || source?.id) !== stateId
+        );
+        const removedSharedSource = remainingSources.length < logicalSources.length;
+
+        if (removedSharedSource && remainingSources.length > 0) {
+            const primary = remainingSources[0];
+            const primaryId = primary?.sourceId || primary?.nodeId || primary?.id;
+            const primaryHandle = primary?.sourceHandle || primary?.handle || "success";
+            const data = {
+                ...(edge.data || {}),
+                boundaryOriginalSources: remainingSources,
+            };
+            [
+                "boundaryOriginalSource",
+                "boundaryOriginalSourceHandle",
+                "boundaryExitId",
+                "compoundOriginalSource",
+                "compoundOriginalSourceHandle",
+                "compoundExitId",
+                "parallelOriginalSource",
+                "parallelOriginalSourceHandle",
+                "parallelExitId",
+            ].forEach((key) => delete data[key]);
+            return {
+                ...edge,
+                source: primaryId,
+                sourceHandle: primaryHandle,
+                label: primaryHandle,
+                data,
+            };
+        }
+
+        // Projected boundary exits are reconstructed from semantic sources.
+        // Do not remove a shared edge when other sources remain.
+        return edge.source === stateId || removedSharedSource ? null : edge;
+    }).filter(Boolean);
 
 export function useNodeDrag({
-    edges,
+    updateGraph,
     activeMode,
     setNodes,
-    setEdges,
-    setSlotEdges,
-    setSlotNodes,
     setSelectedNodeId,
     setHoveredEditorEdgeId,
     screenToFlowPosition,
     getNodes,
+    flushPendingNodeChanges,
     syncStatePosition,
     syncStateEditorPositions,
     syncRemovedStates,
@@ -70,7 +103,6 @@ export function useNodeDrag({
         byId: new Map(),
     });
     const dragTrashBoundsRef = useRef(null);
-    const dragOriginContainerRef = useRef(null);
     const dragOriginParentIdRef = useRef(null);
 
     const buildDragContainerIndex = useCallback((currentNodes) => {
@@ -147,7 +179,6 @@ export function useNodeDrag({
         // hit-test index once here instead of deriving signatures from the
         // full nodes array on every pointer-driven position update.
         const currentNodes = getNodes();
-        const graphIndex = createEditorNodeIndex(currentNodes);
         dragContainerIndexRef.current = buildDragContainerIndex(currentNodes);
 
         // DOM hit-testing (elementFromPoint) can force browser style/layout
@@ -164,49 +195,6 @@ export function useNodeDrag({
               }
             : null;
 
-        // Prefer the immediate Compound boundary when a skill is nested in a
-        // Compound that itself lives inside a Parallel lane. If there is no
-        // direct Compound parent, the lane boundary becomes the sticky one.
-        const immediateParent = node.parentId
-            ? graphIndex.byId.get(node.parentId)
-            : null;
-        const sourceCompound =
-            immediateParent?.type === "compound" ? immediateParent : null;
-        const sourceLane = sourceCompound
-            ? null
-            : graphIndex.findAncestor(
-                node,
-                (candidate) => candidate.type === "parallelLane"
-            );
-        const sourceContainer = sourceCompound || sourceLane;
-        if (sourceContainer) {
-            const absolute = graphIndex.getAbsolutePosition(sourceContainer);
-            const size = sourceLane
-                ? {
-                    width: Number(sourceLane.style?.width) || 420,
-                    height: Number(sourceLane.style?.height) || 110,
-                }
-                : getNodeSize(sourceCompound);
-            const parentAbsolute = immediateParent
-                ? graphIndex.getAbsolutePosition(immediateParent)
-                : { x: 0, y: 0 };
-            const nodeSize = getNodeSize(node);
-
-            dragOriginContainerRef.current = {
-                kind: sourceLane ? "parallelLane" : "compound",
-                id: sourceContainer.id,
-                x: absolute.x,
-                y: absolute.y,
-                width: size.width,
-                height: size.height,
-                parentAbsolute,
-                nodeWidth: nodeSize.width,
-                nodeHeight: nodeSize.height,
-            };
-        } else {
-            dragOriginContainerRef.current = null;
-        }
-
         dragOriginParentIdRef.current = node.parentId || null;
         setDraggingNodeId(node.id);
         setIsDraggingNode(true);
@@ -214,7 +202,7 @@ export function useNodeDrag({
 
         // Nodes innerhalb einer Lane dürfen vorübergehend den
         // bisherigen Parent verlassen.
-        if (sourceLane || sourceCompound) {
+        if (node.parentId && node.type !== "parallelLane") {
             setNodes((allNodes) =>
                 allNodes.map((candidate) =>
                     candidate.id === node.id
@@ -265,7 +253,6 @@ export function useNodeDrag({
             return;
         }
 
-        const pointerPosition = { x: flowX, y: flowY };
         const containsPointer = (entry) =>
             flowX >= entry.x &&
             flowX <= entry.x + entry.width &&
@@ -297,25 +284,6 @@ export function useNodeDrag({
                 ? hoveredContainer
                 : null;
 
-        // A node already inside a container is "sticky" at the border. The
-        // source container remains highlighted for a small margin outside its
-        // real bounds; only dragging farther than that margin releases it.
-        const origin = dragOriginContainerRef.current;
-        if (
-            !effectiveCompound &&
-            !hoveredLane &&
-            origin &&
-            pointInsideBounds(pointerPosition, origin, CONTAINER_EXIT_RESISTANCE)
-        ) {
-            if (origin.kind === "compound") {
-                effectiveCompound =
-                    dragContainerIndex.byId.get(origin.id) || origin;
-            } else if (origin.kind === "parallelLane" && nodeType !== "parallel") {
-                hoveredLane =
-                    dragContainerIndex.byId.get(origin.id) || origin;
-            }
-        }
-
         setCompoundDropTargetId(effectiveCompound?.id || null);
         setParallelDropTargetId(hoveredLane?.id || null);
     }, []);
@@ -341,79 +309,18 @@ export function useNodeDrag({
             ),
         };
 
-        // Give skills a tangible "sticky" container border while dragging.
-        // React Flow has already applied the pointer-driven position by the
-        // time this callback runs, so clamp the controlled node back inside
-        // the original container while the pointer is only slightly outside.
-        // Once the pointer moves past CONTAINER_EXIT_RESISTANCE the clamp is
-        // released and the skill can leave normally.
-        const origin = dragOriginContainerRef.current;
-        if (
-            origin &&
-            draggedNode.type === "custom" &&
-            !(draggedNode.data?.isSkillClone || draggedNode.data?.isStateClone)
-        ) {
-            const isOutsideContainer = !pointInsideBounds(
-                pointerPosition,
-                origin,
-                0
-            );
-            const isInsideResistanceZone = pointInsideBounds(
-                pointerPosition,
-                origin,
-                CONTAINER_EXIT_RESISTANCE
-            );
-
-            if (isOutsideContainer && isInsideResistanceZone) {
-                const padding = 16;
-                const parentAbsolute = origin.parentAbsolute || { x: 0, y: 0 };
-                const nodeWidth = Number(origin.nodeWidth) || getNodeSize(draggedNode).width;
-                const nodeHeight = Number(origin.nodeHeight) || getNodeSize(draggedNode).height;
-                const desiredAbsolute = {
-                    x: parentAbsolute.x + Number(draggedNode.position?.x || 0),
-                    y: parentAbsolute.y + Number(draggedNode.position?.y || 0),
-                };
-                const maxX = Math.max(
-                    origin.x + padding,
-                    origin.x + origin.width - nodeWidth - padding
-                );
-                const maxY = Math.max(
-                    origin.y + padding,
-                    origin.y + origin.height - nodeHeight - padding
-                );
-                const clampedAbsolute = {
-                    x: Math.min(maxX, Math.max(origin.x + padding, desiredAbsolute.x)),
-                    y: Math.min(maxY, Math.max(origin.y + padding, desiredAbsolute.y)),
-                };
-
-                setNodes((currentNodes) =>
-                    currentNodes.map((candidate) =>
-                        candidate.id === draggedNode.id
-                            ? {
-                                ...candidate,
-                                position: {
-                                    x: clampedAbsolute.x - parentAbsolute.x,
-                                    y: clampedAbsolute.y - parentAbsolute.y,
-                                },
-                            }
-                            : candidate
-                    )
-                );
-            }
-        }
-
         if (dragFrameRef.current === null) {
             dragFrameRef.current = requestAnimationFrame(processPendingNodeDrag);
         }
-    }, [processPendingNodeDrag, screenToFlowPosition, setNodes]);
+    }, [processPendingNodeDrag, screenToFlowPosition]);
 
     const handleNodeDragStop = useCallback((event, node) => {
+        flushPendingNodeChanges?.();
         if (dragFrameRef.current !== null) {
             cancelAnimationFrame(dragFrameRef.current);
             dragFrameRef.current = null;
         }
         pendingNodeDragRef.current = null;
-        const dragOriginContainer = dragOriginContainerRef.current;
         const dragOriginParentId = dragOriginParentIdRef.current;
         dragContainerIndexRef.current = {
             lanes: [],
@@ -423,7 +330,6 @@ export function useNodeDrag({
             byId: new Map(),
         };
         dragTrashBoundsRef.current = null;
-        dragOriginContainerRef.current = null;
         dragOriginParentIdRef.current = null;
 
         const element = document.elementFromPoint(
@@ -491,8 +397,10 @@ export function useNodeDrag({
                     (candidate.data?.inSlots || []).some((slot) => slot?.path) ||
                     (candidate.data?.outSlots || []).some((slot) => slot?.path)
             );
-            setNodes((allNodes) =>
-                allNodes
+            // Delete state nodes, their semantic transitions and orphaned slot
+            // references in one transaction. No nested React state updater.
+            updateGraph(({ nodes: allNodes, edges: currentEdges, slotEdges: currentSlotEdges, slotNodes: currentSlotNodes }) => {
+                const nextNodes = allNodes
                     .filter((candidate) => !idsToDelete.has(candidate.id))
                     .map((candidate) => {
                         const currentEvents = candidate.data?.events || [];
@@ -501,42 +409,34 @@ export function useNodeDrag({
                             nextEvents.every((event, index) => event === currentEvents[index])
                             ? candidate
                             : { ...candidate, data: { ...candidate.data, events: nextEvents } };
-                    })
-            );
-
-            setEdges((currentEdges) =>
-                currentEdges.filter(
-                    (edge) =>
-                        !idsToDelete.has(edge.source) &&
-                        !idsToDelete.has(edge.target) &&
-                        !idsToDelete.has(edge.data?.boundaryOriginalSource) &&
-                        !idsToDelete.has(edge.data?.compoundOriginalSource) &&
-                        !idsToDelete.has(edge.data?.compoundOriginalTarget) &&
-                        !idsToDelete.has(edge.data?.parallelOriginalSource) &&
-                        !idsToDelete.has(edge.data?.parallelOriginalTarget)
-                )
-            );
-
-            setSlotEdges((currentEdges) => {
-                const updatedEdges = currentEdges.filter(
-                    (edge) =>
-                        !idsToDelete.has(edge.source) &&
-                        !idsToDelete.has(edge.target)
+                    });
+                const edgeReferencesDeletedState = (edge) => [
+                    edge.source, edge.target,
+                    edge.data?.boundaryOriginalSource,
+                    edge.data?.boundaryOriginalTarget,
+                    edge.data?.compoundOriginalSource,
+                    edge.data?.compoundOriginalTarget,
+                    edge.data?.parallelOriginalSource,
+                    edge.data?.parallelOriginalTarget,
+                    ...(edge.data?.boundaryOriginalSources || []).map(
+                        (source) => source?.sourceId || source?.nodeId || source?.id
+                    ),
+                ].some((id) => idsToDelete.has(id));
+                const nextEdges = currentEdges.filter(
+                    (edge) => !edgeReferencesDeletedState(edge)
                 );
-
-                const connectedNodeIds = new Set();
-                updatedEdges.forEach((edge) => {
-                    if (edge.source) connectedNodeIds.add(edge.source);
-                    if (edge.target) connectedNodeIds.add(edge.target);
-                });
-
-                setSlotNodes((currentSlotNodes) =>
-                    currentSlotNodes.filter((slotNode) =>
-                        connectedNodeIds.has(slotNode.id)
-                    )
+                const nextSlotEdges = currentSlotEdges.filter(
+                    (edge) => !idsToDelete.has(edge.source) && !idsToDelete.has(edge.target)
                 );
-
-                return updatedEdges;
+                const connectedNodeIds = new Set(nextSlotEdges.flatMap(
+                    (edge) => [edge.source, edge.target].filter(Boolean)
+                ));
+                return {
+                    nodes: nextNodes,
+                    edges: nextEdges,
+                    slotEdges: nextSlotEdges,
+                    slotNodes: currentSlotNodes.filter((slotNode) => connectedNodeIds.has(slotNode.id)),
+                };
             });
 
             setSelectedNodeId((id) =>
@@ -653,12 +553,12 @@ export function useNodeDrag({
             y: event.clientY,
         });
 
-        setNodes((currentNodes) => {
+        updateGraph(({ nodes: currentNodes, edges: currentEdges }) => {
             const graphIndex = createEditorNodeIndex(currentNodes);
             const draggedNode = graphIndex.byId.get(node.id);
 
             if (!draggedNode) {
-                return currentNodes;
+                return null;
             }
 
             const draggedParent = draggedNode.parentId
@@ -677,10 +577,11 @@ export function useNodeDrag({
                 }
             );
 
-            let targetCompound =
+            const targetCompoundCandidate =
                 targetContainer?.type === "compound"
                     ? targetContainer
                     : null;
+            let targetCompound = targetCompoundCandidate;
             let targetLaneAtDrop =
                 targetContainer?.type === "parallelLane"
                     ? targetContainer
@@ -705,88 +606,15 @@ export function useNodeDrag({
             // The shared drop resolver already chooses the deepest real
             // user-facing container; automatic lane wrappers are mapped above.
 
-            const resistedCompoundDrop = Boolean(
-                !targetCompound &&
-                !targetLaneAtDrop &&
-                sourceCompound &&
-                dragOriginContainer?.kind === "compound" &&
-                dragOriginContainer.id === sourceCompound.id &&
-                pointInsideBounds(
-                    dropPoint,
-                    dragOriginContainer,
-                    CONTAINER_EXIT_RESISTANCE
-                )
-            );
-            if (resistedCompoundDrop) {
-                targetCompound = sourceCompound;
-            }
-
-
-            // ---------------------------------------------------------
-            // Node befindet sich bereits im selben Compound
-            // -> Position NICHT automatisch verändern
-            // -> Node darf frei innerhalb des Compounds bewegt werden
-            // ---------------------------------------------------------
-
-            if (
-                sourceCompound &&
-                targetCompound &&
-                sourceCompound.id === targetCompound.id
-            ) {
-                let retainedNodes = [...currentNodes];
-
-                if (resistedCompoundDrop) {
-                    const containerSize = getNodeSize(sourceCompound);
-                    const draggedSize = getNodeSize(draggedNode);
-                    const maxX = Math.max(
-                        COMPOUND_PADDING_X,
-                        containerSize.width -
-                            getCompoundExitGutterWidth(sourceCompound.data?.events || []) -
-                            COMPOUND_PADDING_X -
-                            draggedSize.width
-                    );
-                    const maxY = Math.max(
-                        COMPOUND_HEADER_HEIGHT,
-                        containerSize.height -
-                            COMPOUND_BOTTOM_PADDING -
-                            draggedSize.height
-                    );
-
-                    retainedNodes = retainedNodes.map((candidate) =>
-                        candidate.id === draggedNode.id
-                            ? {
-                                ...candidate,
-                                position: {
-                                    x: Math.min(
-                                        maxX,
-                                        Math.max(
-                                            COMPOUND_PADDING_X,
-                                            Number(candidate.position?.x || 0)
-                                        )
-                                    ),
-                                    y: Math.min(
-                                        maxY,
-                                        Math.max(
-                                            COMPOUND_HEADER_HEIGHT,
-                                            Number(candidate.position?.y || 0)
-                                        )
-                                    ),
-                                },
-                                extent: "parent",
-                                expandParent: true,
-                            }
-                            : candidate
-                    );
-                }
-
-                // Moving a child within the same Compound must not change
-                // the Compound dimensions. Resolve overlaps, but keep the
-                // existing container size untouched.
-                return resolveNodeCollisionsAndRefit(
-                    retainedNodes,
-                    draggedNode.id,
-                    { refitContainers: false }
-                );
+            // Dropping inside the existing parent is a pure position edit. A
+            // drag must not invoke collision resolution, automatic packing or
+            // any "sticky" border clamp: the released position is authoritative.
+            if (sourceCompound?.id === targetCompound?.id && sourceCompound) {
+                return { nodes: currentNodes.map((candidate) =>
+                    candidate.id === draggedNode.id
+                        ? { ...candidate, extent: undefined, expandParent: undefined }
+                        : candidate
+                ) };
             }
 
             if (
@@ -823,20 +651,10 @@ export function useNodeDrag({
                             ? {
                                 ...c,
                                 parentId: targetCompound.id,
-                                extent: "parent",
-                                expandParent: true,
+                                extent: undefined,
+                                expandParent: undefined,
 
-                                // Drop-Position beibehalten
-                                position: {
-                                    x: Math.max(
-                                        COMPOUND_PADDING_X,
-                                        relativePosition.x
-                                    ),
-                                    y: Math.max(
-                                        COMPOUND_HEADER_HEIGHT,
-                                        relativePosition.y
-                                    ),
-                                },
+                                position: relativePosition,
                             }
                             : c
                     );
@@ -847,50 +665,45 @@ export function useNodeDrag({
                         c.id === draggedNode.id
                             ? {
                                 ...c,
-                                position: {
-                                    x: dropPoint.x,
-                                    y: dropPoint.y,
-                                },
+                                position: absolute,
                             }
                             : c
                     );
                 }
 
-                // Auto-fit both the old and new compound after reparenting.
-                // This uses the real React Flow dimensions (width/height +
-                // style) and therefore also works after manual NodeResizer use.
-                // Fitting is propagated through nested compound ancestors.
+                // Reparenting preserves the dragged node's coordinates. Only
+                // grow affected containers; collision auto-layout is reserved
+                // for insertion, never a manual drag.
                 if (sourceCompound?.id) {
-                    next = fitCompoundAndAncestorCompounds(
-                        next,
-                        sourceCompound.id
-                    );
+                    next = fitCompoundAndAncestorCompounds(next, sourceCompound.id);
                 }
-
                 if (targetCompound?.id) {
-                    next = fitCompoundAndAncestorCompounds(
-                        next,
-                        targetCompound.id
-                    );
+                    next = fitCompoundAndAncestorCompounds(next, targetCompound.id);
                 }
-
-
 
                 // Boundary helpers are a visual projection of the semantic
                 // transition source/target plus the current containment tree.
                 // Rebuild them once from the canonical logical-source metadata
                 // instead of manually unwrapping/rewrapping Compound exits here.
-                const collisionResolved = resolveNodeCollisionsAndRefit(
-                    next,
-                    draggedNode.id
+                const oldLane = graphIndex.findAncestor(
+                    draggedNode, (candidate) => candidate.type === "parallelLane"
                 );
+                const newLane = targetCompound
+                    ? graphIndex.findAncestor(
+                        targetCompound, (candidate) => candidate.type === "parallelLane"
+                    )
+                    : null;
+                const crossesLanes = Boolean(
+                    oldLane && newLane && oldLane.id !== newLane.id
+                );
+                const nextEdges = crossesLanes
+                    ? disconnectCrossLaneTransitions(currentEdges, draggedNode.id)
+                    : currentEdges;
                 const rebuilt = rebuildBoundaryTransitions(
-                    collisionResolved,
-                    edges
+                    orderNodesParentsFirst(next),
+                    nextEdges
                 );
-                setEdges(rebuilt.edges);
-
-                return rebuilt.nodes;
+                return { nodes: rebuilt.nodes, edges: rebuilt.edges };
             }
 
             const sourceLane = graphIndex.findAncestor(
@@ -900,80 +713,17 @@ export function useNodeDrag({
 
             let targetLane = targetLaneAtDrop;
 
-            const resistedLaneDrop = Boolean(
-                !targetLane &&
-                sourceLane &&
-                dragOriginContainer?.kind === "parallelLane" &&
-                dragOriginContainer.id === sourceLane.id &&
-                pointInsideBounds(
-                    dropPoint,
-                    dragOriginContainer,
-                    CONTAINER_EXIT_RESISTANCE
-                )
-            );
-            if (resistedLaneDrop) {
-                targetLane = sourceLane;
-            }
-
-            // Die Node wurde lediglich innerhalb derselben Lane bewegt.
-            // Keep its free position without resizing the lane/parallel.
-            if (targetLane?.id === sourceLane?.id) {
-                let next = currentNodes.map((candidate) =>
+            if (
+                targetLane && sourceLane?.id === targetLane.id &&
+                draggedNode.parentId === targetLane.id
+            ) {
+                // Position is already relative to this lane (or its compound
+                // wrapper). Never move the node or its siblings at drag stop.
+                return { nodes: currentNodes.map((candidate) =>
                     candidate.id === draggedNode.id
-                        ? {
-                            ...candidate,
-                            extent: "parent",
-                            expandParent: true,
-                        }
+                        ? { ...candidate, extent: undefined, expandParent: undefined }
                         : candidate
-                );
-
-                if (resistedLaneDrop && sourceLane) {
-                    const laneAbsolute = graphIndex.getAbsolutePosition(
-                        sourceLane
-                    );
-                    const laneWidth = Number(sourceLane.style?.width) || 420;
-                    const laneHeight = Number(sourceLane.style?.height) || 110;
-                    const draggedSize = getNodeSize(draggedNode);
-                    const desiredAbsolute = graphIndex.getAbsolutePosition(
-                        draggedNode
-                    );
-                    const padding = 16;
-                    const clampedAbsolute = {
-                        x: Math.min(
-                            laneAbsolute.x + laneWidth - draggedSize.width - padding,
-                            Math.max(laneAbsolute.x + padding, desiredAbsolute.x)
-                        ),
-                        y: Math.min(
-                            laneAbsolute.y + laneHeight - draggedSize.height - padding,
-                            Math.max(laneAbsolute.y + padding, desiredAbsolute.y)
-                        ),
-                    };
-                    const immediateParent = draggedNode.parentId
-                        ? graphIndex.byId.get(draggedNode.parentId)
-                        : null;
-                    const parentAbsolute = immediateParent
-                        ? graphIndex.getAbsolutePosition(immediateParent)
-                        : { x: 0, y: 0 };
-
-                    next = next.map((candidate) =>
-                        candidate.id === draggedNode.id
-                            ? {
-                                ...candidate,
-                                position: {
-                                    x: clampedAbsolute.x - parentAbsolute.x,
-                                    y: clampedAbsolute.y - parentAbsolute.y,
-                                },
-                            }
-                            : candidate
-                    );
-                }
-
-                return resolveNodeCollisionsAndRefit(
-                    next,
-                    draggedNode.id,
-                    { refitContainers: false }
-                );
+                ) };
             }
 
             const targetParallel = targetLane
@@ -986,52 +736,12 @@ export function useNodeDrag({
                 (candidate) => candidate.id !== draggedNode.id
             );
 
-            const normalizeLane = (lane, nodeToArrangeId = null) => {
+            const normalizeLane = (lane) => {
                 if (!lane) return;
-
-                let nextIndex = createEditorNodeIndex(nextNodes);
-                const currentLane = nextIndex.byId.get(lane.id) || lane;
-                const members = nextIndex
-                    .getChildren(currentLane.id)
-                    .filter(isParallelLaneSkillCandidate);
-
-                if (nodeToArrangeId) {
-                    const newNode = nextIndex.byId.get(nodeToArrangeId);
-
-                    if (newNode?.parentId === currentLane.id) {
-                        const newX =
-                            25 + members
-                                .filter((member) => member.id !== nodeToArrangeId)
-                                .reduce((x, member) => {
-                                    const size = getOverviewLayoutNodeSize(member);
-                                    return x + size.width + PARALLEL_NODE_GAP;
-                                }, 0);
-
-                        nextNodes = nextNodes.map((candidate) =>
-                            candidate.id === nodeToArrangeId
-                                ? {
-                                    ...candidate,
-                                    parentId: currentLane.id,
-                                    extent: "parent",
-                                    expandParent: true,
-                                    position: {
-                                        x: newX,
-                                        y: PARALLEL_LANE_CHILD_TOP_INSET,
-                                    },
-                                }
-                                : candidate
-                        );
-                        nextIndex = createEditorNodeIndex(nextNodes);
-                    }
+                const parallel = createEditorNodeIndex(nextNodes).byId.get(lane.parentId);
+                if (parallel) {
+                    nextNodes = growParallelToLaneContents(nextNodes, parallel.id);
                 }
-
-                const parallel = nextIndex.byId.get(currentLane.parentId);
-                if (!parallel) return;
-
-                nextNodes = growParallelToLaneContents(
-                    nextNodes,
-                    parallel.id
-                );
             };
 
             if (targetLane) {
@@ -1049,8 +759,8 @@ export function useNodeDrag({
                     ...draggedNode,
 
                     parentId: targetParent.id,
-                    extent: "parent",
-                    expandParent: true,
+                    extent: undefined,
+                    expandParent: undefined,
 
                     position: {
                         x:
@@ -1066,31 +776,11 @@ export function useNodeDrag({
                 });
             } else if (sourceLane) {
                 // Node wurde aus einem Parallel State gezogen.
-                const hasTransition = edges.some(
-                    (edge) =>
-                        !edge.id.startsWith("edge-internal-") &&
-                        (
-                            edge.source === draggedNode.id ||
-                            edge.target === draggedNode.id ||
-                            edge.data?.parallelOriginalSource ===
-                            draggedNode.id ||
-                            edge.data?.parallelOriginalTarget ===
-                            draggedNode.id ||
-                            edge.data?.boundaryOriginalTarget ===
-                            draggedNode.id
-                        )
-                );
-
                 nextNodes.push({
                     ...draggedNode,
                     parentId: undefined,
                     extent: undefined,
-                    position: hasTransition
-                        ? absolutePosition
-                        : {
-                            x: dropPoint.x,
-                            y: dropPoint.y,
-                        },
+                    position: absolutePosition,
                     selected: false,
                 });
             } else {
@@ -1100,20 +790,18 @@ export function useNodeDrag({
                 });
             }
 
+            if (sourceCompound?.id) {
+                nextNodes = fitCompoundAndAncestorCompounds(nextNodes, sourceCompound.id);
+            }
             normalizeLane(sourceLane);
 
-            // In der neuen Lane NUR die gerade gedroppte Node einordnen.
-            if (
-                targetLane &&
-                targetLane.id !== sourceLane?.id
-            ) {
-                normalizeLane(
-                    targetLane,
-                    draggedNode.id
-                );
+            // A new lane membership must not horizontally pack the node.
+            // Grow the lane to fit the precise dropped coordinates instead.
+            if (targetLane && targetLane.id !== sourceLane?.id) {
+                normalizeLane(targetLane);
             }
 
-            let nextEdges = edges;
+            let nextEdges = currentEdges;
             const crossesParallelLanes = Boolean(
                 sourceLane &&
                 targetLane &&
@@ -1126,70 +814,7 @@ export function useNodeDrag({
                 // semantics, so the move deliberately disconnects the state.
                 // Rust applies the same rule transactionally; doing it here as
                 // well keeps the optimistic editor graph in sync immediately.
-                nextEdges = nextEdges
-                    .map((edge) => {
-                        const targetsDraggedState =
-                            edge.target === draggedNode.id ||
-                            edge.data?.boundaryOriginalTarget === draggedNode.id ||
-                            edge.data?.compoundOriginalTarget === draggedNode.id ||
-                            edge.data?.parallelOriginalTarget === draggedNode.id;
-                        if (targetsDraggedState) return null;
-
-                        const logicalSources = Array.isArray(
-                            edge.data?.boundaryOriginalSources
-                        )
-                            ? edge.data.boundaryOriginalSources
-                            : [];
-                        const remainingLogicalSources = logicalSources.filter(
-                            (source) =>
-                                (source?.sourceId || source?.nodeId || source?.id) !==
-                                draggedNode.id
-                        );
-                        const removedSharedSource =
-                            logicalSources.length >
-                            remainingLogicalSources.length;
-
-                        if (removedSharedSource && remainingLogicalSources.length > 0) {
-                            const primary = remainingLogicalSources[0];
-                            const primaryId =
-                                primary?.sourceId || primary?.nodeId || primary?.id;
-                            const primaryHandle =
-                                primary?.sourceHandle || primary?.handle || "success";
-                            const data = {
-                                ...(edge.data || {}),
-                                boundaryOriginalSources: remainingLogicalSources,
-                            };
-                            [
-                                "boundaryOriginalSource",
-                                "boundaryOriginalSourceHandle",
-                                "boundaryExitId",
-                                "compoundOriginalSource",
-                                "compoundOriginalSourceHandle",
-                                "compoundExitId",
-                                "parallelOriginalSource",
-                                "parallelOriginalSourceHandle",
-                                "parallelExitId",
-                            ].forEach((key) => delete data[key]);
-
-                            return {
-                                ...edge,
-                                source: primaryId,
-                                sourceHandle: primaryHandle,
-                                label: primaryHandle,
-                                data,
-                            };
-                        }
-
-                        // Boundary projected edges are owned by the container exit
-                        // reconstruction logic. Do not remove them just because their
-                        // logical source lives below the dragged node.
-                        const sourcesDraggedState =
-                            edge.source === draggedNode.id ||
-                            removedSharedSource;
-
-                        return sourcesDraggedState ? null : edge;
-                    })
-                    .filter(Boolean);
+                nextEdges = disconnectCrossLaneTransitions(nextEdges, draggedNode.id);
             }
 
             if (sourceLane && !crossesParallelLanes) {
@@ -1254,16 +879,11 @@ export function useNodeDrag({
             // boundary exit points after the final parent/position is known so
             // dragging into/out of Compound/Parallel updates the border edges
             // immediately and keeps the original skill.event semantics.
-            const collisionResolved = resolveNodeCollisionsAndRefit(
-                nextNodes,
-                draggedNode.id
-            );
             const rebuilt = rebuildBoundaryTransitions(
-                collisionResolved,
+                orderNodesParentsFirst(nextNodes),
                 nextEdges
             );
-            setEdges(rebuilt.edges);
-            return rebuilt.nodes;
+            return { nodes: rebuilt.nodes, edges: rebuilt.edges };
         });
 
         // Slot nodes live in a separate state array, but in Slot/Overview mode
@@ -1298,24 +918,17 @@ export function useNodeDrag({
                     ])
                 );
 
-                setNodes((currentNodes) =>
-                    currentNodes.map((candidate) => {
+                updateGraph(({ nodes: currentNodes, slotNodes: currentSlotNodes }) => ({
+                    nodes: currentNodes.map((candidate) => {
                         if (candidate.parentId) return candidate;
                         const position = positionsById.get(candidate.id);
-                        return position
-                            ? { ...candidate, position }
-                            : candidate;
-                    })
-                );
-
-                setSlotNodes((currentSlotNodes) =>
-                    currentSlotNodes.map((candidate) => {
+                        return position ? { ...candidate, position } : candidate;
+                    }),
+                    slotNodes: currentSlotNodes.map((candidate) => {
                         const position = positionsById.get(candidate.id);
-                        return position
-                            ? { ...candidate, position }
-                            : candidate;
-                    })
-                );
+                        return position ? { ...candidate, position } : candidate;
+                    }),
+                }));
             });
         }
 
@@ -1328,13 +941,11 @@ export function useNodeDrag({
         setCompoundDropTargetId(null);
     }, [
         activeMode,
-        edges,
         getNodes,
+        flushPendingNodeChanges,
         screenToFlowPosition,
         setNodes,
-        setEdges,
-        setSlotEdges,
-        setSlotNodes,
+        updateGraph,
         syncStatePosition,
         syncStateEditorPositions,
         syncRemovedStates,

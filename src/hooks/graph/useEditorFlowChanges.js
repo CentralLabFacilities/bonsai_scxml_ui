@@ -1,7 +1,8 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
-import { applyEdgeChanges } from "@xyflow/react";
+import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 
-import { rebuildBoundaryTransitionsIncremental } from "../../utils/boundaryTransitions";
+import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
+import { canonicalizeVisibleEdgeChanges } from "../../utils/transitionVisualOwnership.js";
 import { isWildcardTransitionEvent } from "../../utils/transitionEvents";
 import { cleanEventsForDeletedStates } from "../../utils/transitionDeletion";
 import { getSlotPathFromNode, isSlotDeletionProtected, normalizeSlotPath } from "../../utils/editorGraph";
@@ -29,7 +30,7 @@ export function useEditorFlowChanges({
     manualSlots,
     getDocumentSnapshot,
     setNodes,
-    setEdges,
+    updateGraph,
     setSlotEdges,
     setManualSlots,
     checkSlotConnection,
@@ -166,53 +167,21 @@ export function useEditorFlowChanges({
                         .map((node) => node.parentId)
                 );
 
-                onNodesChange(effectiveGraphChanges);
-
-                if (removedNodeIds.size > 0) {
-                    // Boundary transitions are drawn from a Compound/Parallel
-                    // border, so React Flow does not see them as connected to
-                    // the real source skill. Remove them explicitly by their
-                    // semantic source/target metadata when that skill is
-                    // deleted.
-                    setEdges((currentEdges) =>
-                        currentEdges.filter((edge) => {
-                            const semanticSource =
-                                edge.data?.boundaryOriginalSource ||
-                                edge.data?.compoundOriginalSource ||
-                                edge.data?.parallelOriginalSource ||
-                                edge.source;
-                            const semanticTarget =
-                                edge.data?.boundaryOriginalTarget ||
-                                edge.data?.compoundOriginalTarget ||
-                                edge.data?.parallelOriginalTarget ||
-                                edge.target;
-
-                            return (
-                                !removedNodeIds.has(edge.source) &&
-                                !removedNodeIds.has(edge.target) &&
-                                !removedNodeIds.has(semanticSource) &&
-                                !removedNodeIds.has(semanticTarget)
-                            );
-                        })
-                    );
-
-                    // Deleting a target removes its visible edge, but event
-                    // transition metadata lives independently on the source
-                    // node. Clear both or Rust can export a dangling target ID.
-                    setNodes((currentNodes) =>
-                        currentNodes.map((node) => {
-                            const currentEvents = node.data?.events || [];
-                            const nextEvents = cleanEventsForDeletedStates(currentEvents, removedNodeIds);
-                            return nextEvents.length === currentEvents.length &&
-                                nextEvents.every((event, index) => event === currentEvents[index])
-                                ? node
-                                : { ...node, data: { ...node.data, events: nextEvents } };
-                        })
-                    );
-
+                // Node removal, semantic event cleanup, affected lane reflow,
+                // and boundary edge removal are one document transaction.
+                updateGraph(({ nodes: liveNodes, edges: liveEdges }) => {
+                    const removedNodes = applyNodeChanges(effectiveGraphChanges, liveNodes);
+                    const cleanedNodes = removedNodes.map((node) => {
+                        const currentEvents = node.data?.events || [];
+                        const nextEvents = cleanEventsForDeletedStates(currentEvents, removedNodeIds);
+                        return nextEvents.length === currentEvents.length &&
+                            nextEvents.every((event, index) => event === currentEvents[index])
+                            ? node
+                            : { ...node, data: { ...node.data, events: nextEvents } };
+                    });
+                    let nextNodes = cleanedNodes;
                     if (affectedParallelIds.size > 0) {
-                        setNodes((currentNodes) => {
-                            let nextNodes = currentNodes;
+
 
                             affectedParallelIds.forEach((parallelId) => {
                                 const parallel = nextNodes.find(
@@ -299,10 +268,27 @@ export function useEditorFlowChanges({
                                 });
                             });
 
-                            return nextNodes;
-                        });
-                    }
 
+                    }
+                    const nextEdges = liveEdges.filter((edge) => {
+                        const sources = [
+                            edge.source, edge.target,
+                            edge.data?.boundaryOriginalSource,
+                            edge.data?.compoundOriginalSource,
+                            edge.data?.parallelOriginalSource,
+                            edge.data?.boundaryOriginalTarget,
+                            edge.data?.compoundOriginalTarget,
+                            edge.data?.parallelOriginalTarget,
+                            ...(edge.data?.boundaryOriginalSources || []).map(
+                                (source) => source?.sourceId || source?.nodeId || source?.id
+                            ),
+                        ];
+                        return !sources.some((id) => removedNodeIds.has(id));
+                    });
+                    return { nodes: nextNodes, edges: nextEdges };
+                });
+
+                if (removedNodeIds.size > 0) {
                     // React Flow may report only a removed parent while its
                     // descendants disappear with it. Expand the semantic
                     // removal set here so Rust also sees the full subtree and
@@ -441,7 +427,7 @@ export function useEditorFlowChanges({
             slotNodeIdSet,
             onNodesChange,
             onSlotNodesChange,
-            setEdges,
+            updateGraph,
             setNodes,
             setSlotEdges,
             syncRemovedStates,
@@ -457,7 +443,12 @@ export function useEditorFlowChanges({
             const ignoredRemapIds = remappedSlotCloneEdgeIdsRef.current;
             const live = getDocumentSnapshot?.() || { nodes: nodesRef.current, slotNodes: slotNodesRef.current, ...slotModelRef.current };
             const currentSlotEdges = live.slotEdges || [];
-            const effectiveChanges = changes.filter((change) => {
+            const liveTransitionEdges = live.edges || edges;
+            const liveNodes = live.nodes || nodesRef.current;
+            const canonicalChanges = canonicalizeVisibleEdgeChanges(
+                changes, liveTransitionEdges, liveNodes, currentSlotEdges
+            );
+            const effectiveChanges = canonicalChanges.filter((change) => {
                 const shouldIgnore =
                     change.type === "remove" && (ignoredRemapIds.has(change.id) || protectedSlotEdgeIdsRef.current.has(change.id));
                 if (shouldIgnore) {
@@ -465,7 +456,7 @@ export function useEditorFlowChanges({
                 }
                 if (shouldIgnore) return false;
                 const edge = change.type === "remove" && currentSlotEdges.find((edge) => edge.id === change.id);
-                if (change.type === "remove" && !edge && !(live.edges || edges).some((edge) => edge.id === change.id)) return false;
+                if (change.type === "remove" && !edge && !liveTransitionEdges.some((edge) => edge.id === change.id)) return false;
                 // Fixed child requirements are not writable child bindings.
                 // Also guard the selected canonical slot if Flow reports its
                 // connected edges before the rejected node-removal callback.
@@ -491,7 +482,7 @@ export function useEditorFlowChanges({
                 );
 
                 if (removesTransition) {
-                    const currentNodes = nodesRef.current;
+                    const currentNodes = liveNodes;
 
                     // Removing the visible external part of a boundary
                     // transition must also remove its editor-only helper edge
@@ -500,7 +491,7 @@ export function useEditorFlowChanges({
                     // semantic transition exists anymore.
                     const changedEdges = applyEdgeChanges(
                         transitionChanges,
-                        edges
+                        liveTransitionEdges
                     );
                     const affectedTransitionSourceIds = new Set();
 
@@ -554,7 +545,7 @@ export function useEditorFlowChanges({
                     transitionChanges
                         .filter((change) => change.type === "remove")
                         .forEach((change) => {
-                            const removedEdge = edges.find(
+                            const removedEdge = liveTransitionEdges.find(
                                 (edge) => edge.id === change.id
                             );
                             if (!removedEdge) return;
@@ -641,23 +632,14 @@ export function useEditorFlowChanges({
                                 };
                             });
 
-                    const normalized = rebuildBoundaryTransitionsIncremental(
-                        cleanedNodes,
-                        changedEdges,
-                        {
-                            previousEdges: edges,
-                            changedEdgeIds: transitionChanges
-                                .filter((change) => change.type === "remove")
-                                .map((change) => change.id),
-                        }
-                    );
-
-                    setNodes(normalized.nodes);
-                    setEdges(normalized.edges);
-                    (normalized.affectedNodeIds || []).forEach((nodeId) => {
-                        requestAnimationFrame(() =>
-                            updateNodeInternals(nodeId)
-                        );
+                    // Deletion must fully regenerate boundary edges and ports.
+                    // Incremental updates are appropriate for addition/editing,
+                    // but can retain fragments from a now-deleted transition.
+                    const normalized = rebuildBoundaryTransitions(cleanedNodes, changedEdges);
+                    updateGraph(() => ({ nodes: normalized.nodes, edges: normalized.edges }));
+                    normalized.nodes.forEach((node, index) => {
+                        if (node === currentNodes[index]) return;
+                        requestAnimationFrame(() => updateNodeInternals(node.id));
                     });
                     void syncTransitionSources(
                         [...affectedTransitionSourceIds]
@@ -749,8 +731,8 @@ export function useEditorFlowChanges({
             edges,
             onEdgesChange,
             onSlotEdgesChange,
+            updateGraph,
             setNodes,
-            setEdges,
             updateNodeInternals,
             syncTransitionSources,
             getDocumentSnapshot,

@@ -18,6 +18,7 @@ import {
 } from "../../utils/editorGeometry";
 import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
 import { getOverviewLayoutNodeSize } from "../../utils/layoutUtils";
+import { reorderParallelLaneIds } from "../../utils/parallelLaneOrder.js";
 
 
 const MIN_PARALLEL_LANE_HEIGHT = 90;
@@ -134,6 +135,9 @@ const reflowParallelLanes = (
                     x: 0,
                     y: laneUpdate.y,
                 },
+                width: laneUpdate.width,
+                height: laneUpdate.height,
+                expandParent: false,
                 style: {
                     ...(node.style || {}),
                     width: laneUpdate.width,
@@ -146,6 +150,7 @@ const reflowParallelLanes = (
         if (node.id === parallelId) {
             return {
                 ...node,
+                height: parallelHeight,
                 style: {
                     ...(node.style || {}),
                     height: parallelHeight,
@@ -227,7 +232,7 @@ export function useContainerCreation({
     edges,
     isDraggingNode,
     setNodes,
-    setEdges,
+    updateGraph,
     setSelectedNodeId,
     setActiveTab,
     setContextMenu,
@@ -267,8 +272,9 @@ export function useContainerCreation({
                 id: newLaneId,
                 position: { x: 0, y: PARALLEL_HEADER_HEIGHT },
                 parentId: parallelId,
-                extent: "parent",
-                expandParent: true,
+                // Structural lane frames follow the parallel; parent extent would
+                // prevent React Flow from shrinking around a full-width lane.
+                expandParent: false,
                 type: "parallelLane",
                 draggable: false,
                 selectable: true,
@@ -345,19 +351,9 @@ export function useContainerCreation({
 
             setNodes((currentNodes) => {
                 const lanes = getParallelLanes(currentNodes, parallelId);
-                const currentIndex = lanes.findIndex((lane) => lane.id === laneId);
-                if (currentIndex < 0) return currentNodes;
-
-                const nextIndex = direction === "up"
-                    ? currentIndex - 1
-                    : currentIndex + 1;
-                if (nextIndex < 0 || nextIndex >= lanes.length) {
-                    return currentNodes;
-                }
-
-                const orderedLaneIds = lanes.map((lane) => lane.id);
-                [orderedLaneIds[currentIndex], orderedLaneIds[nextIndex]] =
-                    [orderedLaneIds[nextIndex], orderedLaneIds[currentIndex]];
+                const currentIds = lanes.map((lane) => lane.id);
+                const orderedLaneIds = reorderParallelLaneIds(currentIds, laneId, direction);
+                if (orderedLaneIds === currentIds) return currentNodes;
 
                 const reflowed = reflowParallelLanes(
                     currentNodes,
@@ -443,16 +439,14 @@ export function useContainerCreation({
                 filteredEdges
             );
 
-            setNodes(rebuilt.nodes);
-            setEdges(rebuilt.edges);
+            updateGraph(() => ({ nodes: rebuilt.nodes, edges: rebuilt.edges }));
             window.requestAnimationFrame(() => updateNodeInternals?.(parallelId));
             void syncEditorStateAfterCommit?.();
         },
         [
             edges,
             nodes,
-            setEdges,
-            setNodes,
+            updateGraph,
             syncEditorStateAfterCommit,
             updateNodeInternals,
         ]
@@ -517,8 +511,7 @@ export function useContainerCreation({
             id: lane1Id,
             position: { x: 0, y: headerHeight },
             parentId: parallelId,
-            extent: "parent",
-            expandParent: true,
+            expandParent: false,
             type: "parallelLane",
             draggable: false,
             style: { width: containerWidth, height: laneHeight, borderBottom: "1.5px solid #0284c7" },
@@ -529,8 +522,7 @@ export function useContainerCreation({
             id: lane2Id,
             position: { x: 0, y: headerHeight + laneHeight },
             parentId: parallelId,
-            extent: "parent",
-            expandParent: true,
+            expandParent: false,
             type: "parallelLane",
             draggable: false,
             style: { width: containerWidth, height: laneHeight, borderBottom: "none" },
@@ -709,8 +701,7 @@ export function useContainerCreation({
             orderNodesParentsFirst([compoundNode, ...wrappedNodes]),
             visuallyRoutedEdges
         );
-        setNodes(normalizedGraph.nodes);
-        setEdges(normalizedGraph.edges);
+        updateGraph(() => ({ nodes: normalizedGraph.nodes, edges: normalizedGraph.edges }));
 
         requestAnimationFrame(() => updateNodeInternals(compoundId));
         setSelectedNodeId(compoundId);
@@ -857,8 +848,9 @@ export function useContainerCreation({
                 id: laneId,
                 position: { x: 0, y: currentLaneY },
                 parentId: parallelId,
-                extent: "parent",
-                expandParent: true,
+                // Structural lane frames follow the parallel; parent extent would
+                // prevent React Flow from shrinking around a full-width lane.
+                expandParent: false,
                 type: "parallelLane",
                 draggable: false,
                 selectable: true,
@@ -941,8 +933,7 @@ export function useContainerCreation({
             [...remainingNodes, ...newLanes, ...movedNodes],
             visuallyRoutedEdges
         );
-        setNodes(normalizedGraph.nodes);
-        setEdges(normalizedGraph.edges);
+        updateGraph(() => ({ nodes: normalizedGraph.nodes, edges: normalizedGraph.edges }));
         setSelectedNodeId(parallelId);
         setActiveTab("allgemein");
         void syncWrappedContainerAfterCommit?.(parallelId);

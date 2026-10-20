@@ -10,6 +10,7 @@ import {
 } from "./NodeChrome.jsx";
 import { estimateSlotDockWidth, estimateSlotPortWidth, estimateSummaryWidth } from "../../utils/layoutUtils.js";
 import { getSlotHandleDragFeedback, getSlotTypeBadgeLabel, getStateSlotEntries } from "../../utils/slotVisuals.js";
+import { isInternalRuntimeName } from "../../utils/runtimeEventFrames.js";
 
 const textValue = (value) => String(value ?? "").trim();
 const REFERENCE_TYPES = { submachine: "SUB-SM", compound: "COMPOUND", parallel: "PARALLEL" };
@@ -47,7 +48,7 @@ function getParameterEntries(data) {
         if (!runtimeByKey.has(normalized)) runtimeByKey.set(normalized, value);
     }
     return (data.params || [])
-        .filter((parameter) => String(parameter?.key || "").trim())
+        .filter((parameter) => String(parameter?.key || "").trim() && !isInternalRuntimeName(parameter.key))
         .map((parameter) => {
             const key = String(parameter.key);
             const value = textValue(parameter.expr);
@@ -186,7 +187,7 @@ function ValueSummary({ id, data, entries, local }) {
                                         color: local
                                             ? "#3b0764"
                                             : entry.hasRuntimeValue
-                                              ? "#1d4ed8"
+                                              ? "#ca8a04"
                                               : entry.usesDefault
                                                 ? "#94a3b8"
                                                 : "#0f172a",
@@ -358,7 +359,7 @@ function StateCard({ id, data, selected, submachine = false }) {
                       .filter(
                           (entry) =>
                               String(entry?.id || "").trim() &&
-                              textValue(entry.id) !== "#_STATE_PREFIX",
+                              !isInternalRuntimeName(entry.id),
                       )
                       .map((entry) => ({
                           key: textValue(entry.id),
@@ -435,6 +436,7 @@ function StateCard({ id, data, selected, submachine = false }) {
                     <NodeTitle
                         className="submachine-header"
                         initial={data.isInitial}
+                        initialScope={data.initialScope}
                         typeLabel="Sub-State-Machine"
                         badgeClassName="submachine-badge"
                     >
@@ -458,6 +460,7 @@ function StateCard({ id, data, selected, submachine = false }) {
                 <NodeTitle
                     className="custom-node-label"
                     initial={data.isInitial}
+                        initialScope={data.initialScope}
                     typeLabel={terminal ? undefined : "SKILL"}
                     badgeClassName="skill-type-badge"
                     label={data.label}

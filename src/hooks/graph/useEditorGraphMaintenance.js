@@ -67,7 +67,7 @@ export function useEditorGraphMaintenance({
     isDraggingNode,
     selectedNodeId,
     setNodes,
-    setEdges,
+    updateGraph,
     setSelectedNodeId,
 }) {
     const semanticNodes = useSemanticNodeSnapshot(nodes, isDraggingNode);
@@ -95,21 +95,11 @@ export function useEditorGraphMaintenance({
                 .map((node) => node.id)
         );
 
-        if (danglingCloneIds.size > 0) {
-            setEdges((currentEdges) =>
-                currentEdges.filter(
-                    (edge) =>
-                        !danglingCloneIds.has(edge.source) &&
-                        !danglingCloneIds.has(edge.target)
-                )
-            );
-
-            if (danglingCloneIds.has(selectedNodeId)) {
-                setSelectedNodeId(null);
-            }
+        if (danglingCloneIds.has(selectedNodeId)) {
+            setSelectedNodeId(null);
         }
 
-        setNodes((currentNodes) => {
+        updateGraph(({ nodes: currentNodes, edges: currentEdges }) => {
             const byId = new Map(
                 currentNodes.map((node) => [node.id, node])
             );
@@ -159,14 +149,21 @@ export function useEditorGraphMaintenance({
                 });
             });
 
-            return changed ? nextNodes : currentNodes;
+            const edges = danglingCloneIds.size > 0
+                ? currentEdges.filter((edge) =>
+                    !danglingCloneIds.has(edge.source) &&
+                    !danglingCloneIds.has(edge.target)
+                )
+                : currentEdges;
+            if (!changed && edges === currentEdges) return null;
+            return { nodes: changed ? nextNodes : currentNodes, edges };
         });
     }, [
         semanticNodes,
         isDraggingNode,
         selectedNodeId,
         setNodes,
-        setEdges,
+        updateGraph,
         setSelectedNodeId,
     ]);
 

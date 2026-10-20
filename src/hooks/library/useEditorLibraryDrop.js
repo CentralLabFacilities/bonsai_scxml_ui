@@ -19,6 +19,7 @@ import { getOverviewLayoutNodeSize } from "../../utils/layoutUtils";
 import { getSlotPathFromNode, isKnownSlotType, normalizeSlotPath, normalizeSlotType } from "../../utils/editorGraph";
 import { isEditorModalOpen } from "../interaction/useGlobalEditorShortcuts.js";
 import { isEditorCloneNode } from "../../utils/editorClones";
+import { insertNodeWithParallelBoundarySync } from "../../utils/libraryParallelInsertion.js";
 
 // Set the initial state as part of the same node insertion. Waiting for the
 // native workflow to infer an initial state can leave the editor's first skill
@@ -73,6 +74,7 @@ export function useEditorLibraryDrop({
     createNode,
     checkSlotConnection,
     setNodes,
+    updateGraph,
     setManualSlots,
     setSelectedNodeId,
     syncInsertedEditorStatesAfterCommit,
@@ -311,6 +313,13 @@ export function useEditorLibraryDrop({
                 height: estimatedNodeHeight,
             } = getOverviewLayoutNodeSize(newNode);
 
+            // Publish the insertion and its (potentially multi-lane) boundary
+            // projections atomically. The document is the source of truth; no
+            // display-only edge is added to the saved SCXML transitions.
+            const commitInsertion = (insertNodes) => updateGraph(({ nodes: liveNodes, edges: liveEdges }) =>
+                insertNodeWithParallelBoundarySync(liveNodes, liveEdges, insertNodes, newNode.id)
+            );
+
             if (insertionCompound) {
                 let newX = COMPOUND_PADDING_X;
 
@@ -335,7 +344,7 @@ export function useEditorLibraryDrop({
                     y: COMPOUND_HEADER_HEIGHT,
                 };
 
-                setNodes((currentNodes) => {
+                commitInsertion((currentNodes) => {
                     const right = newX + estimatedNodeWidth;
                     const bottom =
                         COMPOUND_HEADER_HEIGHT + estimatedNodeHeight;
@@ -396,7 +405,7 @@ export function useEditorLibraryDrop({
                 };
                 const parallelId = targetLane.parentId;
 
-                setNodes((currentNodes) => {
+                commitInsertion((currentNodes) => {
                     let nextNodes = appendLibraryNode(currentNodes, newNode);
 
                     const parallel = nextNodes.find(
@@ -532,8 +541,7 @@ export function useEditorLibraryDrop({
 
             setNodes((currentNodes) =>
                 resolveNodeCollisionsAndRefit(
-                    appendLibraryNode(currentNodes, newNode),
-                    newNode.id
+                    appendLibraryNode(currentNodes, newNode), newNode.id
                 )
             );
             setSelectedNodeId(newNode.id);
@@ -549,6 +557,7 @@ export function useEditorLibraryDrop({
             getTabSnapshot,
             setCompoundDropTargetId,
             setNodes,
+            updateGraph,
             setManualSlots,
             setParallelDropTargetId,
             setSelectedNodeId,

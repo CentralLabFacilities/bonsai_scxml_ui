@@ -126,7 +126,11 @@ fn parse_state(
         StateKindDto::Skill
     };
 
-    let initial_child_scxml_id = non_empty(element.attr("initial"));
+    let initial_child_scxml_id = if matches!(kind, StateKindDto::Parallel) {
+        None
+    } else {
+        non_empty(element.attr("initial"))
+    };
     let parameters = parse_local_datamodel(element);
     let on_entry = parse_assignments_from_action(element, "onentry");
     let on_exit = parse_assignments_from_action(element, "onexit");

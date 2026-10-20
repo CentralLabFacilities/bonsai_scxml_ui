@@ -50,6 +50,24 @@ export async function getWebCommanderSnapshot(signal) {
     return { status, currentStates: lists[0], stateIds: lists[1], transitions: lists[2], checkedAt: Date.now() };
 }
 
+/** Runtime baseline for recovery. Unlike the status controls, this is not polled. */
+export async function getWebCommanderEventSnapshot(signal) {
+    const raw = await requestWebCommander("snapshot", { signal });
+    let response;
+    try { response = JSON.parse(raw); }
+    catch { throw new Error("WebCommander snapshot did not return valid JSON."); }
+    const states = response.currentStates || response.activeStates || response.states || response.currentState || [];
+    const status = typeof response.status === "string" ? response.status : response.status?.value
+        || await getWebCommanderStatus(signal);
+    return { ...response,
+        status,
+        currentStates: Array.isArray(states) ? states.map(String) : typeof states === "string" ? [states] : [],
+        stateIds: Array.isArray(response.stateIds) ? response.stateIds : [],
+        transitions: Array.isArray(response.transitions) ? response.transitions : [],
+        checkedAt: Date.now(),
+    };
+}
+
 export async function loadWebCommander(payload, signal, workflow) {
     let text;
     if (workflow && isTauri()) {

@@ -3,7 +3,7 @@ import {
     getVariableType,
     isValueTypeCompatible,
     normalizeValueType,
-} from "./valueTypes";
+} from "./valueTypes.js";
 
 const UNKNOWN_TYPE = "Unknown";
 
@@ -178,6 +178,12 @@ function tokenize(expression) {
                 valueType: VALUE_TYPES.BOOLEAN,
             });
             index += booleanMatch[0].length;
+            continue;
+        }
+
+        if (rest.startsWith("NaN") && !/[A-Za-z0-9_.:]/.test(rest[3] || "")) {
+            tokens.push({ kind: "literal", value: "NaN", valueType: VALUE_TYPES.DOUBLE });
+            index += 3;
             continue;
         }
 

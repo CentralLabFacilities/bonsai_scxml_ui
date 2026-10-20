@@ -347,297 +347,16 @@ fn lane_member_ids(context: &ParallelLaneMoveContextDto) -> Result<Vec<StateId>,
     Ok(members)
 }
 
-fn allocate_lane_wrapper_name(workflow: &Workflow) -> String {
-    let used = workflow
-        .states
-        .iter()
-        .flat_map(|state| [state.scxml_id.as_str(), state.label.as_str()])
-        .collect::<HashSet<_>>();
-    let mut index = 1_u32;
-    loop {
-        let candidate = format!("lane_{index}");
-        if !used.contains(candidate.as_str()) {
-            return candidate;
-        }
-        index += 1;
-    }
-}
-
-fn allocate_lane_wrapper_id(workflow: &Workflow, lane_id: &StateId) -> StateId {
-    let base = format!("auto-lane-{}", lane_id.as_str());
-    if !workflow.states.iter().any(|state| state.id.as_str() == base) {
-        return StateId::from(base);
-    }
-
-    let mut suffix = 2_u32;
-    loop {
-        let candidate = format!("{base}-{suffix}");
-        if !workflow
-            .states
-            .iter()
-            .any(|state| state.id.as_str() == candidate)
-        {
-            return StateId::from(candidate);
-        }
-        suffix += 1;
-    }
-}
-
-fn reconcile_wrapped_parallel_lane(
-    workflow: &mut Workflow,
-    context: &ParallelLaneMoveContextDto,
-    wrapper_node: Option<&EditorExportNodeDto>,
-) -> Result<(Vec<String>, ParallelLaneEditorPatchDto), String> {
-    let lane_id = StateId::from(context.lane.id.as_str());
-    let parallel_id = lane_parallel_id(context)?;
-    let members = lane_member_ids(context)?;
-    let wrapper_id = wrapper_node
-        .map(|node| StateId::from(node.id.as_str()))
-        .unwrap_or_else(|| allocate_lane_wrapper_id(workflow, &lane_id));
-
-    if wrapper_id.as_str().is_empty() {
-        return Err(format!(
-            "Parallel lane '{}' wrapper id must not be empty",
-            context.lane.id
-        ));
-    }
-    if let Some(wrapper_node) = wrapper_node {
-        if wrapper_node.node_type != "compound" {
-            return Err(format!(
-                "Parallel lane '{}' wrapper '{}' is not a Compound",
-                context.lane.id, wrapper_node.id
-            ));
-        }
-        if wrapper_node.parent_id.as_deref() != Some(context.lane.id.as_str()) {
-            return Err(format!(
-                "Parallel lane '{}' wrapper '{}' has the wrong editor parent",
-                context.lane.id, wrapper_node.id
-            ));
-        }
-    }
-
-    let parallel = workflow
-        .states
-        .iter()
-        .find(|state| state.id == parallel_id)
-        .ok_or_else(|| format!("Unknown parent Parallel '{}'", parallel_id))?;
-    if parallel.kind != StateKind::Parallel {
-        return Err(format!(
-            "Parallel lane '{}' parent '{}' is not a Parallel state",
-            context.lane.id, parallel.scxml_id
-        ));
-    }
-
-    for member_id in &members {
-        if !workflow.states.iter().any(|state| state.id == *member_id) {
-            return Err(format!(
-                "Unknown Parallel lane member '{}' in lane '{}'",
-                member_id, context.lane.id
-            ));
-        }
-    }
-
-    let mut changed = Vec::new();
-
-    if let Some(position) = workflow.states.iter().position(|state| state.id == lane_id) {
-        let lane = &mut workflow.states[position];
-        if lane.kind != StateKind::ParallelLane || lane.parent_id.as_ref() != Some(&parallel_id) {
-            lane.kind = StateKind::ParallelLane;
-            lane.parent_id = Some(parallel_id.clone());
-            changed.push(lane.id.as_str().to_string());
-        }
-    } else {
-        let mut lane = State::from_dto(build_inserted_state(&context.lane));
-        lane.id = lane_id.clone();
-        lane.kind = StateKind::ParallelLane;
-        lane.parent_id = Some(parallel_id.clone());
-        lane.is_initial = false;
-        lane.initial_child_id = None;
-        lane.initial_child_scxml_id = None;
-        workflow.states.push(lane);
-        changed.push(lane_id.as_str().to_string());
-    }
-
-    if let Some(position) = workflow.states.iter().position(|state| state.id == wrapper_id) {
-        let wrapper = &mut workflow.states[position];
-        if wrapper.kind != StateKind::Compound || wrapper.parent_id.as_ref() != Some(&lane_id) {
-            wrapper.kind = StateKind::Compound;
-            wrapper.parent_id = Some(lane_id.clone());
-            changed.push(wrapper.id.as_str().to_string());
-        }
-    } else {
-        let mut wrapper = if let Some(wrapper_node) = wrapper_node {
-            State::from_dto(build_inserted_state(wrapper_node))
-        } else {
-            let lane_template = State::from_dto(build_inserted_state(&context.lane));
-            let name = allocate_lane_wrapper_name(workflow);
-            State {
-                id: wrapper_id.clone(),
-                scxml_id: name.clone(),
-                label: name.clone(),
-                kind: StateKind::Compound,
-                full_skill_name: Some(name),
-                source: None,
-                parent_id: Some(lane_id.clone()),
-                initial_child_id: None,
-                initial_child_scxml_id: None,
-                is_initial: false,
-                is_final: false,
-                events: vec![],
-                input_slots: vec![],
-                output_slots: vec![],
-                parameters: vec![],
-                on_entry: vec![],
-                on_exit: vec![],
-                editor: EditorMetadata {
-                    x: 0.0,
-                    y: 0.0,
-                    width: lane_template.editor.width,
-                    height: lane_template.editor.height,
-                    ..EditorMetadata::default()
-                },
-            }
-        };
-        wrapper.id = wrapper_id.clone();
-        wrapper.kind = StateKind::Compound;
-        wrapper.parent_id = Some(lane_id.clone());
-        wrapper.is_initial = false;
-        workflow.states.push(wrapper);
-        changed.push(wrapper_id.as_str().to_string());
-    }
-
-    if let Some(unexpected) = workflow.states.iter().find(|state| {
-        state.parent_id.as_ref() == Some(&lane_id) && state.id != wrapper_id
-    }) {
-        if !members.contains(&unexpected.id) {
-            return Err(format!(
-                "Parallel lane '{}' contains unexpected semantic child '{}'",
-                context.lane.id, unexpected.id
-            ));
-        }
-    }
-    if let Some(unexpected) = workflow.states.iter().find(|state| {
-        state.parent_id.as_ref() == Some(&wrapper_id) && !members.contains(&state.id)
-    }) {
-        return Err(format!(
-            "Parallel lane '{}' wrapper '{}' contains semantic child '{}' that is not present in the editor lane context",
-            context.lane.id, wrapper_id, unexpected.id
-        ));
-    }
-
-    let requested_initial = wrapper_node
-        .and_then(|node| node.initial_child_id.as_deref())
-        .map(StateId::from)
-        .filter(|id| members.contains(id));
-    let existing_initial = workflow
-        .states
-        .iter()
-        .find(|state| state.id == wrapper_id)
-        .and_then(|state| state.initial_child_id.clone())
-        .filter(|id| members.contains(id));
-    let flagged_initial = members
-        .iter()
-        .find(|member_id| {
-            workflow
-                .states
-                .iter()
-                .find(|state| state.id == **member_id)
-                .is_some_and(|state| state.is_initial)
-        })
-        .cloned();
-    let initial_child_id = requested_initial
-        .or(existing_initial)
-        .or(flagged_initial)
-        .or_else(|| members.first().cloned());
-
-    for member_id in &members {
-        let member = workflow
-            .states
-            .iter_mut()
-            .find(|state| state.id == *member_id)
-            .ok_or_else(|| format!("Unknown Parallel lane member '{}'", member_id))?;
-        let should_be_initial = initial_child_id.as_ref() == Some(member_id);
-        if member.parent_id.as_ref() != Some(&wrapper_id) || member.is_initial != should_be_initial {
-            member.parent_id = Some(wrapper_id.clone());
-            member.is_initial = should_be_initial;
-            changed.push(member.id.as_str().to_string());
-        }
-    }
-
-    let initial_scxml_id = initial_child_id.as_ref().and_then(|selected_id| {
-        workflow
-            .states
-            .iter()
-            .find(|state| state.id == *selected_id)
-            .map(|state| state.scxml_id.clone())
-    });
-    let wrapper_scxml_id = workflow
-        .states
-        .iter()
-        .find(|state| state.id == wrapper_id)
-        .map(|state| state.scxml_id.clone())
-        .ok_or_else(|| format!("Parallel lane wrapper '{}' disappeared", wrapper_id))?;
-
-    if let Some(wrapper) = workflow.states.iter_mut().find(|state| state.id == wrapper_id) {
-        if wrapper.initial_child_id != initial_child_id
-            || wrapper.initial_child_scxml_id != initial_scxml_id
-        {
-            wrapper.initial_child_id = initial_child_id.clone();
-            wrapper.initial_child_scxml_id = initial_scxml_id;
-            changed.push(wrapper.id.as_str().to_string());
-        }
-    }
-
-    if let Some(lane) = workflow.states.iter_mut().find(|state| state.id == lane_id) {
-        if lane.initial_child_id.as_ref() != Some(&wrapper_id)
-            || lane.initial_child_scxml_id.as_deref() != Some(wrapper_scxml_id.as_str())
-        {
-            lane.initial_child_id = Some(wrapper_id.clone());
-            lane.initial_child_scxml_id = Some(wrapper_scxml_id);
-            changed.push(lane.id.as_str().to_string());
-        }
-    }
-
-    changed.sort();
-    changed.dedup();
-    Ok((
-        changed,
-        ParallelLaneEditorPatchDto {
-            lane_id: lane_id.as_str().to_string(),
-            parent_parallel_id: parallel_id.as_str().to_string(),
-            initial_child_id: Some(wrapper_id.as_str().to_string()),
-            member_state_ids: members
-                .iter()
-                .map(|id| id.as_str().to_string())
-                .collect(),
-            wrapper_state_id: Some(wrapper_id.as_str().to_string()),
-            wrapper_label: workflow
-                .states
-                .iter()
-                .find(|state| state.id == wrapper_id)
-                .map(|state| state.label.clone()),
-            wrapper_initial_child_id: initial_child_id
-                .as_ref()
-                .map(|id| id.as_str().to_string()),
-        },
-    ))
-}
-
 pub(super) fn reconcile_parallel_lane(
     workflow: &mut Workflow,
     context: &ParallelLaneMoveContextDto,
 ) -> Result<(Vec<String>, ParallelLaneEditorPatchDto), String> {
     let members = lane_member_ids(context)?;
-    if members.len() > 1 {
-        return reconcile_wrapped_parallel_lane(workflow, context, context.wrapper.as_ref());
-    }
-
-    // Existing automatic wrappers deliberately remain stable when a lane
-    // shrinks back to a single state. This matches the editor's previous
-    // normalization behavior while keeping wrapper creation backend-owned.
-    if let Some(wrapper) = context.wrapper.as_ref() {
-        return reconcile_wrapped_parallel_lane(workflow, context, Some(wrapper));
-    }
+    // A Parallel child <state> is already a compound state when it contains
+    // more than one child. Do not insert a second, synthetic <state> between
+    // the region and its children. Older versions created an extra lane_N
+    // state; only remove one if the editor explicitly identifies it as the
+    // automatic lane wrapper.
 
     let lane_id = StateId::from(context.lane.id.as_str());
     if lane_id.as_str().is_empty() {
@@ -661,6 +380,79 @@ pub(super) fn reconcile_parallel_lane(
             "Parallel lane '{}' parent '{}' is not a Parallel state",
             context.lane.id, parallel.scxml_id
         ));
+    }
+
+    let mut changed = Vec::new();
+    let mut wrapper_initial = None;
+    if let Some(wrapper_node) = context.wrapper.as_ref() {
+        if wrapper_node.node_type != "compound"
+            || wrapper_node.parent_id.as_deref() != Some(context.lane.id.as_str())
+        {
+            return Err(format!(
+                "Automatic wrapper '{}' must be a direct Compound child of lane '{}'",
+                wrapper_node.id, context.lane.id
+            ));
+        }
+        let wrapper_id = StateId::from(wrapper_node.id.as_str());
+        if let Some(wrapper_position) = workflow.states.iter().position(|state| state.id == wrapper_id) {
+            let wrapper = &workflow.states[wrapper_position];
+            if wrapper.kind != StateKind::Compound || wrapper.parent_id.as_ref() != Some(&lane_id) {
+                return Err(format!("Lane wrapper '{}' has unexpected semantic ownership", wrapper_node.id));
+            }
+            if workflow.transitions.iter().any(|transition| {
+                transition.source_state_id == wrapper_id
+                    || transition.target_state_id.as_ref() == Some(&wrapper_id)
+                    || transition.logical_sources.iter().any(|source| source.state_id == wrapper_id)
+            }) {
+                // Do not silently discard transitions belonging to a state.
+                return Err(format!(
+                    "Cannot unwrap automatic lane state '{}' while it owns transitions",
+                    wrapper_node.id
+                ));
+            }
+            if workflow.states.iter().any(|state| {
+                state.parent_id.as_ref() == Some(&wrapper_id) && !members.contains(&state.id)
+            }) {
+                return Err(format!(
+                    "Cannot unwrap lane state '{}': it contains children not listed in the lane",
+                    wrapper_node.id
+                ));
+            }
+            if !wrapper.on_entry.is_empty() || !wrapper.on_exit.is_empty()
+                || !wrapper.events.is_empty() || !wrapper.parameters.is_empty()
+                || !wrapper.input_slots.is_empty() || !wrapper.output_slots.is_empty()
+            {
+                return Err(format!(
+                    "Cannot unwrap lane state '{}': it contains semantic actions or data",
+                    wrapper_node.id
+                ));
+            }
+            wrapper_initial = wrapper.initial_child_id.clone();
+            let offset_x = wrapper.editor.x;
+            let offset_y = wrapper.editor.y;
+            workflow.states.remove(wrapper_position);
+            changed.push(wrapper_id.as_str().to_string());
+            // Preserve absolute placement even for wrappers moved before
+            // reconciliation. The editor likewise translates visual members.
+            for member in workflow.states.iter_mut().filter(|state| {
+                members.contains(&state.id) &&
+                    (state.parent_id.as_ref() == Some(&wrapper_id)
+                    || state.parent_id.as_ref() == Some(&parallel_id))
+            }) {
+                if member.parent_id.as_ref() == Some(&wrapper_id) {
+                    member.parent_id = Some(lane_id.clone());
+                }
+                member.editor.x += offset_x;
+                member.editor.y += offset_y;
+                for position in &mut member.editor.positions {
+                    position.x += offset_x;
+                    position.y += offset_y;
+                }
+                changed.push(member.id.as_str().to_string());
+            }
+        } else {
+            wrapper_initial = wrapper_node.initial_child_id.as_deref().map(StateId::from);
+        }
     }
 
     for member_id in &members {
@@ -691,11 +483,11 @@ pub(super) fn reconcile_parallel_lane(
             .find(|state| state.id == **member_id)
             .is_some_and(|state| state.is_initial)
     }).cloned();
-    let initial_child_id = existing_initial
+    let initial_child_id = wrapper_initial
+        .filter(|id| members.contains(id))
+        .or(existing_initial)
         .or(flagged_initial)
         .or_else(|| members.first().cloned());
-
-    let mut changed = Vec::new();
 
     if flatten {
         if let Some(position) = existing_lane {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export function useEditorUiState({ showPanel }) {
+export function useEditorUiState({ showPanel, onDetailsRequested }) {
     const [selectedPackage, setSelectedPackage] = useState(null);
     const [selectedSubPackage, setSelectedSubPackage] = useState(null);
     const [activeFilter, setActiveFilter] = useState("Everything");
@@ -27,9 +27,12 @@ export function useEditorUiState({ showPanel }) {
     const setRightPanelTab = useCallback(
         (tab) => {
             setRightPanelTabState(tab);
-            if (tab === "details") showPanel("inspector");
+            if (tab === "details") {
+                showPanel("inspector");
+                onDetailsRequested?.();
+            }
         },
-        [showPanel],
+        [showPanel, onDetailsRequested],
     );
 
     const setActiveMode = useCallback((nextMode) => {

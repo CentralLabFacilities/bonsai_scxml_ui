@@ -464,6 +464,9 @@ fn set_state_initial_child(
     let parent_position = index
         .state_position(&parent_id)
         .ok_or_else(|| format!("Unknown parent state '{parent_id}'"))?;
+    if !matches!(workflow.states[parent_position].kind, StateKind::Compound | StateKind::ParallelLane) {
+        return Err("Only Compound states and Parallel regions can have an initial child".into());
+    }
     let selected_id = state_id.map(StateId::from);
 
     let selected_scxml_id = if let Some(id) = selected_id.as_ref() {
@@ -526,6 +529,19 @@ fn rename_state(
     }
 
     let previous_scxml_id = workflow.states[position].scxml_id.clone();
+    // Keep a legacy duplicate unchanged if it already exists, but never allow
+    // a rename to create a new ambiguous SCXML target (ids are global, even
+    // across compounds/parallel lanes).
+    if normalized_scxml_id != previous_scxml_id
+        && workflow.states.iter().any(|state| {
+            state.id != id && state.scxml_id == normalized_scxml_id
+        })
+    {
+        return Err(format!(
+            "SCXML state id '{}' is already in use",
+            normalized_scxml_id
+        ));
+    }
     workflow.states[position].scxml_id = normalized_scxml_id.to_string();
     if let Some(label) = label {
         workflow.states[position].label = label;

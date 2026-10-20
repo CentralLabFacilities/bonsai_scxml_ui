@@ -3,8 +3,8 @@ import {
     deserializeScxmlValueForEditor,
     deserializeScxmlAssignmentForEditor,
     deserializeStateDatamodelValueForEditor,
-} from "./valueTypes";
-import { getTransitionExitToken } from "./transitionEvents";
+} from "./valueTypes.js";
+import { getTransitionExitToken } from "./transitionEvents.js";
 
 const toEditorAssignment = (assignment) => ({
     location: String(assignment?.location || ""),
@@ -255,6 +255,26 @@ export const applyRustWorkflowStatePatch = (
 
     if (mode === "move" && parallelLaneUpdates.size > 0) {
         const laneMembers = new Map();
+        // Patches from newer Rust versions remove editor-generated lane
+        // wrappers. Save their offsets before removing the visual wrappers so
+        // existing children keep exactly the same absolute coordinates.
+        const removedWrapperOffsets = new Map();
+        parallelLaneUpdates.forEach((lane, laneId) => {
+            if (lane?.wrapperStateId) return;
+            (currentNodes || []).forEach((node) => {
+                if (node?.parentId !== laneId || node?.type !== "compound" ||
+                    !(node?.data?.autoParallelLaneCompound || node?.className === "compound-in-lane")) return;
+                removedWrapperOffsets.set(node.id, {
+                    x: Number(node.position?.x || 0),
+                    y: Number(node.position?.y || 0),
+                });
+            });
+        });
+        for (let index = nextNodes.length - 1; index >= 0; index -= 1) {
+            if (!removedWrapperOffsets.has(nextNodes[index].id)) continue;
+            nextNodes.splice(index, 1);
+            changed = true;
+        }
 
         parallelLaneUpdates.forEach((lane, laneId) => {
             const wrapperStateId = lane?.wrapperStateId
@@ -355,11 +375,26 @@ export const applyRustWorkflowStatePatch = (
                 Boolean(node?.data?.isInitial) !== isInitial ||
                 node?.extent !== "parent"
             ) {
+                const canonical = changedById.get(String(node.id || ""));
+                // Rust already translated canonical positions when removing
+                // the wrapper. Apply the visual offset only without that
+                // position patch, otherwise children jump by twice the offset.
+                const hasCanonicalPosition = Boolean(
+                    canonical && getPrimaryEditorPosition(canonical) &&
+                    (mode === "move" || mode === "all" || mode === "position")
+                );
+                const wrapperOffset = !hasCanonicalPosition
+                    ? removedWrapperOffsets.get(node.parentId)
+                    : null;
                 nextNodes[index] = {
                     ...node,
                     parentId: desiredParentId,
                     extent: "parent",
                     expandParent: true,
+                    ...(wrapperOffset ? { position: {
+                        x: Number(node.position?.x || 0) + wrapperOffset.x,
+                        y: Number(node.position?.y || 0) + wrapperOffset.y,
+                    } } : {}),
                     data: {
                         ...(node.data || {}),
                         isInitial,

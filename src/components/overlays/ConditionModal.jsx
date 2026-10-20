@@ -1,3 +1,4 @@
+import { isValidScxmlEventDescriptor } from "../../utils/transitionEventValidation.js";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     FiArrowRight,
@@ -174,6 +175,7 @@ function ConditionModal({
                             onHoverTransitionEdge,
                             initialTargetId = null,
                             targetOnlyMode = false,
+                            containerEventMode = false,
                             defaultScope = null,
                         }) {
     const drawerRef = useRef(null);
@@ -189,7 +191,7 @@ function ConditionModal({
 
         (availableEvents || []).forEach((event) => {
             const eventId = typeof event === "string" ? event : event?.id;
-            if (!eventId || seen.has(eventId)) return;
+            if (!isValidScxmlEventDescriptor(eventId) || seen.has(eventId)) return;
             seen.add(eventId);
             result.push({
                 id: eventId,
@@ -197,7 +199,7 @@ function ConditionModal({
             });
         });
 
-        if (sourceEventName && !seen.has(sourceEventName)) {
+        if (isValidScxmlEventDescriptor(sourceEventName) && !seen.has(sourceEventName)) {
             result.push({ id: sourceEventName, description: "" });
         }
 
@@ -733,11 +735,11 @@ function ConditionModal({
     };
 
     const handleAddTransition = () => {
-        if (targetOnlyMode) return;
+        if (targetOnlyMode && !containerEventMode) return;
 
-        const eventId = newTransitionEvent || normalizedEvents[0]?.id || "";
-        if (!eventId) {
-            setErrorMessage("No possible event is available for a new transition.");
+        const eventId = String(newTransitionEvent || normalizedEvents[0]?.id || "").trim();
+        if (!isValidScxmlEventDescriptor(eventId)) {
+            setErrorMessage("Enter a valid SCXML event descriptor (e.g. Wait.success.* or success.*).");
             return;
         }
 
@@ -751,6 +753,8 @@ function ConditionModal({
             event: eventId,
             target: "",
             targetLabel: "",
+            eventDisplayName: eventId,
+            availableTargetIds: targetOnlyMode ? availableTargets.map(target => target.id) : null,
             conditionEnabled: false,
             conditionVariable: usableVars[0]?.id || "",
             conditionOperator: "==",
@@ -866,6 +870,11 @@ function ConditionModal({
                     return;
                 }
 
+                if (containerEventMode && !isValidScxmlEventDescriptor(transition.event)) {
+                    setSelectedTransitionId(transition.transitionId);
+                    setErrorMessage("Enter a valid SCXML event descriptor; editor node IDs are not events.");
+                    return;
+                }
                 normalizedTransitions.push({
                     transitionId: transition.transitionId,
                     edgeId: transition.edgeId,
@@ -902,6 +911,11 @@ function ConditionModal({
         const allVariables = [...usableVars];
 
         for (const transition of orderedTransitions) {
+            if (!isValidScxmlEventDescriptor(transition.event)) {
+                setSelectedTransitionId(transition.transitionId);
+                setErrorMessage("A transition must use an SCXML event descriptor, not an editor node ID.");
+                return;
+            }
             if (!transition.conditionEnabled || !transition.conditionVariableIsNew) {
                 continue;
             }
@@ -1067,7 +1081,7 @@ function ConditionModal({
                     <div className="transition-drawer-heading">
                         <span className="transition-drawer-title">
                             {targetOnlyMode ? (
-                                <>Outgoing transitions</>
+                                <>{containerEventMode ? "Parallel event transitions" : "Outgoing transitions"}</>
                             ) : (
                                 <>
                                     Transitions: <span>{sourceNodeName}</span>
@@ -1076,7 +1090,9 @@ function ConditionModal({
                         </span>
                         <span className="transition-drawer-subtitle">
                             {targetOnlyMode
-                                ? "Only transition targets can be reassigned."
+                                ? (containerEventMode
+                                    ? "Use the emitted SCXML descriptor (Wait.success.* catches Wait events; success.* is a direct Parallel event)."
+                                    : "Only transition targets can be reassigned.")
                                 : "Child transitions are evaluated before parent transitions. Reorder within each scope."}
                         </span>
                     </div>
@@ -1186,11 +1202,26 @@ function ConditionModal({
                                                         <span className="transition-priority">
                                                             #{localIndex + 1}
                                                         </span>
-                                                        <span className="transition-event-name">
-                                                            {transition.eventDisplayName ||
-                                                                transition.event ||
-                                                                "No event"}
-                                                        </span>
+                                                        {containerEventMode ? (
+                                                            <input
+                                                                className="text-field transition-event-name nodrag"
+                                                                type="text"
+                                                                aria-label="SCXML event descriptor"
+                                                                value={transition.event}
+                                                                onClick={(event) => event.stopPropagation()}
+                                                                onChange={(event) => {
+                                                                    const value = event.target.value;
+                                                                    setTransitionsState((previous) => previous.map(item =>
+                                                                        item.transitionId === transition.transitionId
+                                                                            ? { ...item, event: value, eventDisplayName: value }
+                                                                            : item));
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            <span className="transition-event-name">
+                                                                {transition.eventDisplayName || transition.event || "No event"}
+                                                            </span>
+                                                        )}
                                                     </div>
 
                                                     <div className="transition-order-summary">
@@ -1246,7 +1277,7 @@ function ConditionModal({
                                                     </button>
                                                     <button
                                                         className="transition-delete-button"
-                                                        disabled={targetOnlyMode}
+                                                        disabled={targetOnlyMode && !containerEventMode}
                                                         onClick={(event) =>
                                                             handleDeleteTransition(
                                                                 transition.transitionId,
@@ -1270,26 +1301,25 @@ function ConditionModal({
                             </div>
 
                             <div className="transition-add-row">
-                                <select
+                                <input
                                     className="skill-select"
+                                    type="text"
+                                    list="scxml-transition-descriptors"
+                                    aria-label="New SCXML event descriptor"
+                                    placeholder={containerEventMode ? "Wait.success.* or success.*" : "Exit token or wildcard"}
                                     value={newTransitionEvent}
-                                    disabled={targetOnlyMode}
-                                    onChange={(event) =>
-                                        setNewTransitionEvent(event.target.value)
-                                    }
-                                >
-                                    {normalizedEvents.map((event) => (
-                                        <option key={event.id} value={event.id}>
-                                            {event.id}
-                                        </option>
-                                    ))}
-                                </select>
+                                    disabled={targetOnlyMode && !containerEventMode}
+                                    onChange={(event) => setNewTransitionEvent(event.target.value)}
+                                />
+                                <datalist id="scxml-transition-descriptors">
+                                    {normalizedEvents.map((event) => <option key={event.id} value={event.id} />)}
+                                </datalist>
                                 <button
                                     className="filter-button transition-primary-button transition-add-button"
                                     type="button"
-                                    disabled={targetOnlyMode}
+                                    disabled={targetOnlyMode && !containerEventMode}
                                     title={
-                                        targetOnlyMode
+                                        targetOnlyMode && !containerEventMode
                                             ? "Container exit events are fixed."
                                             : "Add transition"
                                     }

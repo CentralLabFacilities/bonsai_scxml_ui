@@ -219,6 +219,8 @@ fn render_state<'a>(
         }
     }
 
+    // SCXML <parallel> enters every region concurrently; it cannot declare
+    // an initial child. A parallel may still be initial in its *parent*.
     let initial_scxml_id = state
         .initial_child_scxml_id
         .as_deref()
@@ -231,8 +233,10 @@ fn render_state<'a>(
                     .map(|child| child.scxml_id.as_str())
             })
         });
-    if let Some(initial) = initial_scxml_id {
-        output.push_str(&format!(" initial=\"{}\"", escape_attr(initial)));
+    if !matches!(state.kind, StateKind::Parallel) {
+        if let Some(initial) = initial_scxml_id {
+            output.push_str(&format!(" initial=\"{}\"", escape_attr(initial)));
+        }
     }
 
     let children = index
@@ -583,6 +587,25 @@ mod tests {
 </scxml>
 "##
         );
+    }
+
+    #[test]
+    fn parallel_never_serializes_initial_but_its_regions_do() {
+        let mut workflow = parse_scxml(
+            r#"<scxml initial="P"><parallel id="P"><state id="RegionA" initial="A"><state id="A"/></state><state id="RegionB" initial="B"><state id="B"/></state></parallel></scxml>"#,
+        ).unwrap();
+        // Simulate stale editor data from an older Parallel implementation.
+        let parallel = workflow.states.iter_mut()
+            .find(|state| state.kind == StateKind::Parallel)
+            .unwrap();
+        parallel.initial_child_scxml_id = Some("RegionA".to_string());
+
+        let xml = serialize_scxml(&workflow).unwrap();
+        assert!(xml.contains("initial=\"P\""));
+        assert!(xml.contains("<parallel id=\"P\">"));
+        assert!(!xml.contains("<parallel id=\"P\" initial="));
+        assert!(xml.contains("<state id=\"RegionA\" initial=\"A\">"));
+        assert!(xml.contains("<state id=\"RegionB\" initial=\"B\">"));
     }
 
     #[test]

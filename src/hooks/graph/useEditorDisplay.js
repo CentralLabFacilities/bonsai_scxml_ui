@@ -1,3 +1,5 @@
+import { isBoundaryTransitionFragment } from "../../utils/transitionVisualOwnership.js";
+import { projectParallelLaneExitEdges } from "../../utils/parallelExitProjection.js";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { MarkerType } from "@xyflow/react";
 import {
@@ -454,6 +456,36 @@ export function useEditorDisplay({
         [transitionStructureEdges, transitionNodeById]
     );
 
+    // A parallel catches an event from any matching lane. Derive the other
+    // lane-to-target paths for rendering only: one canonical edge remains in
+    // document state and in SCXML export.
+    const renderTransitionEdges = useMemo(() => {
+        // Helpers are owned by canonical transitions. Only unambiguous helpers
+        // may be selected/deleted; never edit helper objects in document state.
+        const ownerByExit = new Map();
+        for (const edge of normalizedTransitionEdges) {
+            if (isBoundaryTransitionFragment(edge)) continue;
+            const exitId = edge.data?.boundaryExitId;
+            if (!exitId) continue;
+            const key = String(exitId);
+            ownerByExit.set(key, ownerByExit.has(key) ? null : edge);
+        }
+        const displayEdges = normalizedTransitionEdges.map((edge) => {
+            if (!isBoundaryTransitionFragment(edge)) return edge;
+            const exitId = edge.data?.boundaryExitId ||
+                edge.data?.compoundExitId || edge.data?.parallelExitId;
+            const owner = exitId ? ownerByExit.get(String(exitId)) : null;
+            return owner ? {
+                ...edge, selectable: true, deletable: true, focusable: true,
+                data: { ...(edge.data || {}), editorVisualOwnerId: owner.id },
+            } : edge;
+        });
+        return [
+            ...displayEdges,
+            ...projectParallelLaneExitEdges(displayEdges, transitionNodeById),
+        ];
+    }, [normalizedTransitionEdges, transitionNodeById]);
+
     const routingGeometryNodes = useRoutingNodeSnapshot(nodes, isDraggingNode);
 
     // Smart/manual edge routing only depends on node geometry, not display-only
@@ -610,7 +642,7 @@ export function useEditorDisplay({
         } = routingGeometryIndex;
         const next = new Map();
 
-        normalizedTransitionEdges.forEach((edge) => {
+        renderTransitionEdges.forEach((edge) => {
             if (
                 edge.data?.boundaryInternalEdge ||
                 edge.data?.compoundInternalEdge ||
@@ -696,19 +728,20 @@ export function useEditorDisplay({
         });
 
         return next;
-    }, [routingGeometryIndex, normalizedTransitionEdges]);
+    }, [routingGeometryIndex, renderTransitionEdges]);
 
 
     const reconnectableTransitionEdgeIds = useMemo(() => {
         const incomingByTarget = new Map();
 
-        normalizedTransitionEdges.forEach((edge) => {
+        renderTransitionEdges.forEach((edge) => {
             if (
                 edge.data?.boundaryInternalEdge ||
                 edge.data?.compoundInternalEdge ||
                 edge.data?.parallelInternalEdge ||
                 edge.data?.compoundInitialEdge ||
-                edge.data?.parallelEntryEdge
+                edge.data?.parallelEntryEdge ||
+                edge.data?.editorVisualProjection
             ) {
                 return;
             }
@@ -729,11 +762,11 @@ export function useEditorDisplay({
                 .filter((edgeIds) => edgeIds.length === 1)
                 .map((edgeIds) => edgeIds[0])
         );
-    }, [normalizedTransitionEdges, transitionNodeById]);
+    }, [renderTransitionEdges, transitionNodeById]);
 
     const smartTransitionEdges = useMemo(
         () =>
-            withSmartTransitionRouting(normalizedTransitionEdges).map(
+            withSmartTransitionRouting(renderTransitionEdges).map(
                 (edge) => ({
                     ...edge,
                     // React Flow's native target reconnect handle re-drags the
@@ -775,7 +808,7 @@ export function useEditorDisplay({
                 })
             ),
         [
-            normalizedTransitionEdges,
+            renderTransitionEdges,
             reconnectableTransitionEdgeIds,
             compoundAvoidanceByEdgeId,
             manualRoutingNodes,
@@ -958,6 +991,16 @@ export function useEditorDisplay({
             indexByEdgeId: new Map(
                 baseEdges.map((edge, index) => [edge.id, index])
             ),
+            // A single canonical SCXML edge can have multiple display-only
+            // parallel lane legs. Index those once, never per hover render.
+            projectionIndexesByOwnerId: baseEdges.reduce((index, edge, edgeIndex) => {
+                const ownerId = edge.data?.projectionOfEdgeId;
+                if (ownerId) {
+                    if (!index.has(ownerId)) index.set(ownerId, []);
+                    index.get(ownerId).push(edgeIndex);
+                }
+                return index;
+            }, new Map()),
         };
     }, [smartTransitionEdges, useLightweightBackgroundTransitions, colorblindMode]);
 
@@ -973,6 +1016,7 @@ export function useEditorDisplay({
             indexByNodeId,
             indexByEdgeId,
             boundaryHelperIdsByKey,
+            projectionIndexesByOwnerId,
         } = transitionRenderCache;
 
         // Node selection is semantic context, not edge selection. Give all
@@ -1017,12 +1061,19 @@ export function useEditorDisplay({
                 if (index !== undefined) targetIndexes.add(index);
             });
         };
+        const addProjectedLaneLegs = (targetIndexes, edgeId) => {
+            (projectionIndexesByOwnerId.get(edgeId) || []).forEach(index =>
+                targetIndexes.add(index)
+            );
+        };
         if (activeHoveredEditorEdgeId) {
             addRelatedHelpers(focusedIndexes, activeHoveredEditorEdgeId);
+            addProjectedLaneLegs(focusedIndexes, activeHoveredEditorEdgeId);
         }
-        selectedTransitionEdgeIds.forEach((edgeId) =>
-            addRelatedHelpers(selectionRelatedIndexes, edgeId)
-        );
+        selectedTransitionEdgeIds.forEach((edgeId) => {
+            addRelatedHelpers(selectionRelatedIndexes, edgeId);
+            addProjectedLaneLegs(selectionRelatedIndexes, edgeId);
+        });
 
         // Keep every transition mounted after load. The visibility toggle is
         // implemented by a CSS class on React Flow instead of removing edges
@@ -1266,6 +1317,16 @@ export function useEditorDisplay({
             indexByEdgeId: new Map(
                 baseEdges.map((edge, index) => [edge.id, index])
             ),
+            // A single canonical SCXML edge can have multiple display-only
+            // parallel lane legs. Index those once, never per hover render.
+            projectionIndexesByOwnerId: baseEdges.reduce((index, edge, edgeIndex) => {
+                const ownerId = edge.data?.projectionOfEdgeId;
+                if (ownerId) {
+                    if (!index.has(ownerId)) index.set(ownerId, []);
+                    index.get(ownerId).push(edgeIndex);
+                }
+                return index;
+            }, new Map()),
         };
     }, [routedSlotEdgeCache, colorblindMode]);
 

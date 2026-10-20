@@ -1,3 +1,4 @@
+import { applyParallelContainerTransitions } from "../../../utils/parallelContainerTransitions.js";
 import { MarkerType } from "@xyflow/react";
 import { clearTransientTransitionHighlight } from "../../../utils/editorGraph";
 import {
@@ -25,10 +26,39 @@ export const createTransitionDrawerCommitHandler = ({
     setGlobalDataModel,
     setNodes,
     setEdges,
+    updateGraph,
     updateNodeInternals,
     syncTransitionsForSource,
     setDrawerData,
 }) => ({ updatedTransitions, newGlobalVars = [], newGlobalVar = null }) => {
+    if (drawerData.containerEventMode) {
+        // Parallel transitions are semantic events on their container, never
+        // a collection of independent lane transitions. Publish nodes/edges
+        // together; render helpers are derived by the boundary router.
+        try {
+            const managedEdgeIds = (drawerData.candidateTransitions || [])
+                .map(item => item.edgeId).filter(Boolean);
+            const normalized = applyParallelContainerTransitions({
+                nodes, edges, parallelId: drawerData.containerNodeId,
+                transitions: updatedTransitions || [], managedEdgeIds,
+            });
+            updateGraph({ nodes: normalized.nodes, edges: normalized.edges });
+            normalized.affectedNodeIds.forEach(id =>
+                requestAnimationFrame(() => updateNodeInternals(id)));
+            // Request one authoritative Rust transition projection. Issuing
+            // per-skill command patches here can race/rewrite the shared
+            // Parallel owner with stale event descriptors.
+            void syncTransitionsForSource?.(drawerData.containerNodeId, {
+                preserveContainerOrder: true,
+            });
+            setDrawerData(previous => ({ ...previous, isOpen: false }));
+        } catch (error) {
+            // Validation is performed in the modal. In case a stale target or
+            // modified document slips through, keep the graph unchanged.
+            console.error("Cannot commit Parallel transitions", error);
+        }
+        return;
+    }
     if (drawerData.targetOnlyMode) {
         if (!Array.isArray(updatedTransitions)) return;
 

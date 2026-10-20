@@ -260,6 +260,9 @@ pub(super) fn is_integer_literal(value: &str) -> bool {
 }
 
 pub(super) fn is_double_literal(value: &str) -> bool {
+    if value == "NaN" {
+        return true;
+    }
     if value.is_empty() || is_integer_literal(value) {
         return false;
     }
@@ -397,5 +400,19 @@ pub(super) fn severity_rank(value: &str) -> u8 {
         "warning" => 1,
         "info" => 2,
         _ => 99,
+    }
+}
+
+#[cfg(test)]
+mod nan_literal_tests {
+    use super::*;
+
+    #[test]
+    fn nan_is_double_not_string() {
+        assert_eq!(infer_literal_type("NaN").label(), "Double");
+        assert_eq!(infer_literal_type("'NaN'").label(), "String");
+        assert_eq!(infer_literal_type("NaNExtra").label(), "String");
+        assert!(validate_typed_value("NaN", ValueType::Double, &[]).is_ok());
+        assert!(validate_typed_value("NaN", ValueType::Integer, &[]).is_err());
     }
 }

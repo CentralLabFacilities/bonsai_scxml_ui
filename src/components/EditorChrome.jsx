@@ -28,6 +28,8 @@ function Header({
     showSlotEdges = true, onToggleSlotEdges,
     showCodeViewButton = true, onToggleCodeViewButton,
     colorblindMode = false, onToggleColorblindMode,
+    runtimeAssignmentsVisible = false, runtimeAssignmentsOpen = false, onToggleRuntimeAssignments,
+    onActivateInspector,
 }) {
     const IS_DESKTOP = isTauri();
 
@@ -278,11 +280,22 @@ function Header({
                             aria-expanded={panels[`${side}Open`]}
                             aria-label={`Toggle ${label.toLowerCase()}`}
                             title={`${panels[`${side}Open`] ? "Hide" : "Show"} ${label.toLowerCase()}`}
-                            onClick={() => panels.togglePanel(side)}
+                            onClick={() => {
+                                if (side === "inspector") onActivateInspector?.();
+                                panels.togglePanel(side);
+                            }}
                         >
                             <span className="panel-toggle-text">{label}</span>
                         </Button>
                     ))}
+                    {runtimeAssignmentsVisible && <Button size="sm"
+                        className={`menu-button panel-toggle ${runtimeAssignmentsOpen ? "active" : ""}`}
+                        leadingIcon={<FiSliders />}
+                        aria-expanded={runtimeAssignmentsOpen} aria-controls="runtime-assignments-panel"
+                        title={runtimeAssignmentsOpen ? "Hide run assignments" : "Show run assignments"}
+                        onClick={onToggleRuntimeAssignments}>
+                        <span className="panel-toggle-text">Run assignments</span>
+                    </Button>}
                 </nav>
             )}
         </header>
@@ -340,7 +353,7 @@ export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs }) {
     );
 }
 
-export function EditorPanelLedge({ side, panels }) {
+export function EditorPanelLedge({ side, panels, onActivate }) {
     const open = panels[`${side}Open`];
     const label = side === "library" ? "Library" : "Inspector";
     const Chevron = (side === "library") === open ? FiChevronLeft : FiChevronRight;
@@ -353,7 +366,10 @@ export function EditorPanelLedge({ side, panels }) {
             aria-expanded={open}
             aria-label={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
             title={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
-            onClick={() => panels.togglePanel(side)}
+            onClick={() => {
+                if (side === "inspector") onActivate?.();
+                panels.togglePanel(side);
+            }}
         >
             <Chevron aria-hidden="true" />
             <span className="editor-panel-ledge-label">{label}</span>

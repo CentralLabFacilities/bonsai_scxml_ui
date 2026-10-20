@@ -34,6 +34,7 @@ export function ConnectionHandle({
 export function NodeTitle({
     className,
     initial = false,
+    initialScope = "root",
     typeLabel,
     badgeClassName,
     label,
@@ -45,7 +46,10 @@ export function NodeTitle({
         <div className={className}>
             {leading}
             {initial && (
-                <span className="initial-state-badge initial-state-badge-inline">INITIAL</span>
+                <span
+                    className={`initial-state-badge initial-state-badge-inline ${initialScope === "container" ? "initial-state-badge-local" : ""}`}
+                    title={initialScope === "container" ? "Initial child of this container" : "Initial state of the state machine"}
+                >{initialScope === "container" ? "LOCAL INITIAL" : "INITIAL"}</span>
             )}
             {typeLabel && <span className={badgeClassName}>{typeLabel}</span>}
             {label != null && (labelClassName ? (
