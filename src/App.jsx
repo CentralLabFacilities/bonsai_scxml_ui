@@ -12,6 +12,7 @@ import SkillLibrary from "./components/library/SkillLibrary";
 import BehaviorLibrary from "./components/library/BehaviorLibrary";
 import EditorCanvas from "./components/canvas/EditorCanvas";
 import RunLogPanel from "./components/logs/RunLogPanel.jsx";
+import EditorUtilityBar from "./components/EditorUtilityBar.jsx";
 import EditorOverlays from "./components/overlays/EditorOverlays.jsx";
 import WorkflowTabBar from "./components/WorkflowTabBar";
 import EditorFindOverlay from "./components/canvas/EditorFindOverlay";
@@ -54,6 +55,7 @@ import { useLiveExecution } from "./hooks/editor/useLiveExecution.js";
 import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
 import RuntimeAssignmentsDrawer from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
 import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
+import { getRefreshableSkillNodeIds } from "./utils/skillDefinitionRefresh.js";
 import { useEditorFind } from "./hooks/interaction/useEditorFind";
 import { useGlobalEditorShortcuts } from "./hooks/interaction/useGlobalEditorShortcuts";
 import { useEditorLibraryDrop } from "./hooks/library/useEditorLibraryDrop";
@@ -568,6 +570,33 @@ function AppContent() {
         syncStateConfigurationAfterCommit:
             rustWorkflowDocument.syncStateConfigurationAfterCommit,
     });
+
+    // Refresh *definitions*, not the ReactFlow root. Remounting the canvas
+    // discards viewport/handle state and has previously caused white flashes.
+    const refreshEditorNodes = useCallback(async () => {
+        const owner = getActiveDocumentIdentity();
+        await fetchSkills({ manual: true }); // invalidates even unchanged skill-name lists
+        if (getActiveDocumentIdentity() !== owner) return { message: 'Document changed; refresh cancelled' };
+        const ids = getRefreshableSkillNodeIds(getDocumentSnapshot().nodes);
+        // Native SCXML state configuration commits are serialized. Refreshing
+        // many skills concurrently could otherwise race Rust patches.
+        let failed = 0;
+        for (const id of ids) {
+            if (getActiveDocumentIdentity() !== owner) break;
+            try {
+                if (await updateEventsFromParameters(id) !== true) failed += 1;
+            } catch {
+                failed += 1;
+            }
+        }
+        if (getActiveDocumentIdentity() !== owner) return { message: 'Document changed; refresh cancelled' };
+        // Force ReactFlow to measure newly added/removed ports after data arrives.
+        requestAnimationFrame(() => {
+            if (getActiveDocumentIdentity() === owner) updateNodeInternals(ids);
+        });
+        return { message: failed ? `${ids.length - failed} updated, ${failed} failed` :
+            `Refreshed ${ids.length} skill node${ids.length === 1 ? '' : 's'}` };
+    }, [fetchSkills, getActiveDocumentIdentity, getDocumentSnapshot, updateEventsFromParameters, updateNodeInternals]);
 
     const {
         canGoBack: canGoFocusBack,
@@ -1561,6 +1590,9 @@ function AppContent() {
 
                     </div>
                     <RunLogPanel key={runLogSession} session={runLogSession} />
+                    <EditorUtilityBar onQuickGuide={() => setIsHintPageOpen(true)}
+                        shortcuts={{ isOpen: isShortcutHelpOpen, setIsOpen: setIsShortcutHelpOpen }}
+                        onRefresh={refreshEditorNodes} canRefresh={activeMode !== 'code'} />
                 </main>
 
                 <EditorPanelResizer side="inspector" panels={panels} />
@@ -1626,16 +1658,6 @@ function AppContent() {
                 )}
             </div>
 
-            <button
-                type="button"
-                className="hint-page-open-button nodrag nopan"
-                onClick={() => setIsHintPageOpen(true)}
-                title="Quick guide"
-                aria-label="Open Bonsai UI quick guide"
-            >
-                ?
-            </button>
-
             <EditorOverlays
                 runtimeCommander={{
                     isOpen: isRuntimeCommanderOpen,
@@ -1686,7 +1708,6 @@ function AppContent() {
                     },
                 }}
                 paste={{ pending: pendingSkillPaste, onCancel: cancelPendingSkillPaste, onResolve: resolvePendingSkillPaste }}
-                shortcuts={{ isOpen: isShortcutHelpOpen, setIsOpen: setIsShortcutHelpOpen }}
                 tabPathTooltip={tabPathTooltip}
                 condition={{
                     drawer: drawerData,

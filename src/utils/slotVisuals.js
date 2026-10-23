@@ -50,6 +50,7 @@ export function getStateSlotEntries(data = {}, nodeType = "custom") {
             key: slot?.key,
             path: slot?.path,
             type: slot?.type,
+            definitionMissing: Boolean(slot?.definitionMissing),
             inheritedMetadata: slot?.inherited || null,
             access,
             index,

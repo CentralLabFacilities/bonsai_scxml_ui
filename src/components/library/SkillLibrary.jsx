@@ -8,6 +8,7 @@ import {
     FiChevronRight,
     FiRefreshCw,
     FiPlus,
+    FiX,
 } from "react-icons/fi";
 import { MdAssistantNavigation } from "react-icons/md";
 import { FaHandPaper } from "react-icons/fa";
@@ -188,6 +189,11 @@ function SkillLibrary({
                           skillCount = 0,
                       }) {
     const skillTooltipRef = useRef(null);
+    const listContainerRef = useRef(null);
+    // Search results always start at the first match, not the former scroll offset.
+    useEffect(() => {
+        if (listContainerRef.current) listContainerRef.current.scrollTop = 0;
+    }, [searchText]);
     const pendingAddRef = useRef(false);
     const mountedRef = useRef(false);
     const [addingSkill, setAddingSkill] = useState(null);
@@ -383,7 +389,12 @@ function SkillLibrary({
                         value={searchText}
                         onChange={(e) => setSearchText(e.target.value)}
                     />
-                    <FiSearch className="search-icon" />
+                    {searchText ? (
+                        <button type="button" className="search-clear-button" title="Clear skill search"
+                            aria-label="Clear skill search" onClick={() => setSearchText("")}>
+                            <FiX aria-hidden="true" />
+                        </button>
+                    ) : <FiSearch className="search-icon" />}
                 </div>
 
                 <div className="filter-container">
@@ -525,7 +536,7 @@ function SkillLibrary({
                     </div>
                 )}
 
-                <div className="list-container">
+                <div className="list-container" ref={listContainerRef}>
                     {activeFilter === "Everything" &&
                         selectedPackage === null &&
                         searchText === "" && (

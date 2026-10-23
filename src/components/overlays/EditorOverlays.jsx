@@ -5,7 +5,6 @@ import { Button, InlineFeedback } from "../ui/index.js";
 const ConditionModal = lazy(() => import("./ConditionModal.jsx"));
 const CreateSlotModal = lazy(() => import("./CreateSlotModal.jsx"));
 const CreateSubMachineModal = lazy(() => import("./CreateSubMachineModal.jsx"));
-const EditorShortcutHelp = lazy(() => import("./EditorShortcutHelp.jsx"));
 const HintPage = lazy(() => import("./HintPage.jsx"));
 const RuntimeCommander = lazy(() => import("./RuntimeCommander.jsx"));
 
@@ -193,7 +192,6 @@ export default function EditorOverlays({
     hint,
     subMachine,
     paste,
-    shortcuts,
     tabPathTooltip,
     condition,
     slots,
@@ -202,8 +200,6 @@ export default function EditorOverlays({
     runtimeCommander = null,
 }) {
     const progressPercent = Math.round(Math.max(0, Math.min(1, runtimePreparation?.progress || 0)) * 100);
-    const shortcutHelpId = useId();
-    const shortcutHelpButtonRef = useRef(null);
     const pasteCancelButtonRef = useRef(null);
     const renameCancelButtonRef = useRef(null);
     const renameTitleId = useId();
@@ -281,52 +277,6 @@ export default function EditorOverlays({
                     <CreateSlotModal isOpen onClose={slots.onClose} onCreate={slots.onCreate} skillSlotOptions={slots.options} />
                 )}
             </Suspense>
-
-            <div
-                className="nodrag nopan"
-                onBlurCapture={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget)) shortcuts.setIsOpen?.(false);
-                }}
-                onKeyDown={(event) => {
-                    if (event.key === "Escape" && shortcuts.isOpen) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        shortcutHelpButtonRef.current?.focus();
-                        shortcuts.setIsOpen?.(false);
-                    }
-                }}
-                style={{ position: "fixed", right: 18, bottom: 18, zIndex: 5200 }}
-            >
-                <button
-                    ref={shortcutHelpButtonRef}
-                    type="button"
-                    aria-label="Show keyboard shortcuts"
-                    aria-expanded={Boolean(shortcuts.isOpen)}
-                    aria-controls={shortcutHelpId}
-                    title="Keyboard shortcuts"
-                    onClick={() => shortcuts.setIsOpen?.(!shortcuts.isOpen)}
-                    style={{
-                        width: 34,
-                        height: 34,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        border: "1px solid #475569",
-                        borderRadius: 8,
-                        background: "#111827",
-                        color: "#cbd5e1",
-                        boxShadow: "0 6px 18px rgba(0, 0, 0, 0.28)",
-                        cursor: "help",
-                        fontSize: 18,
-                        lineHeight: 1,
-                    }}
-                >
-                    {"\u2328"}
-                </button>
-                <Suspense fallback={null}>
-                    {shortcuts.isOpen && <EditorShortcutHelp id={shortcutHelpId} />}
-                </Suspense>
-            </div>
 
             {documentGuard && (
                 <UnsavedWorkflowDialog key={`${documentGuard.tabId}:${documentGuard.action}`} {...documentGuard} />

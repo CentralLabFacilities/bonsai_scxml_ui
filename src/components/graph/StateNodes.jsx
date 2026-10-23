@@ -36,8 +36,18 @@ function editHandlers(onActivate) {
 function useNodeHandleLayout(id, signature) {
     const updateNodeInternals = useUpdateNodeInternals();
     useEffect(() => {
-        const frame = requestAnimationFrame(() => updateNodeInternals(id));
-        return () => cancelAnimationFrame(frame);
+        let secondFrame = null;
+        // ReactFlow registers a newly inserted node's handles and its measured
+        // bounds in separate layout phases. Re-measure after registration as
+        // well as after the next paint; no graph mutation or remount required.
+        const firstFrame = requestAnimationFrame(() => {
+            updateNodeInternals(id);
+            secondFrame = requestAnimationFrame(() => updateNodeInternals(id));
+        });
+        return () => {
+            cancelAnimationFrame(firstFrame);
+            if (secondFrame !== null) cancelAnimationFrame(secondFrame);
+        };
     }, [id, signature, updateNodeInternals]);
 }
 
@@ -82,7 +92,9 @@ function EventPorts({ id, data, eventIds, editable }) {
                         {...(editable
                             ? editHandlers(() => data.onOpenTransition?.(id, eventId))
                             : {})}
-                        title={editable ? `${eventId} \u2014 click to edit transition` : undefined}
+                        title={(data.events || []).some((event) => event.id === eventId && event.definitionMissing)
+                            ? `${eventId} — no longer advertised by the skill API; retained for existing transitions`
+                            : editable ? `${eventId} \u2014 click to edit transition` : undefined}
                         style={editable ? { cursor: "pointer" } : undefined}
                     >
                         {eventId}
@@ -258,11 +270,11 @@ function SlotDock({ id, data, entries, submachine }) {
                                 style={{ flexGrow: estimateSlotPortWidth(entry, slanted) }}
                             >
                                 <span
-                                    className={`node-slot-entry ${entry.inherited ? "node-slot-entry-inherited" : ""} ${submachine ? "" : "nodrag nopan"}`}
+                                    className={`node-slot-entry ${entry.inherited ? "node-slot-entry-inherited" : ""} ${entry.handles.some((handle) => handle.definitionMissing) ? "node-slot-entry-definition-missing" : ""} ${submachine ? "" : "nodrag nopan"}`}
                                     {...(submachine ? {} : editHandlers(() =>
                                         data.onOpenSlot?.(id, entry.handles[0].access, entry.key),
                                     ))}
-                                    title={`Access: ${access}\nType: ${fullSlotType || "Unknown"}${(entry.conflictingPaths || entry.conflictingInheritance) ? "\nConflicting saved bindings: edit the shared binding in Details." : ""}`}
+                                    title={`Access: ${access}\nType: ${fullSlotType || "Unknown"}${(entry.conflictingPaths || entry.conflictingInheritance) ? "\nConflicting saved bindings: edit the shared binding in Details." : ""}${entry.handles.some((handle) => handle.definitionMissing) ? "\nNot in the current skill API; retained to preserve existing bindings." : ""}`}
                                     style={submachine ? undefined : { cursor: "pointer" }}
                                 >
                                     <span className="node-slot-key">{label}</span>

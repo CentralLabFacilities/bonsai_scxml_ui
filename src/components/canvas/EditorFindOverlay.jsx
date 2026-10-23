@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { FiX } from "react-icons/fi";
 import { EmptyState, IconButton, TextInput } from "../ui/index.js";
 
@@ -13,6 +14,10 @@ export default function EditorFindOverlay({
     focusResult,
     onClose,
 }) {
+    const resultListRef = useRef(null);
+    useLayoutEffect(() => {
+        if (resultListRef.current) resultListRef.current.scrollTop = 0;
+    }, [query]);
     if (!isOpen) return null;
 
     return (
@@ -53,13 +58,17 @@ export default function EditorFindOverlay({
                     }}
                     placeholder="Find skill or slot…"
                 />
+                {query && <IconButton size="sm" onClick={() => setQuery("")}
+                    title="Clear search" aria-label="Clear search">
+                    <FiX size={14} aria-hidden="true" />
+                </IconButton>}
                 <IconButton size="sm" onClick={onClose} title="Close (Esc)" aria-label="Close find">
                     <FiX size={16} aria-hidden="true" />
                 </IconButton>
             </div>
 
             {query.trim() && (
-                <div className="editor-find-overlay__results">
+                <div className="editor-find-overlay__results" ref={resultListRef}>
                     {results.length === 0 ? (
                         <EmptyState compact>No matching skill or slot.</EmptyState>
                     ) : (

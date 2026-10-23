@@ -2,41 +2,11 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { normalizeSlotType } from "../../utils/editorGraph.js";
 import { fillMissingSharedSlotBindings } from "../../utils/sharedSlotBindings.js";
+import { reconcileRefreshedSkillEvents, reconcileRefreshedSlotRequests } from "../../utils/skillDefinitionRefresh.js";
+import { getLogicalEdgeSourceHandle, getLogicalEdgeSourceId } from "../../utils/transitionSemantics.js";
 
-const reconcileDynamicSlots = (currentSlots = [], requestedSlots = []) => {
-    const slotsByKey = new Map();
-    for (const slot of currentSlots || []) {
-        const key = slot?.key;
-        // Map uses SameValueZero, whereas the original lookup used ===.
-        if (Number.isNaN(key)) continue;
-        const type = normalizeSlotType(slot?.type);
-        let slotsByType = slotsByKey.get(key);
-        if (!slotsByType) {
-            slotsByType = new Map();
-            slotsByKey.set(key, slotsByType);
-        }
-        if (!slotsByType.has(type)) slotsByType.set(type, slot);
-    }
-
-    return (Array.isArray(requestedSlots) ? requestedSlots : []).map((requestedSlot) => {
-        const existingSlot = slotsByKey
-            .get(requestedSlot?.key)
-            ?.get(normalizeSlotType(requestedSlot?.type));
-
-        return {
-            ...requestedSlot,
-            key: requestedSlot?.key || "",
-            type: requestedSlot?.type || "Unknown",
-            description:
-                requestedSlot?.description ?? existingSlot?.description ?? "",
-            // Keep a user's existing connection when the same request is
-            // still exposed. Newly exposed requests deliberately start
-            // without a path and therefore show up as unconnected slots.
-            path: existingSlot?.path || "",
-            inherited: existingSlot?.inherited || null,
-        };
-    });
-};
+const reconcileDynamicSlots = (currentSlots = [], requestedSlots = []) =>
+    reconcileRefreshedSlotRequests(currentSlots, requestedSlots, normalizeSlotType);
 
 const reconcileDynamicParameters = (currentParams = [], requestedParams = []) => {
     const paramsByKey = new Map();
@@ -223,48 +193,12 @@ export function useDynamicSkillConfiguration({
 
                 let nextEvents = currentNode.data?.events || [];
                 if (Array.isArray(data.events)) {
-                    const previousEvents = new Map(
-                        (currentNode.data?.events || []).map((event) => [
-                            event.id,
-                            event,
-                        ])
+                    const linkedHandles = getDocumentSnapshot().edges
+                        .filter((edge) => getLogicalEdgeSourceId(edge) === nodeId)
+                        .map(getLogicalEdgeSourceHandle);
+                    nextEvents = reconcileRefreshedSkillEvents(
+                        currentNode.data?.events || [], data.events, linkedHandles,
                     );
-
-                    const configuredEvents = data.events.map((event) => {
-                        const existing = previousEvents.get(event.event);
-                        return {
-                            ...(existing || {}),
-                            id: event.event,
-                            description: event.description || "",
-                            selectedPackage: existing?.selectedPackage || "",
-                            selectedSkill: existing?.selectedSkill || "",
-                            target: existing?.target ?? null,
-                            cond: existing?.cond || "",
-                            assignments: existing?.assignments || [],
-                            assignLocation: existing?.assignLocation || "",
-                            assignExpr: existing?.assignExpr || "",
-                        };
-                    });
-
-                    const appendBuiltInEvent = (eventId) => {
-                        if (configuredEvents.some((event) => event.id === eventId)) return;
-                        const existing = previousEvents.get(eventId);
-                        configuredEvents.push({
-                            ...(existing || {}),
-                            id: eventId,
-                            selectedPackage: existing?.selectedPackage || "",
-                            selectedSkill: existing?.selectedSkill || "",
-                            target: existing?.target ?? null,
-                            cond: existing?.cond || "",
-                            assignments: existing?.assignments || [],
-                            assignLocation: existing?.assignLocation || "",
-                            assignExpr: existing?.assignExpr || "",
-                        });
-                    };
-
-                    appendBuiltInEvent("fatal");
-                    appendBuiltInEvent("*");
-                    nextEvents = configuredEvents;
                 }
 
                 const nextInSlots =
@@ -305,7 +239,10 @@ export function useDynamicSkillConfiguration({
                 // Rebase onto the live model, outside any replayable state updater.
                 setNodes(updatedNodes);
                 scheduleSlotRebuild({ ...request, parameters: getParameterSnapshot(getConsumedParameters(nextParams)) });
-                void callbacksRef.current.syncStateConfigurationAfterCommit(nodeId);
+                // Await persistence so an explicit multi-skill refresh can
+                // serialize native SCXML updates and report failures.
+                await callbacksRef.current.syncStateConfigurationAfterCommit(nodeId);
+                return true;
             } catch (error) {
                 if (
                     mountedRef.current &&
@@ -313,6 +250,7 @@ export function useDynamicSkillConfiguration({
                     getActiveDocumentIdentity() === documentIdentity
                 )
                     console.error("Error updating skill from parameters:", error);
+                return false;
             } finally {
                 if (
                     requestVersions.get(nodeId) === requestVersion &&

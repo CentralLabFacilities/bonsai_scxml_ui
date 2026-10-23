@@ -8,6 +8,7 @@ import {
     FiPlus,
     FiRefreshCw,
     FiSearch,
+    FiX,
     FiTrash2,
 } from "react-icons/fi";
 import {
@@ -476,6 +477,10 @@ function BehaviorLibrary({
     onLibraryTabChange,
 }) {
     const [searchText, setSearchText] = useState("");
+    const rootsListRef = useRef(null);
+    useLayoutEffect(() => {
+        if (rootsListRef.current) rootsListRef.current.scrollTop = 0;
+    }, [searchText]);
     const [adding, setAdding] = useState(false);
     const [newKey, setNewKey] = useState("");
     const [newPath, setNewPath] = useState("");
@@ -618,7 +623,12 @@ function BehaviorLibrary({
                     value={searchText}
                     onChange={(event) => setSearchText(event.target.value)}
                 />
-                <FiSearch className="search-icon" />
+                {searchText ? (
+                    <button type="button" className="search-clear-button" title="Clear behavior search"
+                        aria-label="Clear behavior search" onClick={() => setSearchText("")}>
+                        <FiX aria-hidden="true" />
+                    </button>
+                ) : <FiSearch className="search-icon" />}
             </div>
 
             {adding && (
@@ -685,7 +695,7 @@ function BehaviorLibrary({
                 </div>
             )}
 
-            <div className="behavior-roots-list">
+            <div className="behavior-roots-list" ref={rootsListRef}>
                 {directories.length === 0 ? (
                     <div className="behavior-library-empty">
                         Add a directory to start browsing behaviors.
