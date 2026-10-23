@@ -10449,13 +10449,32 @@ dialog.skill-paste-choice-overlay {
     display: none !important;
 }
 
-/* One read/write request row still exposes both original directional handles.
-   Keep them separated along the bottom rail to avoid overlapping hit targets. */
-:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.slot-skill-read-handle.react-flow__handle-bottom {
-    left: 29%;
+/* Shared read/write requests keep their two underlying directional handles,
+   but present them as one combined port: both halves overlap at the same point
+   and share the hit area visually while preserving read/write identities. */
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.react-flow__handle-bottom {
+    left: 50%;
 }
-:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.slot-skill-write-handle.react-flow__handle-bottom {
-    left: 71%;
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle {
+    --shared-slot-outline-width: 14px;
+    --shared-slot-fill-width: 10px;
+}
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle::before,
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle::after {
+    width: var(--shared-slot-outline-width);
+    height: var(--shared-slot-outline-width);
+}
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle::after {
+    width: var(--shared-slot-fill-width);
+    height: var(--shared-slot-fill-width);
+}
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle-read::before,
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle-read::after {
+    clip-path: inset(0 50% 0 0 round 999px 0 0 999px);
+}
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle-write::before,
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.skill-slot-shared-handle-write::after {
+    clip-path: inset(0 0 0 50% round 0 999px 999px 0);
 }
 :is(.costum-node, .submachine-node).has-slot-dock .skill-slot-border-segment-read-write {
     background: linear-gradient(90deg, #6366f1 0 48%, #d946ef 52% 100%);
@@ -10480,8 +10499,12 @@ dialog.skill-paste-choice-overlay {
 }
 .search-clear-button:hover, .search-clear-button:focus-visible { background: #334155; color: #f8fafc; }
 
-/* Central-editor utility strip is outside the canvas AND the Run Logs panel. */
+/* The shortcuts popover extends upward into the canvas. Give its footer a
+   stacking context above the canvas Run/Load overlay (z-index: 30), while
+   leaving dialogs and other global overlays above it. */
 .editor-utility-bar {
+    position: relative;
+    z-index: 40;
     display: flex; align-items: center; justify-content: space-between;
     height: 30px; flex: 0 0 30px; min-width: 0; padding: 0 9px;
     background: #101827; color: #94a3b8; border-top: 1px solid #334155;

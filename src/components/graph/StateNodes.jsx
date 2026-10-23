@@ -312,7 +312,7 @@ function SlotDock({ id, data, entries, submachine }) {
                                             isConnectableStart={true}
                                             isConnectableEnd={true}
                                             position={Position.Bottom}
-                                            className={`source-handle skill-slot-handle slot-skill-${handle.access}-handle ${feedback.className}`}
+                                            className={`source-handle skill-slot-handle slot-skill-${handle.access}-handle ${entry.handles.length === 2 ? `skill-slot-shared-handle skill-slot-shared-handle-${handle.access}` : ""} ${feedback.className}`}
                                             data-slot-incompatibility={feedback.reason || undefined}
                                             title={feedback.reason || handleTitle}
                                             aria-label={feedback.reason || handleTitle}
