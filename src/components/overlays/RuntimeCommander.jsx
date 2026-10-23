@@ -30,6 +30,7 @@ export default function RuntimeCommander({
     onExecutionUpdate,
     onRuntimeEvent,
     onRuntimeReset,
+    onLogLoadRequested,
     onRuntimeGap,
     onRuntimeBaseline,
     runtimeTimeline,
@@ -292,6 +293,9 @@ export default function RuntimeCommander({
                 const includeMapping = Object.fromEntries(behaviorDirectories
                     .filter((directory) => directory.key?.trim() && directory.path?.trim())
                     .map((directory) => [directory.key.trim(), (directory.resolvedPath || directory.path).trim()]));
+                // Connect before loading so configuration/startup logs are captured.
+                // Repeated Load calls reset the log panel even for the same workflow.
+                onLogLoadRequested?.();
                 sent = true;
                 followingRef.current = false;
                 observedRunningRef.current = false;
@@ -567,7 +571,9 @@ export default function RuntimeCommander({
                             title="Close run panel" disabled={busy} onClick={close}><FiX /></button>
                     </div>
                     {(runtimeParallelViews.length > 0 || runtimeActiveSubMachines.length > 1) &&
-                        <details className="runtime-parallel-overview" aria-label="Parallel execution">
+                        <details open className="runtime-parallel-overview" aria-label="Parallel execution">
+                            {/* Show the lane visualization immediately during active parallel
+                                execution, while retaining the newer compact/collapsible layout. */}
                             <summary className="runtime-parallel-heading">
                                 <strong>Parallel execution</strong>
                                 <span>{runtimeParallelViews.filter((item) => !item.exiting).length} active</span>

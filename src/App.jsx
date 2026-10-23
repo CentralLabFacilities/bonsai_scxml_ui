@@ -11,6 +11,7 @@ import Header, { EditorNotice, EditorPanel, EditorPanelLedge, EditorPanelResizer
 import SkillLibrary from "./components/library/SkillLibrary";
 import BehaviorLibrary from "./components/library/BehaviorLibrary";
 import EditorCanvas from "./components/canvas/EditorCanvas";
+import RunLogPanel from "./components/logs/RunLogPanel.jsx";
 import EditorOverlays from "./components/overlays/EditorOverlays.jsx";
 import WorkflowTabBar from "./components/WorkflowTabBar";
 import EditorFindOverlay from "./components/canvas/EditorFindOverlay";
@@ -76,6 +77,10 @@ const EMPTY_RUNTIME_CONTAINERS = [];
 function AppContent() {
     const { notify } = useFeedback();
     const [isRuntimeCommanderOpen, setIsRuntimeCommanderOpen] = useState(false);
+    // Changes only when the runtime Load action is invoked. Incoming log lines
+    // stay inside RunLogPanel and never update App's graph state.
+    const [runLogSession, setRunLogSession] = useState(0);
+    const handleRunLogLoad = useCallback(() => setRunLogSession((session) => session + 1), []);
     const [runtimeAssignmentsOpen, setRuntimeAssignmentsOpen] = useState(false);
     const [runtimePanelFront, setRuntimePanelFront] = useState("details");
     const toggleRuntimeAssignments = useCallback(() => {
@@ -1555,6 +1560,7 @@ function AppContent() {
                         />
 
                     </div>
+                    <RunLogPanel key={runLogSession} session={runLogSession} />
                 </main>
 
                 <EditorPanelResizer side="inspector" panels={panels} />
@@ -1647,6 +1653,7 @@ function AppContent() {
                     onExecutionUpdate: handleExecutionUpdate,
                     onRuntimeEvent: handleRuntimeEvent,
                     onRuntimeReset: resetRuntimeEvents,
+                    onLogLoadRequested: handleRunLogLoad,
                     onRuntimeGap: handleRuntimeGap,
                     onRuntimeBaseline: seedRuntimeBaseline,
                     runtimeTimeline: runtimeEventTimeline,
