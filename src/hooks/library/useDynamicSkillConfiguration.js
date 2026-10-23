@@ -1,6 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { normalizeSlotType } from "../../utils/editorGraph.js";
+import { fillMissingSharedSlotBindings } from "../../utils/sharedSlotBindings.js";
 
 const reconcileDynamicSlots = (currentSlots = [], requestedSlots = []) => {
     const slotsByKey = new Map();
@@ -295,8 +296,7 @@ export function useDynamicSkillConfiguration({
                                     : data.actuators !== undefined
                                       ? data.actuators
                                       : candidate.data?.actuators || [],
-                            inSlots: nextInSlots,
-                            outSlots: nextOutSlots,
+                            ...fillMissingSharedSlotBindings({ inSlots: nextInSlots, outSlots: nextOutSlots }),
                             params: nextParams,
                         },
                     };

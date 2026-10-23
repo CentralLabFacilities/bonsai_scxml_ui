@@ -1,3 +1,4 @@
+import { fillMissingSharedSlotBindings } from "./sharedSlotBindings.js";
 import {
     deserializeScxmlConditionForEditor,
     deserializeScxmlValueForEditor,
@@ -173,6 +174,9 @@ const stateDataPatch = (node, state, mode = "all") => {
             state?.outputSlots || [],
             stateName
         );
+        // A single SCXML key can be requested in both directions. Backfill an
+        // unbound direction but preserve genuinely conflicting legacy paths.
+        Object.assign(next, fillMissingSharedSlotBindings(next));
     }
     if (mode === "all") {
         next.onEntry = (state?.onEntry || []).map(toEditorAssignment);

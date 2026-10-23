@@ -1,5 +1,5 @@
 import dagre from "@dagrejs/dagre";
-import { getSlotTypeBadgeLabel, getStateSlotEntries } from "./slotVisuals.js";
+import { getSlotTypeBadgeLabel, getStateSlotDisplayRows } from "./slotVisuals.js";
 
 const DEFAULT_NODE_WIDTH = 210;
 const DEFAULT_NODE_HEIGHT = 80;
@@ -16,7 +16,8 @@ export const estimateSlotPortWidth = (entry, slanted = false) => {
     const projectedNameWidth = slanted
         ? nameWidth * Math.cos(55 * Math.PI / 180)
         : nameWidth;
-    return Math.max(slanted ? 47 : 40, projectedNameWidth + 10, badgeWidth + 10);
+    return Math.max(entry.handles?.length === 2 ? 90 : 0,
+        slanted ? 47 : 40, projectedNameWidth + 10, badgeWidth + 10);
 };
 
 export const estimateSlotDockWidth = (slotEntries) => {
@@ -95,7 +96,7 @@ const estimateOverviewWidth = (node) => {
 
     requiredWidth = Math.max(
         requiredWidth,
-        estimateSlotDockWidth(getStateSlotEntries(data, nodeType))
+        estimateSlotDockWidth(getStateSlotDisplayRows(data, nodeType))
     );
 
     return Math.min(MAX_OVERVIEW_WIDTH, requiredWidth);
@@ -113,7 +114,7 @@ const estimateOverviewHeight = (node) => {
     );
     if (nodeType === "custom") events.add("fatal");
     const eventCount = events.size;
-    const slotCount = getStateSlotEntries(data, nodeType).length;
+    const slotCount = getStateSlotDisplayRows(data, nodeType).length;
 
     if (nodeType === "submachine") {
         const localDataCount = (data.localDataModel || []).filter((entry) => {

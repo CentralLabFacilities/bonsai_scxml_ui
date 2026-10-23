@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from "react";
+import { findSharedSlotPartner } from "../../utils/sharedSlotBindings.js";
 import SlotDetailsPanel from "./SlotDetailsPanel.jsx";
 import GeneralDetailsSection from "./GeneralDetailsSection.jsx";
 import NopSendEditor from "./NopSendEditor.jsx";
@@ -201,9 +202,12 @@ function DetailsPanel({
                     String(request.slotKey || "")
             );
             if (slotIndex >= 0) {
-                inputId = `${
-                    request.access === "write" ? "out" : "in"
-                }-slot-${selectedNode.id}-${slotIndex}`;
+                const partner = findSharedSlotPartner(selectedNode.data, request.access, slotIndex);
+                const primaryAccess = request.access === "write" && partner?.access === "read"
+                    ? "read" : request.access;
+                const primaryIndex = primaryAccess === "read" && request.access === "write"
+                    ? partner.index : slotIndex;
+                inputId = `${primaryAccess === "write" ? "out" : "in"}-slot-${selectedNode.id}-${primaryIndex}`;
             }
         } else if (activeTab === "allgemein" && transitionFocusRequest) {
             kind = "transition";

@@ -9,7 +9,7 @@ import {
     StateActionBadges,
 } from "./NodeChrome.jsx";
 import { estimateSlotDockWidth, estimateSlotPortWidth, estimateSummaryWidth } from "../../utils/layoutUtils.js";
-import { getSlotHandleDragFeedback, getSlotTypeBadgeLabel, getStateSlotEntries } from "../../utils/slotVisuals.js";
+import { getSlotHandleDragFeedback, getSlotTypeBadgeLabel, getStateSlotDisplayRows } from "../../utils/slotVisuals.js";
 import { isInternalRuntimeName } from "../../utils/runtimeEventFrames.js";
 
 const textValue = (value) => String(value ?? "").trim();
@@ -236,7 +236,7 @@ function SlotDock({ id, data, entries, submachine }) {
                 <div className="skill-slot-border-rail" aria-hidden="true">
                     {entries.map((entry) => (
                         <span
-                            key={entry.handleId}
+                            key={entry.groupKey}
                             className={`skill-slot-border-segment skill-slot-border-segment-${entry.access}`}
                         />
                     ))}
@@ -246,39 +246,23 @@ function SlotDock({ id, data, entries, submachine }) {
                         const label = submachine
                             ? String(entry.key || entry.path || "Slot")
                             : entry.key;
-                        const access = entry.access === "read" ? "Read" : "Write";
-                        const origin = entry.handleId.startsWith("slot-submachine-")
-                            ? "submachine"
-                            : "skill";
+                        const access = entry.handles.length === 2 ? "Read / Write" :
+                            entry.access === "read" ? "Read" : "Write";
                         const fullSlotType = String(entry.type || "").trim();
                         const badgeLabel = getSlotTypeBadgeLabel(fullSlotType);
                         const slanted = entries.length >= 3;
-                        const slotType = fullSlotType.toLowerCase();
-                        const isConnectable = origin !== "submachine" ||
-                            Boolean(slotType && slotType !== "unknown");
-                        const handleTitle = `${access} ${label} · type: ${fullSlotType || "Unknown"} (${entry.access === "read" ? "into" : "out of"} ${submachine ? "sub-state machine" : "skill"})${isConnectable ? "" : " - slot type metadata unavailable"}`;
-                        const dragFeedback = getSlotHandleDragFeedback({
-                            drag: data.slotConnectionDrag,
-                            nodeId: id,
-                            handleId: entry.handleId,
-                            access: entry.access,
-                            origin,
-                            slotType: entry.type,
-                        });
                         return (
                             <div
-                                key={entry.handleId}
-                                className={`node-slot-row node-slot-row-${entry.access}`}
+                                key={entry.groupKey}
+                                className={`node-slot-row node-slot-row-${entry.access} ${entry.handles.length === 2 ? "node-slot-row-shared" : ""}`}
                                 style={{ flexGrow: estimateSlotPortWidth(entry, slanted) }}
                             >
                                 <span
                                     className={`node-slot-entry ${entry.inherited ? "node-slot-entry-inherited" : ""} ${submachine ? "" : "nodrag nopan"}`}
-                                    {...(submachine
-                                        ? {}
-                                        : editHandlers(() =>
-                                              data.onOpenSlot?.(id, entry.access, entry.key),
-                                          ))}
-                                    title={`Access: ${access}\nType: ${fullSlotType || "Unknown"}`}
+                                    {...(submachine ? {} : editHandlers(() =>
+                                        data.onOpenSlot?.(id, entry.handles[0].access, entry.key),
+                                    ))}
+                                    title={`Access: ${access}\nType: ${fullSlotType || "Unknown"}${(entry.conflictingPaths || entry.conflictingInheritance) ? "\nConflicting saved bindings: edit the shared binding in Details." : ""}`}
                                     style={submachine ? undefined : { cursor: "pointer" }}
                                 >
                                     <span className="node-slot-key">{label}</span>
@@ -292,18 +276,37 @@ function SlotDock({ id, data, entries, submachine }) {
                                 >
                                     {badgeLabel}
                                 </span>
-                                <ConnectionHandle
-                                    id={entry.handleId}
-                                    type={entry.access === "read" ? "target" : "source"}
-                                    isConnectable={isConnectable}
-                                    isConnectableStart={true}
-                                    isConnectableEnd={true}
-                                    position={Position.Bottom}
-                                    className={`source-handle skill-slot-handle slot-skill-${entry.access}-handle ${dragFeedback.className}`}
-                                    data-slot-incompatibility={dragFeedback.reason || undefined}
-                                    title={dragFeedback.reason || handleTitle}
-                                    aria-label={dragFeedback.reason || handleTitle}
-                                />
+                                {entry.handles.map((handle) => {
+                                    const origin = handle.handleId.startsWith("slot-submachine-")
+                                        ? "submachine" : "skill";
+                                    const slotType = String(handle.type || "").trim().toLowerCase();
+                                    const isConnectable = origin !== "submachine" ||
+                                        Boolean(slotType && slotType !== "unknown");
+                                    const feedback = getSlotHandleDragFeedback({
+                                        drag: data.slotConnectionDrag,
+                                        nodeId: id,
+                                        handleId: handle.handleId,
+                                        access: handle.access,
+                                        origin,
+                                        slotType: handle.type,
+                                    });
+                                    const handleTitle = `${handle.access === "read" ? "Read" : "Write"} ${label} · type: ${fullSlotType || "Unknown"}`;
+                                    return (
+                                        <ConnectionHandle
+                                            key={handle.handleId}
+                                            id={handle.handleId}
+                                            type={handle.access === "read" ? "target" : "source"}
+                                            isConnectable={isConnectable}
+                                            isConnectableStart={true}
+                                            isConnectableEnd={true}
+                                            position={Position.Bottom}
+                                            className={`source-handle skill-slot-handle slot-skill-${handle.access}-handle ${feedback.className}`}
+                                            data-slot-incompatibility={feedback.reason || undefined}
+                                            title={feedback.reason || handleTitle}
+                                            aria-label={feedback.reason || handleTitle}
+                                        />
+                                    );
+                                })}
                             </div>
                         );
                     })}
@@ -335,7 +338,7 @@ function StateCard({ id, data, selected, submachine = false }) {
     const terminal = isFinalState || isBehaviorExit;
     const slotEntries = useMemo(
         () =>
-            getStateSlotEntries(
+            getStateSlotDisplayRows(
                 {
                     inSlots: data.inSlots,
                     outSlots: data.outSlots,
@@ -414,7 +417,7 @@ function StateCard({ id, data, selected, submachine = false }) {
     const signature = [
         mode,
         ...eventIds,
-        ...slotEntries.map((entry) => entry.handleId),
+        ...slotEntries.flatMap((entry) => entry.handles.map((handle) => handle.handleId)),
         ...summaryEntries.map((entry) =>
             submachine
                 ? `${entry.key}=${entry.value}`

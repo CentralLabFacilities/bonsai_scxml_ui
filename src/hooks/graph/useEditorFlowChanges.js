@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
+import { expandSharedSlotEdgeRemovals, findSharedSlotPartner, updateSharedSlotBinding } from "../../utils/sharedSlotBindings.js";
 
 import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
 import { canonicalizeVisibleEdgeChanges } from "../../utils/transitionVisualOwnership.js";
@@ -469,8 +470,9 @@ export function useEditorFlowChanges({
                 currentSlotEdges.map((edge) => edge.id)
             );
 
-            const slotChanges = effectiveChanges.filter((change) =>
-                slotEdgeIds.has(change.id)
+            const slotChanges = expandSharedSlotEdgeRemovals(
+                liveNodes, currentSlotEdges,
+                effectiveChanges.filter((change) => slotEdgeIds.has(change.id))
             );
             const transitionChanges = effectiveChanges.filter(
                 (change) => !slotEdgeIds.has(change.id)
@@ -664,64 +666,45 @@ export function useEditorFlowChanges({
                     removedIds.has(edge.id)
                 );
 
-                setNodes((currentNodes) =>
-                    currentNodes.map((node) => {
+                // Keep both directional bindings and both visible edges in
+                // the same document transaction. React Flow must never see
+                // only half of a shared binding removed.
+                updateGraph((graph) => ({
+                    nodes: graph.nodes.map((node) => {
                         let nextNode = node;
-
                         removedEdges.forEach((edge) => {
                             if (edge.data?.subMachineInherited) return;
                             const access = edge.data?.access;
                             const skillNodeId = edge.data?.skillNodeId ||
                                 (access === "read" ? edge.target : edge.source);
                             const slotIndex = Number(edge.data?.slotIndex);
-
-                            if (
-                                access === "read" &&
-                                skillNodeId === node.id &&
-                                Number.isInteger(slotIndex) &&
-                                node.data?.inSlots?.[slotIndex]
-                            ) {
-                                nextNode = {
-                                    ...nextNode,
-                                    data: {
-                                        ...nextNode.data,
-                                        inSlots: nextNode.data.inSlots.map(
-                                            (slot, index) =>
-                                                index === slotIndex
-                                                    ? { ...slot, path: "", inherited: null }
-                                                    : slot
-                                        ),
-                                    },
-                                };
-                            }
-
-                            if (
-                                access === "write" &&
-                                skillNodeId === node.id &&
-                                Number.isInteger(slotIndex) &&
-                                node.data?.outSlots?.[slotIndex]
-                            ) {
-                                nextNode = {
-                                    ...nextNode,
-                                    data: {
-                                        ...nextNode.data,
-                                        outSlots: nextNode.data.outSlots.map(
-                                            (slot, index) =>
-                                                index === slotIndex
-                                                    ? { ...slot, path: "", inherited: null }
-                                                    : slot
-                                        ),
-                                    },
-                                };
-                            }
+                            if (skillNodeId !== node.id || !Number.isInteger(slotIndex) ||
+                                !["read", "write"].includes(access)) return;
+                            const field = access === "read" ? "inSlots" : "outSlots";
+                            const selected = nextNode.data?.[field]?.[slotIndex];
+                            if (!selected) return;
+                            const partner = findSharedSlotPartner(nextNode.data, access, slotIndex);
+                            const samePath = partner &&
+                                normalizeSlotPath(selected.inherited?.xpath || selected.path) &&
+                                normalizeSlotPath(selected.inherited?.xpath || selected.path) ===
+                                    normalizeSlotPath(partner.slot.inherited?.xpath || partner.slot.path) &&
+                                Boolean(selected.inherited) === Boolean(partner.slot.inherited) &&
+                                String(selected.inherited?.state || "") ===
+                                    String(partner.slot.inherited?.state || "");
+                            const data = samePath
+                                ? updateSharedSlotBinding(nextNode.data, access, slotIndex, { path: "", inherited: null })
+                                : { ...nextNode.data, [field]: nextNode.data[field].map((slot, index) =>
+                                    index === slotIndex ? { ...slot, path: "", inherited: null } : slot) };
+                            nextNode = { ...nextNode, data };
                         });
-
                         return nextNode;
-                    })
-                );
+                    }),
+                    slotEdges: applyEdgeChanges(slotChanges, graph.slotEdges),
+                }));
+            } else {
+                onSlotEdgesChange(slotChanges);
             }
 
-            onSlotEdgesChange(slotChanges);
             if (removedIds.size > 0) {
                 void Promise.resolve(syncSlotsAfterCommit?.()).catch((error) =>
                     console.warn("Could not synchronize slot disconnection.", error));

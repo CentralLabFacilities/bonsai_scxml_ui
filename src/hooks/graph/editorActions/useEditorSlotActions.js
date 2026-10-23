@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
 import {
     getSlotPathFromNode,
     normalizeSlotPath,
@@ -227,27 +228,14 @@ export function useEditorSlotActions({
                 updatedNodes = nodes.map((node) => {
                     if (node.id !== nodeId) return node;
 
-                    const key = access === "read" ? "inSlots" : "outSlots";
                     return {
                         ...node,
-                        data: {
-                            ...node.data,
-                            [key]: (node.data?.[key] || []).map(
-                                (slot, index) =>
-                                    index === slotIndex
-                                        ? {
-                                              ...slot,
-                                              path: cleanPath,
-                                              inherited: slotData.isInherited
-                                                  ? {
-                                                        state: "",
-                                                        xpath: cleanPath,
-                                                    }
-                                                  : null,
-                                          }
-                                        : slot
-                            ),
-                        },
+                        data: updateSharedSlotBinding(node.data, access, slotIndex, {
+                            path: cleanPath,
+                            inherited: slotData.isInherited
+                                ? { state: "", xpath: cleanPath }
+                                : null,
+                        }),
                     };
                 });
 

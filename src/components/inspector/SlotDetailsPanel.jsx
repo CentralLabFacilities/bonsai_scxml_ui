@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { FiActivity, FiChevronDown, FiDatabase, FiExternalLink, FiLayers, FiLink2 } from "react-icons/fi";
 import { MetadataRow } from "./DetailsPanelPrimitives.jsx";
 import { normalizeSlotPath, normalizeSlotType } from "../../utils/editorGraph.js";
+import { getGroupedSkillSlotRequests } from "../../utils/sharedSlotBindings.js";
 
 const normalizeSlotSearchPath = (value) =>
     normalizeSlotPath(value).toLowerCase();
@@ -226,6 +227,71 @@ function SkillSlotSection({
             />
         </div>
     ));
+}
+
+/** One inspector editor for one logical binding, without changing the two
+ * SCXML request arrays or their independent React Flow handle identities. */
+function SharedSkillSlotSection({ nodeId, data, availableSlotPaths, onUpdateRead, onUpdateWrite }) {
+    const rows = getGroupedSkillSlotRequests(data);
+    return rows.map((row) => {
+        const primary = row.handles.find((handle) => handle.access === "read") || row.handles[0];
+        const read = row.handles.find((handle) => handle.access === "read");
+        const write = row.handles.find((handle) => handle.access === "write");
+        const shared = Boolean(read && write);
+        const readPath = normalizeSlotPath(read?.inherited?.xpath || read?.path);
+        const writePath = normalizeSlotPath(write?.inherited?.xpath || write?.path);
+        const conflict = shared && Boolean(readPath && writePath &&
+            (readPath !== writePath || Boolean(read?.inherited) !== Boolean(write?.inherited) ||
+                (read?.inherited && write?.inherited &&
+                 String(read.inherited.state || "") !== String(write.inherited.state || ""))));
+        const onChange = primary.access === "read" ? onUpdateRead : onUpdateWrite;
+        return (
+            <div
+                className={`slot-text-field compact-slot-card compact-slot-${primary.access}`}
+                key={`${nodeId}:${row.groupKey}`}
+            >
+                <div className="compact-slot-header">
+                    <div className="compact-slot-name">{primary.key}</div>
+                    <div className="compact-slot-badges">
+                        <span className={`parameter-type-badge parameter-type-${String(primary.type || "other")
+                            .toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
+                            {primary.type || "Unknown"}
+                        </span>
+                        {row.handles.map((handle) => (
+                            <span key={handle.handleId} className={`slot-access-badge slot-access-${handle.access}`}>
+                                {handle.access === "read" ? "Read" : "Write"}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+                {(primary.description || write?.description) && (
+                    <div className="parameter-description">
+                        {[primary.description, write?.description].filter(Boolean)
+                            .filter((value, i, all) => all.indexOf(value) === i).join(" / ")}
+                    </div>
+                )}
+                {conflict && (
+                    <div className="shared-slot-conflict" role="alert">
+                        Previously saved bindings differ: Read /{readPath}, Write /{writePath}
+                        {Boolean(read?.inherited) !== Boolean(write?.inherited) ||
+                            String(read?.inherited?.state || "") !== String(write?.inherited?.state || "")
+                            ? " (inheritance differs)" : ""}.
+                        Neither has been changed automatically.
+                        <button type="button" className="nodrag nopan" onClick={() => onUpdateRead(read.index, read.path || read.inherited?.xpath || "", true)}>
+                            Use Read path for both
+                        </button>
+                    </div>
+                )}
+                <SlotPathEditor
+                    id={`${primary.access === "read" ? "in" : "out"}-slot-${nodeId}-${primary.index}`}
+                    value={primary.path || primary.inherited?.xpath || ""}
+                    slotType={primary.type}
+                    availableSlotPaths={availableSlotPaths}
+                    onCommit={(value) => onChange(primary.index, value, true)}
+                />
+            </div>
+        );
+    });
 }
 
 function SlotDetailsPanel({
@@ -762,5 +828,5 @@ function SlotDetailsPanel({
 }
 
 
-export { SkillSlotSection };
+export { SkillSlotSection, SharedSkillSlotSection };
 export default SlotDetailsPanel;

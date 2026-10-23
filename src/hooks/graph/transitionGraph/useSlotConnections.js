@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MarkerType } from "@xyflow/react";
+import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
 import {
     SLOT_CONNECTION_COLORS,
     getDefaultSlotPath,
@@ -201,10 +202,10 @@ export const useSlotConnections = (options) => {
         const inherited = slot.node.data?.inherited
             ? { ...consumer.slot.inherited, state: slot.node.data?.inheritedFrom || "", xpath: formattedPath }
             : null;
-        const key = access === "read" ? "inSlots" : "outSlots";
         const nodes = model.nodes.map((node) => node.id !== skillNodeId ? node : {
-            ...node, data: { ...node.data, [key]: node.data[key].map((entry, index) => index === consumer.slotIndex
-                ? { ...entry, path: formattedPath, inherited } : entry) },
+            ...node, data: updateSharedSlotBinding(node.data, access, consumer.slotIndex, {
+                path: formattedPath, inherited,
+            }),
         });
         return commit({ ...model, nodes }, model, consumer, slotNodeId, preferredEdgeId);
     }, [getModel, commit]);
@@ -305,10 +306,10 @@ export const useSlotConnections = (options) => {
                 inherited: Boolean(inherited), currentMachineInherited: Boolean(inherited),
                 inheritedFrom: inherited?.state || "", ...(inherited ? { slotKind: "inheritSlot" } : {}) },
         }];
-        const key = consumer.access === "read" ? "inSlots" : "outSlots";
         const nodes = model.nodes.map((node) => node.id !== consumer.nodeId ? node : {
-            ...node, data: { ...node.data, [key]: node.data[key].map((slot, index) => index === consumer.slotIndex
-                ? { ...slot, path: formattedPath, inherited: newInherited } : slot) },
+            ...node, data: updateSharedSlotBinding(node.data, consumer.access, consumer.slotIndex, {
+                path: formattedPath, inherited: newInherited,
+            }),
         });
         return commit({ ...model, nodes, slotNodes }, model, consumer, `slot-${path}`);
     }, [cancelSlotConnection, getIdentity, getModel, reportError, commit]);

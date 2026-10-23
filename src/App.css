@@ -10448,3 +10448,24 @@ dialog.skill-paste-choice-overlay {
     content: none !important;
     display: none !important;
 }
+
+/* One read/write request row still exposes both original directional handles.
+   Keep them separated along the bottom rail to avoid overlapping hit targets. */
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.slot-skill-read-handle.react-flow__handle-bottom {
+    left: 29%;
+}
+:is(.costum-node, .submachine-node).has-slot-dock .node-slot-row-shared .skill-slot-handle.slot-skill-write-handle.react-flow__handle-bottom {
+    left: 71%;
+}
+:is(.costum-node, .submachine-node).has-slot-dock .skill-slot-border-segment-read-write {
+    background: linear-gradient(90deg, #6366f1 0 48%, #d946ef 52% 100%);
+}
+.shared-slot-conflict {
+    margin: 4px 0 8px;
+    color: #fbbf24;
+    font-size: 12px;
+}
+
+:root[data-colorblind-mode] :is(.costum-node, .submachine-node).has-slot-dock .skill-slot-border-segment-read-write {
+    background: linear-gradient(90deg, #8ab4f8 0 48%, #f0e442 52% 100%);
+}

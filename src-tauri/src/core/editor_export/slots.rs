@@ -161,6 +161,28 @@ mod tests {
     }
 
     #[test]
+    fn same_key_read_write_requests_export_as_one_scxml_slot_declaration() {
+        let request: EditorExportRequestDto = serde_json::from_value(serde_json::json!({
+            "nodes": [{
+                "id": "skill", "nodeType": "custom", "fullSkillName": "Wait#1", "isInitial": true,
+                "inputSlots": [{"key": "Entity", "typeName": "EntitySlot", "path": "/entity"}],
+                "outputSlots": [{"key": "Entity", "typeName": "EntitySlot", "path": "/entity"}]
+            }]
+        })).unwrap();
+        let workflow = build_workflow_from_editor(&request).unwrap();
+        assert_eq!(workflow.states[0].input_slots.len(), 1);
+        assert_eq!(workflow.states[0].output_slots.len(), 1);
+        let declarations = &workflow.to_dto().slot_declarations;
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0].key, "Entity");
+        assert_eq!(declarations[0].xpath, "/entity");
+        let xml = serialize_scxml(&workflow).unwrap();
+        assert_eq!(xml.matches("<slot key=\"Entity\"").count(), 1);
+        let reopened = parse_scxml(&xml).unwrap();
+        assert_eq!(reopened.to_dto().slot_declarations.len(), 1);
+    }
+
+    #[test]
     fn editor_export_keeps_empty_path_and_inherited_binding_filters() {
         let request: EditorExportRequestDto = serde_json::from_value(serde_json::json!({
             "extraSlotDeclarations": [

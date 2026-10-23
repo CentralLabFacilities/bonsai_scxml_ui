@@ -1,3 +1,5 @@
+import { groupSharedSlotEntries } from "./sharedSlotBindings.js";
+
 const SLOT_TYPE_VISUALS = Object.freeze({
     string: {
         color: "#38bdf8",
@@ -48,6 +50,7 @@ export function getStateSlotEntries(data = {}, nodeType = "custom") {
             key: slot?.key,
             path: slot?.path,
             type: slot?.type,
+            inheritedMetadata: slot?.inherited || null,
             access,
             index,
             handleId: `slot-skill-${access}-${index}`,
@@ -181,3 +184,7 @@ export function getSlotTypeStyle(type) {
         "--slot-type-text": visual.text,
     };
 }
+
+/** Slot dock presentation rows; original directional entries remain individually addressable. */
+export const getStateSlotDisplayRows = (data = {}, nodeType = "custom") =>
+    groupSharedSlotEntries(getStateSlotEntries(data, nodeType), nodeType === "custom");

@@ -1,7 +1,7 @@
 import { FiLink2 } from "react-icons/fi";
 import StateActionsEditor from "../inputs/StateActionsEditor.jsx";
 import TypedValueEditor from "../inputs/TypedValueEditor.jsx";
-import { SkillSlotSection } from "./SlotDetailsPanel.jsx";
+import { SharedSkillSlotSection } from "./SlotDetailsPanel.jsx";
 import { NodeReferenceCard } from "./DetailsPanelPrimitives.jsx";
 import { InlineFeedback } from "../ui/index.js";
 
@@ -132,19 +132,12 @@ function SlotsSection({
             <h3>Slots</h3>
 
             <div className="slot-list">
-                <SkillSlotSection
+                <SharedSkillSlotSection
                     nodeId={selectedNode.id}
-                    slots={selectedNode.data.inSlots || []}
-                    access="read"
+                    data={selectedNode.data}
                     availableSlotPaths={availableSlotPaths}
-                    onChange={onUpdateInSlotPath}
-                />
-                <SkillSlotSection
-                    nodeId={selectedNode.id}
-                    slots={selectedNode.data.outSlots || []}
-                    access="write"
-                    availableSlotPaths={availableSlotPaths}
-                    onChange={onUpdateOutSlotPath}
+                    onUpdateRead={onUpdateInSlotPath}
+                    onUpdateWrite={onUpdateOutSlotPath}
                 />
             </div>
         </div>

@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { isSlotEdge } from "../../../utils/editorGraph";
+import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
 import { getForwardingNopScxmlStateId } from "../../../utils/editorScxml";
 import { validateParameterValue } from "../../../utils/valueValidation.js";
 import { validateStateRename } from "../../../utils/stateNameValidation.js";
@@ -448,26 +449,11 @@ export function useEditorNodeDataActions({
     const updateSkillSlotPath = useCallback(
         (nodeId, access, slotIndex, path, commit = false) => {
             if (!nodeId || !["read", "write"].includes(access)) return;
-            const key = access === "read" ? "inSlots" : "outSlots";
-
             setNodes((currentNodes) => {
                 const updatedNodes = currentNodes.map((node) => {
                     if (node.id !== nodeId) return node;
-                    const slots = Array.isArray(node.data?.[key])
-                        ? node.data[key]
-                        : [];
-
-                    return {
-                        ...node,
-                        data: {
-                            ...(node.data || {}),
-                            [key]: slots.map((slot, index) =>
-                                index === slotIndex
-                                    ? { ...slot, path }
-                                    : slot
-                            ),
-                        },
-                    };
+                    const data = updateSharedSlotBinding(node.data || {}, access, slotIndex, { path });
+                    return data === node.data ? node : { ...node, data };
                 });
 
                 if (commit) {
