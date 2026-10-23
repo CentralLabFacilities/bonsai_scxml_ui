@@ -29,7 +29,6 @@ function Header({
     showCodeViewButton = true, onToggleCodeViewButton,
     colorblindMode = false, onToggleColorblindMode,
     runtimeAssignmentsVisible = false, runtimeAssignmentsOpen = false, onToggleRuntimeAssignments,
-    onActivateInspector,
 }) {
     const IS_DESKTOP = isTauri();
 
@@ -281,7 +280,6 @@ function Header({
                             aria-label={`Toggle ${label.toLowerCase()}`}
                             title={`${panels[`${side}Open`] ? "Hide" : "Show"} ${label.toLowerCase()}`}
                             onClick={() => {
-                                if (side === "inspector") onActivateInspector?.();
                                 panels.togglePanel(side);
                             }}
                         >
@@ -353,7 +351,7 @@ export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs }) {
     );
 }
 
-export function EditorPanelLedge({ side, panels, onActivate }) {
+export function EditorPanelLedge({ side, panels }) {
     const open = panels[`${side}Open`];
     const label = side === "library" ? "Library" : "Inspector";
     const Chevron = (side === "library") === open ? FiChevronLeft : FiChevronRight;
@@ -367,7 +365,6 @@ export function EditorPanelLedge({ side, panels, onActivate }) {
             aria-label={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
             title={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
             onClick={() => {
-                if (side === "inspector") onActivate?.();
                 panels.togglePanel(side);
             }}
         >

@@ -40,21 +40,26 @@ function CurrentValues({ title, hint, values, emptyText }) {
     </section>;
 }
 
-export default function RuntimeAssignmentsDrawer({ timeline, frame, declaredVariables = [], detailsOpen = false,
-    open = false, onToggle, onActivate }) {
+export function RuntimeAssignmentsLedge({ open = false, onToggle }) {
+    return <button type="button" className="editor-panel-ledge editor-panel-ledge-assignments"
+        onClick={onToggle} aria-controls="runtime-assignments-panel" aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} run assignments`}
+        title={`${open ? "Collapse" : "Expand"} run assignments`}>
+        {open ? <FiChevronRight aria-hidden="true" /> : <FiChevronLeft aria-hidden="true" />}
+        <span className="editor-panel-ledge-label">Run assignments</span>
+    </button>;
+}
+
+export default function RuntimeAssignmentsDrawer({ timeline, frame, declaredVariables = [],
+    open = false }) {
     const variables = getRuntimeVariableValues(declaredVariables, frame?.variables);
     const globalVariables = variables.filter(({ scope }) => scope === "global").sort((a, b) => a.name.localeCompare(b.name));
     const localVariables = variables.filter(({ scope }) => scope === "local").sort((a, b) => a.name.localeCompare(b.name));
     const parameters = getActiveRuntimeParameters(frame);
     const frames = timeline?.frames || [];
     return <aside id="runtime-assignments-panel" className={`runtime-assignments-panel ${open ? "open" : "closed"}`}
-        data-details-open={String(detailsOpen)} aria-label="Run assignments" onPointerDownCapture={onActivate}>
-        <button type="button" className="runtime-assignments-ledge" onClick={onToggle}
-            title={open ? "Close run assignments" : "Open run assignments"} aria-expanded={open}>
-            {open ? <FiChevronRight /> : <FiChevronLeft />}
-            <span>Run assignments</span>
-        </button>
-        <div className="runtime-assignments-content" inert={!open ? true : undefined}>
+        aria-label="Run assignments" aria-hidden={!open} inert={!open ? true : undefined}>
+        <div className="runtime-assignments-content">
             <header className="runtime-assignments-header">
                 <strong><FiActivity /> Run assignments</strong>
                 <small>{frames.length ? `Snapshot ${timeline.index + 1} of ${frames.length}` : "No snapshots yet"}</small>

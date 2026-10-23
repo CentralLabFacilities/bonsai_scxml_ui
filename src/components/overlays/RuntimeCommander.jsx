@@ -657,7 +657,8 @@ export default function RuntimeCommander({
                             {!manualEvents.length && <option value="">No events available for active skill</option>}
                             {manualEvents.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
                         </select>
-                        <Button type="submit" variant="primary" disabled={!canControl || !selectedEventName}>Send</Button>
+                        <button type="submit" className="runtime-commander-send-button"
+                            disabled={!canControl || !selectedEventName}>Send</button>
                     </form>
                     {(busy || error || (statusError && !optionsOpen)) &&
                         <div className="runtime-commander-footer" role="status">
@@ -688,7 +689,10 @@ export default function RuntimeCommander({
                     <footer><Button onClick={() => setDiagnosticsPopupOpen(false)}>Close</Button></footer>
                 </section>
             </div>}
-        </>, document.body,
+        </>,
+        // Keep the Run controller inside the canvas, rather than allowing a
+        // window-fixed overlay to cover the bottom-docked Run Logs panel.
+        document.getElementById("workflow-tab-panel") || document.body,
     );
 }
 

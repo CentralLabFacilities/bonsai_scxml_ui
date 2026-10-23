@@ -30,12 +30,36 @@ test('stack traces and multiline messages produce searchable, independent consol
     const entry = { ...parseRunLogMessage({ timestamp: 1, level: 'ERROR', logger: 'Engine',
         message: 'Runtime failed\nReason follows', stackTrace: 'java.lang.Exception\n\tat Test.java:10' }), id: 7 };
     const lines = flattenRunLogLines([entry]);
-    assert.equal(lines.length, 4);
+    assert.equal(lines.length, 3); // Two message lines + collapsed trace summary.
     assert.equal(lines[0].level, 'ERROR');
     assert.equal(lines[0].logger, 'Engine');
-    assert.equal(lines[3].text, '\tat Test.java:10');
+    assert.equal(lines[2].traceToggle, true);
+    assert.equal(lines[2].lineCount, 2);
+    assert.equal(lines[2].expanded, false);
+    const expanded = flattenRunLogLines([entry], new Set([7]));
+    assert.equal(expanded.length, 5);
+    assert.equal(expanded[2].expanded, true);
+    assert.equal(expanded[4].text, '\tat Test.java:10');
     assert.deepEqual(filterRunLogs([entry], { query: 'Test.java' }), [entry]);
     assert.deepEqual(filterRunLogs([entry], { level: 'WARN' }), []);
+});
+
+
+test('expanding one stack trace leaves other logs collapsed with stable keys', () => {
+    const entries = [11, 12].map((id) => ({
+        id, timestamp: 1, level: 'ERROR', logger: 'Engine', message: 'Failed',
+        stackTrace: 'Exception\n\tat Test.java:1',
+    }));
+    const collapsed = flattenRunLogLines(entries);
+    assert.equal(collapsed.length, 4);
+    assert.deepEqual(collapsed.filter((row) => row.traceToggle).map((row) => row.entryId), [11, 12]);
+    const expanded = flattenRunLogLines(entries, new Set([12]));
+    assert.equal(expanded.length, 6);
+    assert.equal(expanded.filter((row) => row.traceLine).length, 2);
+    assert.equal(expanded.find((row) => row.key === '11:stack-toggle').expanded, false);
+    assert.equal(expanded.find((row) => row.key === '12:stack-toggle').expanded, true);
+    assert.deepEqual(new Set(expanded.map((row) => row.key)).size, expanded.length);
+    assert.deepEqual(filterRunLogs(entries, {query:'Test.java'}), entries);
 });
 
 test('buffer remains bounded, preserving ordering during many batches', () => {

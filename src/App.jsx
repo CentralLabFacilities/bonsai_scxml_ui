@@ -53,9 +53,10 @@ import { useEditorContextMenu } from "./hooks/interaction/useEditorContextMenu";
 import { useRuntimeReplay } from "./hooks/editor/useRuntimeReplay";
 import { useLiveExecution } from "./hooks/editor/useLiveExecution.js";
 import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
-import RuntimeAssignmentsDrawer from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
+import RuntimeAssignmentsDrawer, { RuntimeAssignmentsLedge } from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
 import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
 import { getRefreshableSkillNodeIds } from "./utils/skillDefinitionRefresh.js";
+import { resolveRightPanelSwitch } from "./utils/rightPanelSwitch.js";
 import { useEditorFind } from "./hooks/interaction/useEditorFind";
 import { useGlobalEditorShortcuts } from "./hooks/interaction/useGlobalEditorShortcuts";
 import { useEditorLibraryDrop } from "./hooks/library/useEditorLibraryDrop";
@@ -84,17 +85,6 @@ function AppContent() {
     const [runLogSession, setRunLogSession] = useState(0);
     const handleRunLogLoad = useCallback(() => setRunLogSession((session) => session + 1), []);
     const [runtimeAssignmentsOpen, setRuntimeAssignmentsOpen] = useState(false);
-    const [runtimePanelFront, setRuntimePanelFront] = useState("details");
-    const toggleRuntimeAssignments = useCallback(() => {
-        const next = !runtimeAssignmentsOpen;
-        setRuntimeAssignmentsOpen(next);
-        setRuntimePanelFront(next ? "run" : "details");
-    }, [runtimeAssignmentsOpen]);
-    const bringDetailsToFront = useCallback(() => setRuntimePanelFront("details"), []);
-    const showRuntimeAssignments = useCallback(() => {
-        setRuntimeAssignmentsOpen(true);
-        setRuntimePanelFront("run");
-    }, []);
     const [liveExecution, setLiveExecution] = useState(null);
     const [runtimeExpandedContainers, setRuntimeExpandedContainers] = useState({});
     // Container resizing updates frame geometry continuously but defers
@@ -151,8 +141,33 @@ function AppContent() {
         colorblindMode,
         setColorblindMode,
     } = useEditorPreferences();
-    const panels = useEditorPanelLayout();
-    const { showPanel } = panels;
+    const basePanels = useEditorPanelLayout();
+    // Both right-side panels act as tabs: opening either closes the other.
+    // Library visibility and inspector width preferences remain independent.
+    const switchRightPanel = useCallback((action) => {
+        const next = resolveRightPanelSwitch({
+            inspectorOpen: basePanels.inspectorOpen,
+            assignmentsOpen: runtimeAssignmentsOpen,
+        }, action);
+        if (next.inspectorOpen !== basePanels.inspectorOpen) {
+            if (next.inspectorOpen) basePanels.showPanel("inspector");
+            else basePanels.closePanel("inspector");
+        }
+        if (next.assignmentsOpen !== runtimeAssignmentsOpen) {
+            setRuntimeAssignmentsOpen(next.assignmentsOpen);
+        }
+    }, [basePanels.inspectorOpen, basePanels.showPanel, basePanels.closePanel, runtimeAssignmentsOpen]);
+    const showPanel = useCallback((side) => {
+        if (side === "inspector") switchRightPanel("open-inspector");
+        else basePanels.showPanel(side);
+    }, [switchRightPanel, basePanels.showPanel]);
+    const togglePanel = useCallback((side) => {
+        if (side === "inspector") switchRightPanel("toggle-inspector");
+        else basePanels.togglePanel(side);
+    }, [switchRightPanel, basePanels.togglePanel]);
+    const panels = { ...basePanels, showPanel, togglePanel };
+    const toggleRuntimeAssignments = useCallback(() => switchRightPanel("toggle-assignments"), [switchRightPanel]);
+    const showRuntimeAssignments = useCallback(() => switchRightPanel("open-assignments"), [switchRightPanel]);
 
     //---- TAB / GRAPH MANAGEMENT ----
     const {
@@ -224,7 +239,7 @@ function AppContent() {
         setActiveTab,
         rightPanelTab,
         setRightPanelTab,
-    } = useEditorUiState({ showPanel, onDetailsRequested: bringDetailsToFront });
+    } = useEditorUiState({ showPanel });
 
     const {
         selectedNodeId,
@@ -466,6 +481,7 @@ function AppContent() {
         handleEdgeClick,
         handleEdgeDoubleClick: handleEditorEdgeDoubleClick,
         handleNodeClick,
+        handleNodeDoubleClick,
         handlePaneClick,
         handleNodeMouseEnter,
         handleNodeMouseLeave,
@@ -1232,6 +1248,7 @@ function AppContent() {
         updateGraph,
         setManualSlots,
         setSelectedNodeId,
+        setRightPanelTab,
         syncInsertedEditorStatesAfterCommit:
             rustWorkflowDocument.syncInsertedEditorStatesAfterCommit,
         syncInsertedParallelLaneStateAfterCommit:
@@ -1239,14 +1256,8 @@ function AppContent() {
         syncSlotsAfterCommit: rustWorkflowDocument.syncSlotsAfterCommit,
     });
 
-    const addLibrarySkill = useCallback(async (skill) => {
-        const added = await handleAddLibrarySkill(skill);
-        if (added) {
-            setRightPanelTab("details");
-            setActiveTab("allgemein");
-        }
-        return added;
-    }, [handleAddLibrarySkill, setRightPanelTab, setActiveTab]);
+    // Library insertion selects the new node but never opens the inspector.
+    const addLibrarySkill = handleAddLibrarySkill;
 
     const {
         isShortcutHelpOpen,
@@ -1365,13 +1376,6 @@ function AppContent() {
         onNavigateAncestorSlot: handleNavigateAncestorSlot,
     });
 
-    // Any editor selection/focused field requests the real Details inspector.
-    useEffect(() => {
-        if (isRuntimeCommanderOpen && (selectedNodeId || parameterFocusRequest || slotFocusRequest || transitionFocusRequest)) {
-            setRuntimePanelFront("details");
-        }
-    }, [selectedNodeId, parameterFocusRequest, slotFocusRequest, transitionFocusRequest, isRuntimeCommanderOpen]);
-
     const canvasRuntimeNodes = useMemo(() =>
         !runtimeLog && isRuntimeCommanderOpen && liveActive
             ? decorateLiveRuntimeNodes(liveVisibleNodes, selectedRuntimeFrame)
@@ -1391,7 +1395,6 @@ function AppContent() {
                 runtimeAssignmentsVisible={isRuntimeCommanderOpen}
                 runtimeAssignmentsOpen={runtimeAssignmentsOpen}
                 onToggleRuntimeAssignments={toggleRuntimeAssignments}
-                onActivateInspector={bringDetailsToFront}
                 showTransitionEdges={showTransitionEdges}
                 onToggleTransitionEdges={() => setShowTransitionEdges((value) => !value)}
                 showSlotEdges={showSlotEdges}
@@ -1411,7 +1414,6 @@ function AppContent() {
             <EditorNotice notice={libraryDropError} onDismiss={dismissLibraryDropError} />
 
             <div className="app" data-panel-mode={panels.isDocked ? "docked" : "drawers"}
-                data-runtime-front={runtimePanelFront}
                 data-library-dragging={String(panels.libraryDragging)} data-panel-resizing={String(panels.resizing)}
                 style={{
                     "--library-width": `${panels.libraryWidth}px`,
@@ -1420,6 +1422,11 @@ function AppContent() {
                     "--inspector-drawer-width": `${Math.min(panels.preferences.inspectorWidth, panels.inspectorMaxWidth)}px`,
                     "--library-resize-width": panels.isDocked && panels.libraryOpen ? "6px" : "0px",
                     "--inspector-resize-width": panels.isDocked && panels.inspectorOpen ? "6px" : "0px",
+                    // Inspector and Run Assignments share one right-hand dock width.
+                    // No collapsed track is reserved merely to hold the ledges.
+                    "--right-dock-width": runtimeAssignmentsOpen && isRuntimeCommanderOpen
+                        ? `${Math.min(panels.preferences.inspectorWidth, Math.max(0, panels.inspectorMaxWidth - (panels.isDocked ? 6 : 0)))}px`
+                        : panels.isDocked && panels.inspectorOpen ? `${panels.inspectorWidth}px` : "0px",
                 }}>
                 <EditorPanel side="library" panels={panels}>
                 {leftLibraryTab === "skills" ? (
@@ -1503,11 +1510,6 @@ function AppContent() {
                         aria-labelledby={`workflow-tab-${activeTabId}`}
                         tabIndex={0}
                         className="flow-container"
-                        onPointerDownCapture={(event) => {
-                            if (event.target.closest?.(".react-flow__node, .react-flow__edge, .node-parameter-row, .node-slot-entry")) {
-                                setRuntimePanelFront("details");
-                            }
-                        }}
                         onPointerMove={(event) => {
                             editorPointerPositionRef.current = {
                                 inside: true,
@@ -1564,6 +1566,7 @@ function AppContent() {
                             handleEdgeClick={handleEdgeClick}
                             handleEdgeDoubleClick={handleEditorEdgeDoubleClick}
                             handleNodeClick={handleNodeClick}
+                            handleNodeDoubleClick={handleNodeDoubleClick}
                             handlePaneClick={handlePaneClick}
                             handleNodeMouseEnter={handleNodeMouseEnter}
                             handleNodeMouseLeave={handleNodeMouseLeave}
@@ -1646,12 +1649,14 @@ function AppContent() {
                     />
                 </EditorPanel>
                 <EditorPanelLedge side="library" panels={panels} />
-                <EditorPanelLedge side="inspector" panels={panels}
-                    onActivate={bringDetailsToFront} />
+                <div className="right-panel-ledges" aria-label="Right sidebar tabs">
+                    <EditorPanelLedge side="inspector" panels={panels} />
+                    {isRuntimeCommanderOpen && <RuntimeAssignmentsLedge open={runtimeAssignmentsOpen}
+                        onToggle={toggleRuntimeAssignments} />}
+                </div>
                 {isRuntimeCommanderOpen && <RuntimeAssignmentsDrawer timeline={runtimeEventTimeline} frame={selectedRuntimeFrame}
                     declaredVariables={[...(inheritedGlobalDataModel || []), ...(globalDataModel || [])]}
-                    detailsOpen={panels.inspectorOpen} open={runtimeAssignmentsOpen}
-                    onToggle={toggleRuntimeAssignments} onActivate={() => setRuntimePanelFront("run")} />}
+                    open={runtimeAssignmentsOpen} />}
                 {!panels.isDocked && panels.drawer && !panels.libraryDragging && (
                     <button type="button" className="editor-panel-backdrop" tabIndex={-1}
                         aria-label="Close side panel" onClick={() => panels.closePanel(panels.drawer)} />
@@ -1664,7 +1669,6 @@ function AppContent() {
                     onClose: () => {
                         setIsRuntimeCommanderOpen(false);
                         setRuntimeAssignmentsOpen(false);
-                        setRuntimePanelFront("details");
                     },
                     onRuntimeStarted: showRuntimeAssignments,
                     workflowTab: activeWorkflowTab,

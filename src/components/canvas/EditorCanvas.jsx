@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, Profiler, useCallback, useEffect, useMemo, useRef } from "react";
 import { FiTrash2 } from "react-icons/fi";
 import {
     Background,
@@ -19,6 +19,11 @@ import CanvasContextMenu from "./CanvasContextMenu.jsx";
 import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
 import { boundaryTransitionKeys, buildBoundaryHelperIndex } from "../../utils/transitionBoundaryHighlight.js";
 import { traceResizeSnapshot } from "../../utils/resizeDiagnostics.js";
+import {
+    beginDragTrace, endDragTrace, traceDragCanvasGraph,
+    traceDragEvent, traceDragMovement, traceDragReactCommit,
+    traceDragComputation,
+} from "../../utils/dragDiagnostics.js";
 
 function EditorConnectionLine({ fromHandle, fromX, fromY, toX, toY, fromPosition, toPosition,
     connectionLineStyle }) {
@@ -89,6 +94,14 @@ const escapeDataId = (value) =>
         .replace(/\\/g, "\\\\")
         .replace(/"/g, '\\"');
 
+function FlowLifecycleProbe() {
+    useEffect(() => {
+        traceDragEvent('flow:mount');
+        return () => traceDragEvent('flow:unmount');
+    }, []);
+    return null;
+}
+
 export default function EditorCanvas({
     activeMode,
     setActiveMode,
@@ -126,6 +139,7 @@ export default function EditorCanvas({
     handleEdgeClick,
     handleEdgeDoubleClick,
     handleNodeClick,
+    handleNodeDoubleClick,
     handlePaneClick,
     handleContextMenuOpen,
     handleOpenSubMachine,
@@ -152,6 +166,16 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
+    useEffect(() => {
+        traceDragEvent('canvas:mount');
+        return () => traceDragEvent('canvas:unmount');
+    }, []);
+    useEffect(() => {
+        traceDragCanvasGraph(documentKey, visibleNodes, visibleEdges, isDraggingNode);
+    }, [documentKey, visibleNodes, visibleEdges, isDraggingNode]);
+    const handleCanvasProfile = useCallback((id, phase, duration, baseDuration) => {
+        traceDragReactCommit(id, phase, duration, baseDuration);
+    }, []);
     // Read-only: tell the resize trace what React Flow actually receives.
     useEffect(() => traceResizeSnapshot('ReactFlow:visibleNodes', visibleNodes), [visibleNodes]);
 
@@ -567,6 +591,7 @@ export default function EditorCanvas({
             />
 
 
+            <Profiler id="BonsaiCanvas" onRender={handleCanvasProfile}>
             <SmartEdgeProvider nodes={smartRoutingNodes}>
                 <ReactFlow
                     key={documentKey}
@@ -641,23 +666,42 @@ export default function EditorCanvas({
                     zoomOnPinch={true}
                     deleteKeyCode={["Delete"]}
                     minZoom={0.08}
-                    onNodeDoubleClick={(_, node) => {
-                        if (node.type === "submachine" && node.data?.src) {
-                            handleOpenSubMachine(node.data.src, node.data.label);
+                    onNodeDoubleClick={handleNodeDoubleClick}
+                    onNodeDragStart={(event, node, draggedNodes) => {
+                        beginDragTrace(event, node, { documentKey, nodes: visibleNodes.length, edges: visibleEdges.length });
+                        traceDragComputation('handler:onNodeDragStart', () =>
+                            handleNodeDragStart(event, node, draggedNodes));
+                    }}
+                    onNodeDrag={(event, node, draggedNodes) => {
+                        traceDragMovement(node);
+                        traceDragComputation('handler:onNodeDrag', () =>
+                            handleNodeDrag(event, node, draggedNodes));
+                    }}
+                    onNodeDragStop={(event, node, draggedNodes) => {
+                        traceDragEvent('drag:stop-handler:start');
+                        try {
+                            traceDragComputation('handler:onNodeDragStop', () =>
+                                handleNodeDragStop(event, node, draggedNodes));
+                        }
+                        finally {
+                            traceDragEvent('drag:stop-handler:return');
+                            endDragTrace(node);
                         }
                     }}
-                    onNodeDragStart={handleNodeDragStart}
-                    onNodeDrag={handleNodeDrag}
-                    onNodeDragStop={handleNodeDragStop}
                     onMoveStart={handleViewportMoveStart}
                     onMove={(_, viewport) => updateSlotTypeZoom(viewport.zoom, movingFlowElementRef.current)}
                     onMoveEnd={handleViewportMoveEnd}
-                    onInit={(instance) => updateSlotTypeZoom(instance.getZoom())}
+                    onInit={(instance) => {
+                        traceDragEvent('flow:init');
+                        updateSlotTypeZoom(instance.getZoom());
+                    }}
                 >
+                    <FlowLifecycleProbe />
                     <Background />
                     <Controls position={runtimePlayback?.loaded || liveExecutionActive ? "bottom-right" : "bottom-left"} />
                 </ReactFlow>
             </SmartEdgeProvider>
+            </Profiler>
         </>
     );
 }

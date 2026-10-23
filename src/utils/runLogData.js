@@ -45,8 +45,10 @@ export function filterRunLogs(entries, { level = 'ALL', query = '', pausedThroug
             .some((part) => part.toLowerCase().includes(term))));
 }
 
-/** Each stack trace line is its own fixed-height virtual row. */
-export function flattenRunLogLines(entries) {
+/** Virtual rows keep the log message visible and render each stack trace
+ * behind an expandable summary. Collapsed traces do not fill the virtual list.
+ * The original stackTrace stays in the entry for search and copy operations. */
+export function flattenRunLogLines(entries, expandedTraceIds = new Set()) {
     const rows = [];
     for (const entry of entries) {
         const messageLines = entry.message.split(/\r?\n/);
@@ -56,9 +58,20 @@ export function flattenRunLogLines(entries) {
             text: line, extra: index > 0,
         }));
         if (entry.stackTrace) {
-            entry.stackTrace.split(/\r?\n/).forEach((line, index) => rows.push({
-                key: `${entry.id}:s${index}`, level: entry.level, logger: '', time: '', text: line, extra: true,
-            }));
+            const expanded = expandedTraceIds.has(entry.id);
+            const traceLines = entry.stackTrace.split(/\r?\n/);
+            rows.push({
+                key: `${entry.id}:stack-toggle`, entryId: entry.id,
+                level: entry.level, logger: '', time: '', extra: true,
+                traceToggle: true, expanded, lineCount: traceLines.length,
+                text: `Stack trace (${traceLines.length} ${traceLines.length === 1 ? 'line' : 'lines'})`,
+            });
+            if (expanded) {
+                traceLines.forEach((line, index) => rows.push({
+                    key: `${entry.id}:s${index}`, level: entry.level, logger: '', time: '',
+                    text: line, extra: true, traceLine: true,
+                }));
+            }
         }
     }
     return rows;

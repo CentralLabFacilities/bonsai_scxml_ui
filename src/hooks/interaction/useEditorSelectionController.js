@@ -59,51 +59,43 @@ export function useEditorSelectionController({
         [onTransitionEdgeDoubleClick, selectSlotEdge, edges, nodes]
     );
 
-    const handleNodeClick = useCallback(
-        (_, node) => {
-            clearAllEdgeSelection();
+    // Keep graph selection separate from opening the Details inspector. A
+    // single click should only focus a node; double-click is the explicit
+    // request to inspect it. Resolve editor-generated lane structures to their
+    // semantic Parallel so neither interaction exposes an internal wrapper.
+    const getInspectableNode = useCallback((node) => {
+        const isParallelLaneStructure =
+            Boolean(node.data?.autoParallelLaneCompound) ||
+            node.className === "compound-in-lane";
+        if (!isParallelLaneStructure) return node;
 
-            const isParallelLaneStructure =
-                Boolean(node.data?.autoParallelLaneCompound) ||
-                node.className === "compound-in-lane";
+        let currentNode = node;
+        const visited = new Set();
+        while (currentNode?.parentId && !visited.has(currentNode.id)) {
+            visited.add(currentNode.id);
+            const parent = nodes.find((candidate) => candidate.id === currentNode.parentId);
+            if (!parent) break;
+            if (parent.type === "parallel") return parent;
+            currentNode = parent;
+        }
+        return node;
+    }, [nodes]);
 
-            if (isParallelLaneStructure) {
-                let currentNode = node;
-                const visited = new Set();
+    const handleNodeClick = useCallback((_, node) => {
+        clearAllEdgeSelection();
+        setSelectedNodeId(getInspectableNode(node).id);
+        // Selecting a node must not open Details, including when an earlier
+        // selection left the inspector showing its Details tab.
+        setRightPanelTab("datamodel");
+    }, [clearAllEdgeSelection, getInspectableNode, setRightPanelTab, setSelectedNodeId]);
 
-                while (
-                    currentNode?.parentId &&
-                    !visited.has(currentNode.id)
-                ) {
-                    visited.add(currentNode.id);
-                    const parentNode = nodes.find(
-                        (candidate) => candidate.id === currentNode.parentId
-                    );
-
-                    if (!parentNode) break;
-
-                    if (parentNode.type === "parallel") {
-                        setSelectedNodeId(parentNode.id);
-                        setRightPanelTab("details");
-                        setActiveTab("allgemein");
-                        return;
-                    }
-
-                    currentNode = parentNode;
-                }
-            }
-
-            setSelectedNodeId(node.id);
-            setRightPanelTab("details");
-        },
-        [
-            clearAllEdgeSelection,
-            nodes,
-            setActiveTab,
-            setRightPanelTab,
-            setSelectedNodeId,
-        ]
-    );
+    const handleNodeDoubleClick = useCallback((_, node) => {
+        clearAllEdgeSelection();
+        const inspectable = getInspectableNode(node);
+        setSelectedNodeId(inspectable.id);
+        if (inspectable.id !== node.id) setActiveTab("allgemein");
+        setRightPanelTab("details");
+    }, [clearAllEdgeSelection, getInspectableNode, setActiveTab, setRightPanelTab, setSelectedNodeId]);
 
     const handlePaneClick = useCallback(() => {
         clearAllEdgeSelection();
@@ -149,6 +141,7 @@ export function useEditorSelectionController({
         handleEdgeClick,
         handleEdgeDoubleClick,
         handleNodeClick,
+        handleNodeDoubleClick,
         handlePaneClick,
         handleNodeMouseEnter,
         handleNodeMouseLeave,
