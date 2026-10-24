@@ -143,7 +143,7 @@ export function useNodeInteraction({ setNodes, setRightPanelTab, setActiveTab })
         setActiveTab("actions");
     }, [selectOnlyNode, setActiveTab]);
 
-    const handleOpenParameter = useCallback((nodeId, parameterKey) => {
+    const handleOpenParameter = useCallback((nodeId, parameterKey, { focusPanelInput = true } = {}) => {
         selectOnlyNode(nodeId);
         setActiveTab("parameter");
         parameterFocusRequestIdRef.current += 1;
@@ -151,6 +151,7 @@ export function useNodeInteraction({ setNodes, setRightPanelTab, setActiveTab })
             nodeId,
             parameterKey,
             requestId: parameterFocusRequestIdRef.current,
+            focusPanelInput,
         });
     }, [selectOnlyNode, setActiveTab]);
 

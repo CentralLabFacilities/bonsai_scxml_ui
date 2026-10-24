@@ -739,6 +739,9 @@ function AppContent() {
         handleAddLaneToParallel,
         handleOpenStateActions,
         handleOpenParameter,
+        getNodeParameterEditSource,
+        updateNodeParameter,
+        parameterValueVariables: availableDataModelParameters,
         handleOpenSlot,
         // Canvas event-row double clicks open the transition editor directly;
         // the separate inspector-focus callback remains available elsewhere.

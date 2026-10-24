@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     VALUE_TYPES,
     getCompatibleVariables,
@@ -15,6 +15,9 @@ function TypedValueEditor({
                               getCommitContext,
                               variables = [],
                               onCommit,
+                              onCommitSuccess,
+                              onCancel,
+                              focusOnMount = false,
                               onDraftChange,
                               placeholder = "Enter value",
                               inputClassName = "slot-field-edit",
@@ -35,6 +38,12 @@ function TypedValueEditor({
     const lastEmittedValueRef = useRef(null);
     const sourceRef = useRef({ value, expectedType, sourceIdentity });
     const suggestionsId = useId();
+
+    useEffect(() => {
+        if (!focusOnMount) return;
+        inputRef.current?.focus({ preventScroll: true });
+        inputRef.current?.select();
+    }, [focusOnMount]);
 
     useLayoutEffect(() => {
         const previousSource = sourceRef.current;
@@ -147,7 +156,10 @@ function TypedValueEditor({
 
         // Enter blurs synchronously, before React renders the accepted draft.
         // Validate for feedback, but never emit that accepted edit a second time.
-        if (nextValue === draftRef.current && committedRevisionRef.current === editRevisionRef.current) return true;
+        if (nextValue === draftRef.current && committedRevisionRef.current === editRevisionRef.current) {
+            onCommitSuccess?.(nextValue);
+            return true;
+        }
 
         let accepted;
         try {
@@ -170,6 +182,7 @@ function TypedValueEditor({
         setActiveSuggestionIndex(-1);
         lastEmittedValueRef.current = result.value;
         onDraftChange?.(result.value);
+        onCommitSuccess?.(result.value);
         return true;
     };
 
@@ -224,6 +237,7 @@ function TypedValueEditor({
             onDraftChange?.(sourceValue);
             setIsAutocompleteOpen(false);
             setActiveSuggestionIndex(-1);
+            onCancel?.();
             return;
         }
 

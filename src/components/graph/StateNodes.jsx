@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Position, useUpdateNodeInternals } from "@xyflow/react";
 import { FiExternalLink, FiLink2 } from "react-icons/fi";
 import {
@@ -12,6 +12,7 @@ import { estimateSlotDockWidth, estimateSlotPortWidth, estimateSummaryWidth } fr
 import { getSlotHandleDragFeedback, getSlotTypeBadgeLabel, getStateSlotDisplayRows } from "../../utils/slotVisuals.js";
 import { isInternalRuntimeName } from "../../utils/runtimeEventFrames.js";
 import { eventDoubleClickHandlers } from "../../utils/eventPortInteractions.js";
+import TypedValueEditor from "../inputs/TypedValueEditor.jsx";
 
 const textValue = (value) => String(value ?? "").trim();
 const REFERENCE_TYPES = { submachine: "SUB-SM", compound: "COMPOUND", parallel: "PARALLEL" };
@@ -59,8 +60,9 @@ function getParameterEntries(data) {
         if (!runtimeByKey.has(normalized)) runtimeByKey.set(normalized, value);
     }
     return (data.params || [])
-        .filter((parameter) => String(parameter?.key || "").trim() && !isInternalRuntimeName(parameter.key))
-        .map((parameter) => {
+        .map((parameter, index) => ({ parameter, index }))
+        .filter(({ parameter }) => String(parameter?.key || "").trim() && !isInternalRuntimeName(parameter.key))
+        .map(({ parameter, index }) => {
             const key = String(parameter.key);
             const value = textValue(parameter.expr);
             const defaultValue = textValue(parameter.default);
@@ -68,6 +70,9 @@ function getParameterEntries(data) {
             const hasRuntimeValue = Boolean(runtimeValueMeta);
             return {
                 key,
+                index,
+                type: parameter.type,
+                sourceIdentity: parameter,
                 value,
                 defaultValue,
                 runtimeValueMeta,
@@ -116,7 +121,40 @@ function EventPorts({ id, data, eventIds, editable }) {
     );
 }
 
+function InlineParameterInput({ id, data, entry, onClose }) {
+    return (
+        <div
+            className="node-parameter-inline-editor nodrag nopan nowheel"
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            onWheel={(event) => event.stopPropagation()}
+        >
+            <TypedValueEditor
+                id={`node-param-${id}-${entry.index}`}
+                value={entry.sourceIdentity?.expr ?? ""}
+                sourceIdentity={entry.sourceIdentity}
+                expectedType={entry.type}
+                variables={data.parameterValueVariables || []}
+                getCommitContext={() => data.getParameterEditSource?.(id, entry.key) ?? null}
+                placeholder={entry.defaultValue || (entry.type ? `${entry.type} value or @variable` : "Enter value")}
+                inputClassName="node-parameter-inline-input"
+                focusOnMount
+                onCommit={(newValue, source, inputValue) => data.onCommitParameter?.(
+                    id, entry.index, newValue, true,
+                    source ? { ...source, inputValue } : source,
+                ) ?? null}
+                onCommitSuccess={onClose}
+                onCancel={onClose}
+            />
+        </div>
+    );
+}
+
 function ValueSummary({ id, data, entries, local }) {
+    const [editingKey, setEditingKey] = useState(null);
     return (
         <div
             className={local ? "submachine-datamodel-summary" : "node-parameter-summary"}
@@ -143,6 +181,7 @@ function ValueSummary({ id, data, entries, local }) {
             )}
             {entries.map((entry) => {
                 const value = entry.displayValue;
+                const editing = !local && editingKey === entry.key;
                 const title = local
                     ? value
                         ? `${entry.key} = ${value}`
@@ -160,7 +199,12 @@ function ValueSummary({ id, data, entries, local }) {
                         }
                         {...(local
                             ? {}
-                            : editHandlers(() => data.onOpenParameter?.(id, entry.key)))}
+                            : editHandlers(() => {
+                                // Clicking a value opens its inspector section as before,
+                                // but keeps focus in the compact inline editor.
+                                data.onOpenParameter?.(id, entry.key, { focusPanelInput: false });
+                                if (!editing) setEditingKey(entry.key);
+                            }))}
                         title={title}
                         style={{
                             display: "flex",
@@ -172,8 +216,8 @@ function ValueSummary({ id, data, entries, local }) {
                             ...(local ? {} : { cursor: "pointer" }),
                         }}
                     >
-                        <span
-                            className={local ? undefined : "node-parameter-key"}
+                        <div
+                            className={local ? undefined : `node-parameter-key ${editing && !value ? "node-parameter-empty-editing" : ""}`}
                             style={{
                                 fontWeight: 700,
                                 color: local ? "#6b21a8" : "#475569",
@@ -181,7 +225,10 @@ function ValueSummary({ id, data, entries, local }) {
                             }}
                         >
                             {entry.key}
-                        </span>
+                            {editing && !value && (
+                                <InlineParameterInput id={id} data={data} entry={entry} onClose={() => setEditingKey(null)} />
+                            )}
+                        </div>
                         {value && (
                             <>
                                 <span
@@ -190,11 +237,11 @@ function ValueSummary({ id, data, entries, local }) {
                                 >
                                     =
                                 </span>
-                                <span
+                                <div
                                     className={
                                         local
                                             ? undefined
-                                            : `node-parameter-value ${entry.usesDefault ? "node-parameter-default-value" : ""} ${entry.hasRuntimeValue ? "node-parameter-runtime-value" : ""}`
+                                            : `node-parameter-value ${entry.usesDefault ? "node-parameter-default-value" : ""} ${entry.hasRuntimeValue ? "node-parameter-runtime-value" : ""} ${editing ? "node-parameter-value-editing" : ""}`
                                     }
                                     style={{
                                         color: local
@@ -216,8 +263,11 @@ function ValueSummary({ id, data, entries, local }) {
                                         minWidth: 0,
                                     }}
                                 >
-                                    {value}
-                                </span>
+                                    {editing ? <span className="node-parameter-edit-sizer" aria-hidden="true">{value}</span> : value}
+                                    {editing && (
+                                        <InlineParameterInput id={id} data={data} entry={entry} onClose={() => setEditingKey(null)} />
+                                    )}
+                                </div>
                                 {entry.hasRuntimeValue && (
                                     <span className="node-parameter-runtime-badge">runtime</span>
                                 )}

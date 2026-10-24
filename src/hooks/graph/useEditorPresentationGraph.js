@@ -43,14 +43,17 @@ function useNodeActionForwarders(handlers) {
     const onAddLane = useCallback((...args) => handlersRef.current.handleAddLaneToParallel?.(...args), []);
     const onOpenStateActions = useCallback((...args) => handlersRef.current.handleOpenStateActions?.(...args), []);
     const onOpenParameter = useCallback((...args) => handlersRef.current.handleOpenParameter?.(...args), []);
+    const getParameterEditSource = useCallback((...args) => handlersRef.current.getNodeParameterEditSource?.(...args), []);
+    const onCommitParameter = useCallback((...args) => handlersRef.current.updateNodeParameter?.(...args), []);
     const onOpenSlot = useCallback((...args) => handlersRef.current.handleOpenSlot?.(...args), []);
     const onOpenTransition = useCallback((...args) => handlersRef.current.handleOpenTransition?.(...args), []);
     const onOpenSubMachine = useCallback((...args) => handlersRef.current.handleOpenSubMachine?.(...args), []);
     const onToggleCollapse = useCallback((...args) => handlersRef.current.handleToggleContainerCollapse?.(...args), []);
     const onContainerResizeStart = useCallback((...args) => handlersRef.current.onContainerResizeStart?.(...args), []);
     const onContainerResizeEnd = useCallback((...args) => handlersRef.current.onContainerResizeEnd?.(...args), []);
-    return { onAddLane, onOpenStateActions, onOpenParameter, onOpenSlot,
-        onOpenTransition, onOpenSubMachine, onToggleCollapse, onContainerResizeStart, onContainerResizeEnd };
+    return { onAddLane, onOpenStateActions, onOpenParameter, getParameterEditSource,
+        onCommitParameter, onOpenSlot, onOpenTransition, onOpenSubMachine,
+        onToggleCollapse, onContainerResizeStart, onContainerResizeEnd };
 }
 
 /**
@@ -72,6 +75,9 @@ export function useEditorPresentationGraph({
     handleAddLaneToParallel,
     handleOpenStateActions,
     handleOpenParameter,
+    getNodeParameterEditSource,
+    updateNodeParameter,
+    parameterValueVariables = [],
     handleOpenSlot,
     handleOpenTransition,
     handleOpenSubMachine,
@@ -106,11 +112,12 @@ export function useEditorPresentationGraph({
         });
     }, [baseSemanticNodes, displayNodes, runtimeExpandedContainerIds]);
     const semanticSlotNodes = useSemanticNodeSnapshot(slotNodes, isDraggingNode);
-    const { onAddLane, onOpenStateActions, onOpenParameter, onOpenSlot,
-        onOpenTransition, onOpenSubMachine, onToggleCollapse,
+    const { onAddLane, onOpenStateActions, onOpenParameter, getParameterEditSource,
+        onCommitParameter, onOpenSlot, onOpenTransition, onOpenSubMachine, onToggleCollapse,
         onContainerResizeStart: forwardResizeStart,
         onContainerResizeEnd: forwardResizeEnd } = useNodeActionForwarders({
         handleAddLaneToParallel, handleOpenStateActions, handleOpenParameter,
+        getNodeParameterEditSource, updateNodeParameter,
         handleOpenSlot, handleOpenTransition, handleOpenSubMachine,
         handleToggleContainerCollapse, onContainerResizeStart, onContainerResizeEnd,
     });
@@ -405,6 +412,9 @@ export function useEditorPresentationGraph({
         onAddLane,
         onOpenStateActions,
         onOpenParameter,
+        getParameterEditSource,
+        onCommitParameter,
+        parameterValueVariables,
         onOpenSlot,
         onOpenTransition,
         onOpenSubMachine,
@@ -458,6 +468,7 @@ export function useEditorPresentationGraph({
                 cached.reconnectIncomingEdgeId === reconnectIncomingEdgeId &&
                 cached.activeMode === activeMode &&
                 cached.slotConnectionDrag === slotConnectionDrag &&
+                cached.parameterValueVariables === (n.type === "custom" ? parameterValueVariables : null) &&
                 cached.childGlobalDataModel === childGlobalDataModel
             );
 
@@ -477,6 +488,11 @@ export function useEditorPresentationGraph({
                 reconnectIncomingEdgeId,
                 onOpenStateActions,
                 onOpenParameter,
+                ...(n.type === "custom" ? {
+                    getParameterEditSource,
+                    onCommitParameter,
+                    parameterValueVariables,
+                } : {}),
                 onOpenSlot,
                 onOpenTransition,
                 slotConnectionDrag,
@@ -541,6 +557,7 @@ export function useEditorPresentationGraph({
                 activeMode,
                 slotConnectionDrag,
                 childGlobalDataModel,
+                parameterValueVariables: n.type === "custom" ? parameterValueVariables : null,
                 value,
             });
 

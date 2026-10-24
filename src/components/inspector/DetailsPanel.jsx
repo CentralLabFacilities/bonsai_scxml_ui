@@ -241,11 +241,14 @@ function DetailsPanel({
                 if (!input) return;
 
                 handledFocusRequestsRef.current[kind] = request.requestId;
-                input.focus();
-
-                const cursorPosition = String(input.value || "").length;
-                if (typeof input.setSelectionRange === "function") {
-                    input.setSelectionRange(cursorPosition, cursorPosition);
+                // Inline node parameter edits open the corresponding inspector
+                // field without stealing the cursor from the node editor.
+                if (request.focusPanelInput !== false) {
+                    input.focus();
+                    const cursorPosition = String(input.value || "").length;
+                    if (typeof input.setSelectionRange === "function") {
+                        input.setSelectionRange(cursorPosition, cursorPosition);
+                    }
                 }
 
                 input.scrollIntoView({ block: "nearest", behavior: "smooth" });

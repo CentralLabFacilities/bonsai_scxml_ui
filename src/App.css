@@ -10855,3 +10855,88 @@ dialog.skill-paste-choice-overlay {
     .transition-parameter-quick-add-fields #transition-parameter-value { grid-column: 1; grid-row: 2; }
     .transition-parameter-quick-add-fields .transition-add-parameter-button { grid-column: 2; grid-row: 2; }
 }
+
+/* Keep the original key = value row unchanged while editing. The input is
+   absolutely positioned over the value text; no new label, padding, or row
+   participates in React Flow's node-size measurements. */
+.costum-node .node-parameter-value-editing,
+.costum-node .node-parameter-empty-editing {
+    position: relative;
+}
+
+.costum-node .node-parameter-edit-sizer {
+    visibility: hidden; /* still takes up precisely the original text space */
+}
+
+.costum-node .node-parameter-inline-editor {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: max(100%, 8ch);
+    min-width: 0;
+    z-index: 12;
+    cursor: text;
+    font-size: 10px;
+    font-weight: normal;
+    font-style: normal;
+}
+
+/* A parameter without a displayed value has no value span to anchor to. */
+.costum-node .node-parameter-empty-editing > .node-parameter-inline-editor {
+    left: calc(100% + 6px);
+}
+
+.costum-node .node-parameter-inline-editor .typed-value-editor,
+.costum-node .node-parameter-inline-editor .typed-value-editor-row {
+    min-width: 0;
+    width: 100%;
+}
+
+.costum-node .node-parameter-inline-input {
+    display: block;
+    min-width: 0;
+    width: 100%;
+    height: 1.35em;
+    min-height: 0;
+    margin: 0;
+    padding: 0 1px;
+    box-sizing: border-box;
+    border: 0;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.55);
+    color: #eef4f8;
+    caret-color: #eef4f8;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: normal;
+    line-height: 1.35;
+}
+
+.costum-node .node-parameter-inline-input:focus {
+    border: 0;
+    outline: none;
+    box-shadow: 0 0 0 1px #94a3b8;
+}
+
+.costum-node .node-parameter-inline-editor .typed-value-editor-invalid .node-parameter-inline-input {
+    box-shadow: 0 0 0 1px #ef4444;
+}
+
+.costum-node .node-parameter-inline-editor .typed-value-autocomplete {
+    min-width: min(260px, 80vw);
+    right: auto;
+}
+
+.costum-node .node-parameter-inline-editor .typed-value-error {
+    color: #b91c1c;
+    background: #fff;
+    box-shadow: 0 0 0 1px #fecaca;
+    border-radius: 3px;
+    padding: 2px 3px;
+}
+
+/* Keep the active input and its autocomplete above adjacent React Flow nodes. */
+.react-flow__node:has(.node-parameter-inline-editor) {
+    z-index: 2000 !important;
+}

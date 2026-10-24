@@ -84,10 +84,10 @@ export function useEditorSelectionController({
     const handleNodeClick = useCallback((_, node) => {
         clearAllEdgeSelection();
         setSelectedNodeId(getInspectableNode(node).id);
-        // Selecting a node must not open Details, including when an earlier
-        // selection left the inspector showing its Details tab.
-        setRightPanelTab("datamodel");
-    }, [clearAllEdgeSelection, getInspectableNode, setRightPanelTab, setSelectedNodeId]);
+        // Selection must not change the inspector's current tab. In particular,
+        // an open Skill Detail stays open when single-clicking another skill;
+        // double-click remains the explicit way to open Details from other tabs.
+    }, [clearAllEdgeSelection, getInspectableNode, setSelectedNodeId]);
 
     const handleNodeDoubleClick = useCallback((_, node) => {
         clearAllEdgeSelection();
