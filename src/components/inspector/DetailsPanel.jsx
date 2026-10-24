@@ -284,9 +284,9 @@ function DetailsPanel({
     // Child datamodel entries are writable in a sub-machine; parent values remain read-only.
     const availableActionLocations = useMemo(
         () => hasStateDetails
-            ? getAvailableActionLocations(globalDataModel, selectedNode.data.params, isSubMachine)
+            ? getAvailableActionLocations(globalDataModel)
             : [],
-        [hasStateDetails, globalDataModel, selectedNode.data.params, isSubMachine]
+        [hasStateDetails, globalDataModel]
     );
 
     const tabBar = (

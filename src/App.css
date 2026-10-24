@@ -5103,6 +5103,32 @@
     font-family: inherit;
 }
 
+/* Rendered through a portal so transforms and stacking of React Flow nodes
+   cannot obscure the hover content (including on nested sub-SM states). */
+.state-action-hover-tooltip {
+    position: fixed;
+    z-index: 2100;
+    box-sizing: border-box;
+    width: max-content;
+    min-width: min(160px, calc(100vw - 16px));
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid #475569;
+    border-radius: 7px;
+    background: #172334;
+    color: #f1f5f9;
+    box-shadow: 0 5px 18px rgba(0, 0, 0, 0.28);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.55;
+    letter-spacing: normal;
+    text-align: left;
+    text-transform: none;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    pointer-events: none;
+}
+
 .terminal-final-node {
     background: #fff7ed !important;
     border: 1.5px solid #fdba74 !important;

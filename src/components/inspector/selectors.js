@@ -101,21 +101,19 @@ export function getMatchingTargetNodeOptions(query, index) {
         .map(({ option }) => option);
 }
 
-export function getAvailableActionLocations(globalDataModel, parameters, isSubMachine) {
-    const locations = [
-        ...(globalDataModel || []).filter((parameter) =>
-            parameter?.id && String(parameter.id).trim() !== "#_STATE_PREFIX"
-        ),
-        ...(!isSubMachine
-            ? (parameters || [])
-                .filter((parameter) => parameter?.key)
-                .map((parameter) => ({ ...parameter, id: parameter.key, source: "Parameter" }))
-            : []),
-    ];
+/**
+ * OnEntry/OnExit writes to the SCXML datamodel, never directly to a skill's
+ * declared API parameters. The caller supplies the active workflow datamodel,
+ * or (for a sub-SM invocation) the child machine's local datamodel.
+ */
+export function getAvailableActionLocations(dataModel) {
     const seen = new Set();
-    return locations.filter((location) => {
-        if (!location?.id || seen.has(location.id)) return false;
-        seen.add(location.id);
+    return (Array.isArray(dataModel) ? dataModel : []).filter((location) => {
+        const id = String(location?.id || "").trim();
+        if (!id || id === "#_STATE_PREFIX" || id === "#_SLOTS" || seen.has(id)) {
+            return false;
+        }
+        seen.add(id);
         return true;
     });
 }

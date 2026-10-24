@@ -1,7 +1,9 @@
 import { Handle, Position } from "@xyflow/react";
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { FiAlertCircle } from "react-icons/fi";
 import { startTargetEdgeReconnectFromEntry } from "../../utils/edgeReconnect";
-import { getConfiguredAssignments } from "../../utils/stateActions";
+import { getConfiguredAssignments, formatStateActionTooltip } from "../../utils/stateActions";
 
 export function ConnectionHandle({
     className = "",
@@ -94,13 +96,58 @@ export function IncomingTransitionHandle({
 }
 
 export function StateActionBadges({ id, data }) {
+    const [tooltip, setTooltip] = useState(null);
     const entryCount = getConfiguredAssignments(data.onEntry).length;
     const exitCount = getConfiguredAssignments(data.onExit).length;
     if (!entryCount && !exitCount) return null;
+    const entryTooltip = formatStateActionTooltip(data.onEntry, "OnEntry assignments");
+    const exitTooltip = formatStateActionTooltip(data.onExit, "OnExit assignments");
+
+    // The React Flow nodes are individually transformed/stacked. A CSS ::after
+    // tooltip inside a node can be obscured by other nodes or the canvas. Render
+    // it in the document instead and position it in viewport CSS pixels.
+    const showTooltip = (event, content, align) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const margin = 8;
+        const minComfortableWidth = 160;
+
+        // CSS uses width: max-content, so the rendered width is usually smaller
+        // than the 340px maximum. Anchor OnExit by its RIGHT edge instead of
+        // subtracting the maximum width from the badge's right edge. Flip to
+        // the other edge only if there isn't room for a readable tooltip.
+        let anchorRight = align === "right";
+        if (anchorRight && rect.right - margin < minComfortableWidth) {
+            anchorRight = false;
+        } else if (!anchorRight && viewportWidth - rect.left - margin < minComfortableWidth) {
+            anchorRight = true;
+        }
+        const left = anchorRight ? undefined : Math.max(margin, rect.left);
+        const right = anchorRight ? Math.max(margin, viewportWidth - rect.right) : undefined;
+        const availableWidth = anchorRight
+            ? viewportWidth - right - margin
+            : viewportWidth - left - margin;
+        const width = Math.max(0, Math.min(340, availableWidth));
+
+        const spaceAbove = Math.max(0, rect.top - 15);
+        const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - 15);
+        const estimatedHeight = Math.min(480, 20 + content.split("\n").length * 19);
+        const above = spaceAbove >= estimatedHeight || spaceAbove >= spaceBelow;
+        setTooltip({
+            content,
+            left,
+            right,
+            top: above ? rect.top - 7 : rect.bottom + 7,
+            above,
+            width,
+            maxHeight: Math.max(32, Math.min(480, above ? spaceAbove : spaceBelow)),
+        });
+    };
 
     const openActions = (event) => {
         event.preventDefault();
         event.stopPropagation();
+        setTooltip(null);
         data.onOpenStateActions?.(id);
     };
 
@@ -109,8 +156,12 @@ export function StateActionBadges({ id, data }) {
             {entryCount > 0 && (
                 <button
                     type="button"
-                    className="state-action-badge state-action-badge-entry"
-                    title={`${entryCount} onentry assignment${entryCount === 1 ? "" : "s"} \u2014 open Entry / Exit`}
+                    className="state-action-badge state-action-badge-entry nodrag nopan"
+                    aria-label={`${entryTooltip}. Click to open Entry / Exit`}
+                    onMouseEnter={(event) => showTooltip(event, entryTooltip, "left")}
+                    onMouseLeave={() => setTooltip(null)}
+                    onFocus={(event) => showTooltip(event, entryTooltip, "left")}
+                    onBlur={() => setTooltip(null)}
                     onClick={openActions}
                 >
                     onentry
@@ -119,12 +170,33 @@ export function StateActionBadges({ id, data }) {
             {exitCount > 0 && (
                 <button
                     type="button"
-                    className="state-action-badge state-action-badge-exit"
-                    title={`${exitCount} onexit assignment${exitCount === 1 ? "" : "s"} \u2014 open Entry / Exit`}
+                    className="state-action-badge state-action-badge-exit nodrag nopan"
+                    aria-label={`${exitTooltip}. Click to open Entry / Exit`}
+                    onMouseEnter={(event) => showTooltip(event, exitTooltip, "right")}
+                    onMouseLeave={() => setTooltip(null)}
+                    onFocus={(event) => showTooltip(event, exitTooltip, "right")}
+                    onBlur={() => setTooltip(null)}
                     onClick={openActions}
                 >
                     onexit
                 </button>
+            )}
+            {tooltip && createPortal(
+                <div
+                    className="state-action-hover-tooltip"
+                    role="tooltip"
+                    style={{
+                        left: tooltip.left,
+                        right: tooltip.right,
+                        top: tooltip.top,
+                        maxWidth: tooltip.width,
+                        maxHeight: tooltip.maxHeight,
+                        transform: tooltip.above ? "translateY(-100%)" : undefined,
+                    }}
+                >
+                    {tooltip.content}
+                </div>,
+                document.body,
             )}
         </div>
     );

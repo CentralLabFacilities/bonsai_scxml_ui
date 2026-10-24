@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FiPlus, FiTrash2 } from "react-icons/fi";
 import { validateAssignmentValue } from "../../utils/valueValidation.js";
+import { getActionLocationType, findActionAssignmentTarget } from "../../utils/stateActions.js";
 import ExpressionVariableSuggestions from "./ExpressionVariableSuggestions.jsx";
 import {
     getExpressionAutocompleteAction,
@@ -60,10 +61,11 @@ function StateActionsEditor({
 
     // The location list may contain only identifiers. Prefer the fully typed
     // variable declaration for expression suggestions (including local data).
+    // For sub-SMs the location belongs to the child, while expression variables
+    // belong to the parent. In case of an ID collision, the child's local type
+    // must win when validating the assignment destination.
     const assignmentTarget = (locationId) =>
-        (Array.isArray(valueVariables) ? valueVariables : [])
-            .find(variable => variable?.id === locationId) ||
-        locationOptions.find(location => location.id === locationId);
+        findActionAssignmentTarget(locationId, locationOptions);
 
     const normalizedActionName = String(actionName || "").toLowerCase();
     const isEntry = normalizedActionName === "onentry";
@@ -441,6 +443,7 @@ function StateActionsEditor({
                         const targetLocation = locationOptions.find(
                             (location) => location.id === assignment.location
                         );
+                        const targetType = getActionLocationType(targetLocation);
                         const matchingLocations = getMatchingLocationOptions(
                             assignment.location
                         );
@@ -481,9 +484,9 @@ function StateActionsEditor({
                                     <label className="state-action-compact-field">
                                         <span className="state-action-field-label-row">
                                             <span>Variable</span>
-                                            {targetLocation?.type && (
-                                                <span className={`datamodel-value-type-badge datamodel-value-type-${targetLocation.type.toLowerCase()}`}>
-                                                    {targetLocation.type}
+                                            {targetType && (
+                                                <span className={`datamodel-value-type-badge datamodel-value-type-${targetType.toLowerCase()}`}>
+                                                    {targetType}
                                                 </span>
                                             )}
                                         </span>
@@ -574,6 +577,11 @@ function StateActionsEditor({
                                                                 <span className="typed-value-autocomplete-value">
                                                                     {location.id}
                                                                 </span>
+                                                                {getActionLocationType(location) && (
+                                                                    <span className={`datamodel-value-type-badge datamodel-value-type-${getActionLocationType(location).toLowerCase()}`}>
+                                                                        {getActionLocationType(location)}
+                                                                    </span>
+                                                                )}
                                                             </button>
                                                         )
                                                     )}
@@ -669,6 +677,7 @@ function StateActionsEditor({
                                                 <ExpressionVariableSuggestions
                                                     variables={matchingExpressionVariables}
                                                     activeIndex={activeExpressionSuggestionIndex}
+                                                    showTypes
                                                     onSelect={(variable) => selectExpressionSuggestion(index, variable)}
                                                 />
                                             )}
