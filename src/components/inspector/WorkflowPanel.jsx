@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { FaPlus } from "react-icons/fa6";
 import { FiX } from "react-icons/fi";
 import { inferLiteralValueType } from "../../utils/valueTypes";
@@ -23,6 +23,7 @@ function WorkflowPanel({
                            onDeleteParameter,
                        }) {
     const [createGlobal, setCreateGlobal] = useState(false);
+    const newVariableIdRef = useRef(null);
 
     const inheritedGlobalIds = useMemo(
         () =>
@@ -55,11 +56,12 @@ function WorkflowPanel({
 
     const rawParameterId = newParamId.trim();
 
-    const isNewParameterGlobal =
-        createGlobal || rawParameterId.startsWith("_");
+    // In Bonsai, a leading underscore defines global scope. A local ID that
+    // starts with '_' is invalid rather than silently becoming global.
+    const localIdHasGlobalPrefix = !createGlobal && rawParameterId.startsWith("_");
 
     const normalizedParameterId = rawParameterId
-        ? isNewParameterGlobal
+        ? createGlobal
             ? `_${rawParameterId.replace(/^_+/, "")}`
             : rawParameterId
         : "";
@@ -73,19 +75,26 @@ function WorkflowPanel({
         inheritedGlobalIds.has(normalizedParameterId);
 
     const handleAddParameter = () => {
-        if (!normalizedParameterId || parameterNameAlreadyExists) {
-            return;
+        if (!normalizedParameterId || localIdHasGlobalPrefix || parameterNameAlreadyExists) {
+            return false;
         }
 
-        onAddParameter(normalizedParameterId, newParamExpr);
+        if (onAddParameter(normalizedParameterId, newParamExpr) === false) {
+            return false;
+        }
         setCreateGlobal(false);
+        return true;
     };
 
     const handleNewParameterKeyDown = (event) => {
-        if (event.key !== "Enter") return;
+        if (event.key !== "Enter" || event.isComposing) return;
 
         event.preventDefault();
-        handleAddParameter();
+        event.stopPropagation();
+        if (handleAddParameter()) {
+            // Both ID and Value can submit; keep keyboard entry ready for the next variable.
+            newVariableIdRef.current?.focus();
+        }
     };
 
     const renderOwnParameters = (
@@ -191,7 +200,7 @@ function WorkflowPanel({
         return (
             <div className="datamodel-parameter-section datamodel-sourced-section">
                 <div className="datamodel-section-header">
-                    <h3>Sourced Global Parameters</h3>
+                    <h3>Sourced Global Variables</h3>
                 </div>
 
                 {hasInherited && (
@@ -274,127 +283,123 @@ function WorkflowPanel({
             <div className="gobal-container">
                 <div className="addparam-container datamodel-add-compact">
                     <div className="datamodel-add-topline">
-                        <h4>Add new Parameter</h4>
+                        <h4>New variable</h4>
+                        <div className="datamodel-scope-switch" role="group" aria-label="Variable scope">
+                            <button
+                                type="button"
+                                className={`datamodel-scope-option ${!createGlobal ? "active" : ""}`}
+                                aria-pressed={!createGlobal}
+                                onClick={() => setCreateGlobal(false)}
+                            >
+                                Local
+                            </button>
+                            <button
+                                type="button"
+                                className={`datamodel-scope-option ${createGlobal ? "active" : ""}`}
+                                aria-pressed={createGlobal}
+                                onClick={() => setCreateGlobal(true)}
+                            >
+                                Global
+                            </button>
+                        </div>
+                    </div>
 
-                        <label className="datamodel-global-toggle">
+                    <div className="datamodel-add-fields">
+                        <label className="datamodel-add-field">
+                            <span>Variable ID</span>
                             <input
-                                type="checkbox"
-                                checked={createGlobal}
-                                onChange={(event) =>
-                                    setCreateGlobal(
-                                        event.target.checked
-                                    )
-                                }
+                                ref={newVariableIdRef}
+                                className="slot-field-edit"
+                                type="text"
+                                placeholder="e.g. counter"
+                                value={newParamId}
+                                onChange={(event) => setNewParamId(event.target.value)}
+                                onKeyDown={handleNewParameterKeyDown}
+                                aria-invalid={localIdHasGlobalPrefix || parameterNameAlreadyExists}
                             />
-                            <span>Global</span>
+                        </label>
+                        <label className="datamodel-add-field">
+                            <span>Initial expression</span>
+                            <input
+                                className="slot-field-edit"
+                                type="text"
+                                placeholder="e.g. 0"
+                                value={newParamExpr}
+                                onChange={(event) => setNewParamExpr(event.target.value)}
+                                onKeyDown={handleNewParameterKeyDown}
+                            />
                         </label>
                     </div>
 
-                    <div className="datamodel-add-row">
-                        <input
-                            className="slot-field-edit"
-                            type="text"
-                            placeholder={
-                                createGlobal
-                                    ? "ID (_ added automatically)"
-                                    : "ID"
-                            }
-                            value={newParamId}
-                            onChange={(event) =>
-                                setNewParamId(event.target.value)
-                            }
-                            onKeyDown={handleNewParameterKeyDown}
-                        />
-
-                        <input
-                            className="slot-field-edit"
-                            type="text"
-                            placeholder="Value"
-                            value={newParamExpr}
-                            onChange={(event) =>
-                                setNewParamExpr(event.target.value)
-                            }
-                            onKeyDown={handleNewParameterKeyDown}
-                        />
-
+                    <div className="datamodel-add-footer">
+                        <div className="datamodel-add-feedback" aria-live="polite">
+                            {localIdHasGlobalPrefix ? (
+                                <span className="datamodel-name-error">
+                                    IDs beginning with _ are global. Select Global or remove _.
+                                </span>
+                            ) : parameterNameAlreadyExists && normalizedParameterId ? (
+                                <span className="datamodel-name-error">
+                                    Variable <strong>{normalizedParameterId}</strong> already exists.
+                                </span>
+                            ) : newParameterOverwrittenByParent ? (
+                                <span className="datamodel-overwrite-error">
+                                    Overwritten by parent state machine
+                                </span>
+                            ) : createGlobal ? (
+                                <span className="datamodel-name-preview">
+                                    {normalizedParameterId ? (
+                                        <>Stored as <strong title={normalizedParameterId}>{normalizedParameterId}</strong></>
+                                    ) : (
+                                        <>Global IDs start with _</>
+                                    )}
+                                </span>
+                            ) : (
+                                <span className="datamodel-name-preview">Locally accessible</span>
+                            )}
+                        </div>
                         <button
+                            type="button"
                             className="datamodel-add-button"
-                            onClick={handleAddParameter}
-                            disabled={
-                                !normalizedParameterId ||
-                                parameterNameAlreadyExists
-                            }
-                            title="Add parameter"
+                            onClick={() => {
+                                if (handleAddParameter()) newVariableIdRef.current?.focus();
+                            }}
+                            disabled={!normalizedParameterId || localIdHasGlobalPrefix || parameterNameAlreadyExists}
+                            title="Add variable"
                         >
-                            <FaPlus />
+                            <FaPlus aria-hidden="true" />
+                            Add
                         </button>
                     </div>
-
-                    {createGlobal &&
-                        rawParameterId &&
-                        !rawParameterId.startsWith("_") && (
-                            <div className="datamodel-row-message datamodel-name-preview">
-                                Will be created as{" "}
-                                <strong>
-                                    {normalizedParameterId}
-                                </strong>
-                            </div>
-                        )}
-
-                    {!createGlobal &&
-                        rawParameterId.startsWith("_") && (
-                            <div className="datamodel-row-message datamodel-name-preview">
-                                This parameter will be global.
-                            </div>
-                        )}
-
-                    {parameterNameAlreadyExists &&
-                        normalizedParameterId && (
-                            <div className="datamodel-row-message datamodel-name-error">
-                                A parameter named{" "}
-                                <strong>
-                                    {normalizedParameterId}
-                                </strong>{" "}
-                                already exists.
-                            </div>
-                        )}
-
-                    {!parameterNameAlreadyExists &&
-                        newParameterOverwrittenByParent && (
-                            <div className="datamodel-row-message datamodel-overwrite-error">
-                                Overwritten by parent state machine
-                            </div>
-                        )}
                 </div>
 
                 {renderSourcedGlobals()}
 
                 <div className="datamodel-parameter-section">
                     <div className="datamodel-section-header">
-                        <h3>Global Parameters</h3>
+                        <h3>Global Variables</h3>
                         <span className="datamodel-section-hint">
-                            Names starting with _
+                            Globally accessible
                         </span>
                     </div>
 
                     {renderOwnParameters(
                         globalParameters,
-                        "No global parameters defined in this state machine.",
+                        "No global variables defined in this state machine.",
                         true
                     )}
                 </div>
 
                 <div className="datamodel-parameter-section">
                     <div className="datamodel-section-header">
-                        <h3>Local Parameters</h3>
+                        <h3>Local Variables</h3>
                         <span className="datamodel-section-hint">
-                            All other names
+                            locally accessible
                         </span>
                     </div>
 
                     {renderOwnParameters(
                         localParameters,
-                        "No local parameters."
+                        "No local variables."
                     )}
                 </div>
             </div>

@@ -93,7 +93,9 @@ export function useEditorSelectionController({
         clearAllEdgeSelection();
         const inspectable = getInspectableNode(node);
         setSelectedNodeId(inspectable.id);
-        if (inspectable.id !== node.id) setActiveTab("allgemein");
+        // A double-click is an explicit request to open the node overview,
+        // even when its Details panel currently shows Parameters or Slots.
+        setActiveTab("allgemein");
         setRightPanelTab("details");
     }, [clearAllEdgeSelection, getInspectableNode, setActiveTab, setRightPanelTab, setSelectedNodeId]);
 

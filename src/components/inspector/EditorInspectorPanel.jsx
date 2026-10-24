@@ -64,10 +64,11 @@ export default function EditorInspectorPanel({
 
     const handleAddParameter = useCallback(
         (parameterId, parameterExpr) => {
-            if (!String(parameterId || "").trim()) return;
-            addParameter(parameterId, parameterExpr);
+            if (!String(parameterId || "").trim()) return false;
+            if (addParameter(parameterId, parameterExpr) === false) return false;
             setNewParamId("");
             setNewParamExpr("");
+            return true;
         },
         [addParameter],
     );
