@@ -66,3 +66,18 @@ test('direct Parallel source port is removed on incremental edge deletion', () =
     });
     assert.deepEqual(updated.nodes.find(n=>n.id==='p').data.events,[]);
 });
+
+test('live Parallel commits reuse the same canonical edge identity', () => {
+    const id = 'edge-new-transition-42';
+    const first = edit({ transitions: [{ edgeId: id, event: 'Wait.success.*', target: 'target' }] });
+    assert.equal(first.edges.find(edge => edge.data?.boundaryEventOwnerId === 'p')?.id, id);
+    const second = applyParallelContainerTransitions({
+        nodes: first.nodes,
+        edges: first.edges,
+        parallelId: 'p',
+        transitions: [{ edgeId: id, event: 'Wait.success.*', target: 'target' }],
+    });
+    const canonical = second.edges.filter(edge => edge.data?.boundaryEventOwnerId === 'p');
+    assert.equal(canonical.length, 1);
+    assert.equal(canonical[0].id, id);
+});

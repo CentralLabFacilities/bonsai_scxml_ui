@@ -1,3 +1,4 @@
+import { COMPARISON_PATTERN, toEditorConditionOperator, toScxmlConditionOperator } from "./conditionOperators.js";
 export const VALUE_TYPES = Object.freeze({
     INTEGER: "Integer",
     DOUBLE: "Double",
@@ -48,6 +49,20 @@ export function inferLiteralValueType(value) {
     }
 
     return VALUE_TYPES.STRING;
+}
+
+function isEntireQuotedLiteral(value) {
+    const text = String(value ?? "").trim();
+    const quote = text[0];
+    if ((quote !== "'" && quote !== '"') || text.length < 2) return false;
+    for (let i = 1; i < text.length; i += 1) {
+        if (text[i] === "\\") {
+            i += 1;
+        } else if (text[i] === quote) {
+            return i === text.length - 1;
+        }
+    }
+    return false;
 }
 
 function quoteStringValue(value) {
@@ -337,29 +352,83 @@ export function deserializeStateDatamodelValueForEditor(value) {
         : trimmed;
 }
 
+// Free-form conditions may contain several operations. Handle operators only
+// outside quoted strings; treating everything after the first comparison as a
+// single value would turn `count > 1 && '@text'` into a new string literal.
+function mapUnquotedConditionText(expression, transform) {
+    let result = "";
+    let buffer = "";
+    let quote = null;
+    const flush = () => {
+        result += transform(buffer);
+        buffer = "";
+    };
+    for (let i = 0; i < expression.length; i += 1) {
+        const char = expression[i];
+        if (quote) {
+            result += char;
+            if (char === "\\" && i + 1 < expression.length) {
+                result += expression[++i];
+            } else if (char === quote) {
+                quote = null;
+            }
+        } else if (char === "'" || char === '"') {
+            flush();
+            quote = char;
+            result += char;
+        } else {
+            buffer += char;
+        }
+    }
+    flush();
+    return result;
+}
+
+const hasUnquotedBooleanJoin = (expression) =>
+    mapUnquotedConditionText(expression, (part) =>
+        /(?:&&|\|\||\b(?:and|or)\b)/.test(part) ? "JOIN" : ""
+    ).includes("JOIN");
+
+const mapUnquotedRelationalOperators = (expression, direction) =>
+    mapUnquotedConditionText(expression, (part) => direction === "scxml"
+        ? part.replace(/>=|<=|>|</g, (operator) => toScxmlConditionOperator(operator))
+        : part.replace(/\b(?:ge|le|gt|lt)\b/g, (operator) => toEditorConditionOperator(operator)));
+
 export function serializeEditorConditionForScxml(condition) {
     const trimmed = String(condition ?? "").trim();
     if (!trimmed) return "";
 
-    const match = trimmed.match(/^(@?[^\s]+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    // A wholly quoted value is literal JEXL text. Neither @ markers nor
+    // symbolic comparison operators within it may be rewritten.
+    if (isEntireQuotedLiteral(trimmed)) return trimmed;
+
+    if (hasUnquotedBooleanJoin(trimmed)) {
+        return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
+    }
+
+    const match = trimmed.match(COMPARISON_PATTERN);
     if (!match) {
-        // Best effort for legacy/free-form conditions: remove only explicit
-        // editor reference markers instead of quoting the whole expression.
-        return trimmed.replace(/@([A-Za-z_#][A-Za-z0-9_:#.-]*)/g, "$1");
+        // Reuse the quote-aware token walker so @ is removed only outside
+        // quoted spans, including in legacy/free-form conditions.
+        return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
     }
 
     const [, rawLeft, operator, rawRight] = match;
     const left = rawLeft.startsWith("@") ? rawLeft.slice(1) : rawLeft;
     const right = serializeEditorValueForScxml(rawRight);
 
-    return `${left} ${operator} ${right}`;
+    return `${left} ${toScxmlConditionOperator(operator)} ${right}`;
 }
 
 export function deserializeScxmlConditionForEditor(condition) {
     const trimmed = String(condition ?? "").trim();
     if (!trimmed) return "";
+    if (isEntireQuotedLiteral(trimmed)) return trimmed;
+    if (hasUnquotedBooleanJoin(trimmed)) {
+        return mapUnquotedRelationalOperators(trimmed, "editor");
+    }
 
-    const match = trimmed.match(/^([^\s]+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/);
+    const match = trimmed.match(COMPARISON_PATTERN);
     if (!match) {
         // SCXML commonly uses a boolean datamodel variable directly as a
         // condition, e.g. cond="gripper_open". The transition editor is
@@ -378,7 +447,7 @@ export function deserializeScxmlConditionForEditor(condition) {
     const [, left, operator, rawRight] = match;
     const right = deserializeScxmlValueForEditor(rawRight);
 
-    return `${left} ${operator} ${right}`;
+    return `${left.replace(/^@/, "")} ${toEditorConditionOperator(operator)} ${right}`;
 }
 
 

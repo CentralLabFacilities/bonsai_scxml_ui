@@ -483,7 +483,7 @@ function GeneralDetailsSection({
                                         </div>
                                     </div>
 
-                                    <div className="exit-token-node-references" aria-label={`${transition.sourceDisplayName} to ${transition.targetDisplayName}`}>
+                                    <div className="exit-token-node-references exit-token-route-references" aria-label={`${transition.sourceDisplayName} to ${transition.targetDisplayName}`}>
                                         <NodeReferenceCard
                                             nodeId={transition.sourceNodeId}
                                             name={transition.sourceDisplayName}

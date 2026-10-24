@@ -11,6 +11,7 @@ import {
 import { estimateSlotDockWidth, estimateSlotPortWidth, estimateSummaryWidth } from "../../utils/layoutUtils.js";
 import { getSlotHandleDragFeedback, getSlotTypeBadgeLabel, getStateSlotDisplayRows } from "../../utils/slotVisuals.js";
 import { isInternalRuntimeName } from "../../utils/runtimeEventFrames.js";
+import { eventDoubleClickHandlers } from "../../utils/eventPortInteractions.js";
 
 const textValue = (value) => String(value ?? "").trim();
 const REFERENCE_TYPES = { submachine: "SUB-SM", compound: "COMPOUND", parallel: "PARALLEL" };
@@ -90,11 +91,11 @@ function EventPorts({ id, data, eventIds, editable }) {
                     <span
                         className={`event-name ${editable ? "nodrag nopan" : ""}`}
                         {...(editable
-                            ? editHandlers(() => data.onOpenTransition?.(id, eventId))
+                            ? eventDoubleClickHandlers(() => data.onOpenTransition?.(id, eventId))
                             : {})}
                         title={(data.events || []).some((event) => event.id === eventId && event.definitionMissing)
                             ? `${eventId} — no longer advertised by the skill API; retained for existing transitions`
-                            : editable ? `${eventId} \u2014 click to edit transition` : undefined}
+                            : editable ? `${eventId} \u2014 double-click to edit transitions` : undefined}
                         style={editable ? { cursor: "pointer" } : undefined}
                     >
                         {eventId}
@@ -492,7 +493,7 @@ function StateCard({ id, data, selected, submachine = false }) {
                     id={id}
                     data={data}
                     eventIds={eventIds}
-                    editable={!submachine && mode === "overview"}
+                    editable={!submachine}
                 />
             )}
             {hasSummary && (

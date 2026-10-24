@@ -58,6 +58,13 @@ function StateActionsEditor({
         [availableLocations]
     );
 
+    // The location list may contain only identifiers. Prefer the fully typed
+    // variable declaration for expression suggestions (including local data).
+    const assignmentTarget = (locationId) =>
+        (Array.isArray(valueVariables) ? valueVariables : [])
+            .find(variable => variable?.id === locationId) ||
+        locationOptions.find(location => location.id === locationId);
+
     const normalizedActionName = String(actionName || "").toLowerCase();
     const isEntry = normalizedActionName === "onentry";
     const displayName = isEntry ? "OnEntry" : "OnExit";
@@ -287,7 +294,11 @@ function StateActionsEditor({
             value,
             caretPosition,
             valueVariables,
-            { excludeStatePrefix: true }
+            {
+                excludeStatePrefix: true,
+                targetVariable: assignmentTarget(assignments[index]?.location),
+                requireCompatibleType: true,
+            }
         );
 
         setExpressionCaretPosition(caretPosition);
@@ -446,7 +457,11 @@ function StateActionsEditor({
                                     expressionValue,
                                     expressionCaretPosition,
                                     valueVariables,
-                                    { excludeStatePrefix: true }
+                                    {
+                                        excludeStatePrefix: true,
+                                        targetVariable: assignmentTarget(assignment.location),
+                                        requireCompatibleType: true,
+                                    }
                                 ).matches
                                 : [];
                         const isExpressionAutocompleteOpen =

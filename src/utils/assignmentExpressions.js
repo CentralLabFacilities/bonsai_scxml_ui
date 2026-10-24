@@ -34,7 +34,7 @@ const findVariable = (name, variables = []) =>
     );
 
 const getReferenceType = (reference, variables = []) => {
-    const match = String(reference || "").trim().match(/^@([A-Za-z_][A-Za-z0-9_.:]*)$/);
+    const match = String(reference || "").trim().match(/^@([A-Za-z_#][A-Za-z0-9_.:]*)$/);
     if (!match) return UNKNOWN_TYPE;
 
     const variable = findVariable(match[1], variables);
@@ -50,6 +50,10 @@ export function normalizeAssignmentExpressionInput(
     if (!value) return value;
 
     const targetType = variableType(targetVariable);
+
+    // An explicitly quoted expression is a literal, not a reference or a
+    // comparison. In particular, @ and operators inside its quotes are text.
+    if (isQuotedString(value)) return value;
 
     // Direct String assignment: hello -> 'hello'
     if (
@@ -127,7 +131,7 @@ function tokenize(expression) {
         }
 
         if (char === "@") {
-            const match = text.slice(index + 1).match(/^[A-Za-z_][A-Za-z0-9_.:]*/);
+            const match = text.slice(index + 1).match(/^[A-Za-z_#][A-Za-z0-9_.:]*/);
             if (!match) {
                 return {
                     valid: false,
@@ -202,7 +206,7 @@ function tokenize(expression) {
             continue;
         }
 
-        const bareWord = rest.match(/^[A-Za-z_][A-Za-z0-9_.:]*/)?.[0];
+        const bareWord = rest.match(/^[A-Za-z_#][A-Za-z0-9_.:]*/)?.[0];
         if (bareWord) {
             return {
                 valid: false,

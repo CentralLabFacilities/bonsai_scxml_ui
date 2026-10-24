@@ -1,8 +1,11 @@
 import { isValidScxmlEventDescriptor } from "../../utils/transitionEventValidation.js";
+import { COMPARISON_PATTERN, toEditorConditionOperator, allowedConditionOperator, isEqualityOnlyConditionType } from "../../utils/conditionOperators.js";
+import { getTransitionHighlightColor } from "../../utils/editorGraph.js";
+import { prepareLiveTransitionCommit } from "../../utils/transitionLiveCommit.js";
+import { hasTransitionScopeHierarchy, reconcileExternallyRemovedTransitions } from "../../utils/transitionDrawerSync.js";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     FiArrowRight,
-    FiCheck,
     FiChevronDown,
     FiChevronUp,
     FiPlus,
@@ -13,12 +16,8 @@ import {
 } from "react-icons/fi";
 import { groupTransitionsByScope, getShadowedTransitions } from "../../utils/transitionScopes.js";
 import TypedValueEditor from "../inputs/TypedValueEditor";
+import { getVariableType } from "../../utils/valueTypes";
 import {
-    VALUE_TYPES,
-    getVariableType,
-} from "../../utils/valueTypes";
-import {
-    normalizeDataModelValueInput,
     validateAssignmentValue,
     validateConditionValue,
 } from "../../utils/valueValidation.js";
@@ -30,7 +29,7 @@ import {
     insertExpressionVariable,
 } from "../inputs/expressionAutocomplete.js";
 
-const CONDITION_PATTERN = /^([^\s]+)\s*(==|!=|>=|<=|>|<)\s*(.+)$/;
+
 
 function createTransitionId(prefix = "transition") {
     if (globalThis.crypto?.randomUUID) {
@@ -71,7 +70,7 @@ function parseCondition(condition) {
     const text = String(condition || "").trim();
     if (!text) return null;
 
-    const match = text.match(CONDITION_PATTERN);
+    const match = text.match(COMPARISON_PATTERN);
     if (!match) {
         return {
             variable: "",
@@ -82,7 +81,7 @@ function parseCondition(condition) {
 
     return {
         variable: match[1],
-        operator: match[2],
+        operator: toEditorConditionOperator(match[2]),
         value: match[3],
     };
 }
@@ -90,9 +89,6 @@ function parseCondition(condition) {
 function hydrateTransition(transition, index, variables, fallbackEvent = "") {
     const parsedCondition = parseCondition(transition.cond);
     const conditionVariable = parsedCondition?.variable || variables[0]?.id || "";
-    const conditionVariableExists = variables.some(
-        (variable) => variable.id === conditionVariable
-    );
 
     return {
         transitionId:
@@ -131,9 +127,6 @@ function hydrateTransition(transition, index, variables, fallbackEvent = "") {
         conditionVariable,
         conditionOperator: parsedCondition?.operator || "==",
         conditionValue: parsedCondition?.value || "",
-        conditionVariableIsNew:
-            Boolean(parsedCondition?.variable) && !conditionVariableExists,
-        conditionVariableInitialValue: "",
 
         assignments: getTransitionAssignments(transition, variables),
     };
@@ -164,7 +157,9 @@ function ConditionModal({
                             isOpen,
                             onClose,
                             onConfirm,
+                            onAddParameter,
                             globalVariables = [],
+                            graphEdges = [],
                             sourceEventName = "",
                             sourceNodeName,
                             candidateTransitions = [],
@@ -177,11 +172,18 @@ function ConditionModal({
                             targetOnlyMode = false,
                             containerEventMode = false,
                             defaultScope = null,
+                            draftSessionKey = 0,
                         }) {
     const drawerRef = useRef(null);
-
+    const newParameterIdRef = useRef(null);
+    const newParameterValueRef = useRef(null);
+    const [newParameterId, setNewParameterId] = useState("");
+    const [newParameterValue, setNewParameterValue] = useState("");
+    const [parameterError, setParameterError] = useState("");
+    const committedTransitionsRef = useRef([]);
+    const observedEdgeIdsRef = useRef(new Set());
     const usableVars = useMemo(
-        () => (globalVariables || []).filter((variable) => !String(variable.id || "").startsWith("#")),
+        () => (globalVariables || []).filter((variable) => String(variable.id || "").trim() !== "#_STATE_PREFIX"),
         [globalVariables]
     );
 
@@ -212,6 +214,7 @@ function ConditionModal({
         () => scopeGroups.flatMap((group) => group.items),
         [scopeGroups]
     );
+    const showHierarchy = hasTransitionScopeHierarchy(scopeGroups);
     const shadowedTransitions = useMemo(
         () => getShadowedTransitions(scopeGroups),
         [scopeGroups]
@@ -280,8 +283,14 @@ function ConditionModal({
         // Reopening or replacing the transition candidates starts a fresh modal draft.
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setTransitionsState(hydrated);
+        committedTransitionsRef.current = hydrated;
+        const visible = new Set(graphEdges.map(edge => edge.id));
+        observedEdgeIdsRef.current = new Set(hydrated.map(t => t.edgeId).filter(id => id && visible.has(id)));
         setErrorMessage("");
         setAssignmentExpressionErrors({});
+        setNewParameterId("");
+        setNewParameterValue("");
+        setParameterError("");
         lastFocusRequestRef.current = null;
 
         let selectedId = initialTransitionId;
@@ -303,27 +312,45 @@ function ConditionModal({
             sourceEventName || normalizedEvents[0]?.id || ""
         );
     }, [
+        // A draft is tied to a panel-open request. Do not rehydrate it when
+        // parent graph updates reallocate candidate arrays or variable lists.
         isOpen,
-        candidateTransitions,
-        usableVars,
-        sourceEventName,
-        normalizedEvents,
-        initialTransitionId,
-        initialTargetId,
+        draftSessionKey,
     ]);
 
+    // Canvas deletions must be reflected in the open panel. Track only edges
+    // that really appeared in the graph; new, unpublished drafts are never
+    // mistaken for deleted edges during the first commit render.
     useEffect(() => {
-        if (!isOpen) return undefined;
+        if (!isOpen) return;
+        const live = new Set(graphEdges.map(edge => edge.id));
+        const observed = observedEdgeIdsRef.current;
+        const { removed, committed } = reconcileExternallyRemovedTransitions(
+            [], committedTransitionsRef.current, observed, live
+        );
+        if (removed.size) {
+            committedTransitionsRef.current = committed;
+            setTransitionsState(current => reconcileExternallyRemovedTransitions(
+                current, [], observed, live
+            ).draft);
+            setSelectedTransitionId(previous => {
+                // Keep an unpublished draft selected; it is not in the
+                // committed array and must not be treated as deleted.
+                const selected = transitionsState.find(item => item.transitionId === previous);
+                if (selected && (!selected.edgeId || !removed.has(selected.edgeId))) return previous;
+                return transitionsState.find(item => !item.edgeId || !removed.has(item.edgeId))?.transitionId || "";
+            });
+            setErrorMessage("");
+        }
+        // Newly published edges become eligible for external-removal tracking.
+        graphEdges.forEach(edge => {
+            if (committed.some(item => item.edgeId === edge.id)) observed.add(edge.id);
+        });
+        removed.forEach(id => observed.delete(id));
+    }, [isOpen, graphEdges]);
 
-        const handleOutsideClick = (event) => {
-            if (drawerRef.current && !drawerRef.current.contains(event.target)) {
-                onClose();
-            }
-        };
-
-        document.addEventListener("mousedown", handleOutsideClick);
-        return () => document.removeEventListener("mousedown", handleOutsideClick);
-    }, [isOpen, onClose]);
+    // Incomplete edits remain a local draft. Valid actions persist directly;
+    // clicking elsewhere must not discard the draft or close the panel.
 
     const selectedTransition = transitionsState.find(
         (transition) => transition.transitionId === selectedTransitionId
@@ -347,30 +374,7 @@ function ConditionModal({
         }
     }, [isOpen, initialFocusSection, initialTransitionId, selectedTransition]);
 
-    const customVariables = useMemo(() => {
-        const seen = new Set(usableVars.map((variable) => variable.id));
-        const result = [];
-
-        transitionsState.forEach((transition) => {
-            if (!transition.conditionVariableIsNew) return;
-
-            const id = String(transition.conditionVariable || "").trim();
-            if (!id || seen.has(id)) return;
-
-            seen.add(id);
-            result.push({
-                id,
-                expr: transition.conditionVariableInitialValue || "",
-            });
-        });
-
-        return result;
-    }, [transitionsState, usableVars]);
-
-    const editorVariables = useMemo(
-        () => [...usableVars, ...customVariables],
-        [usableVars, customVariables]
-    );
+    const editorVariables = usableVars;
 
     const selectedConditionVariable = selectedTransition
         ? editorVariables.find(
@@ -379,13 +383,13 @@ function ConditionModal({
         (selectedTransition.conditionVariable
             ? {
                 id: selectedTransition.conditionVariable,
-                expr: selectedTransition.conditionVariableInitialValue || "",
+                expr: "",
             }
             : null)
         : null;
 
     const conditionVariableType = getVariableType(selectedConditionVariable);
-    const conditionIsBoolean = conditionVariableType === VALUE_TYPES.BOOLEAN;
+    const conditionIsEqualityOnly = isEqualityOnlyConditionType(conditionVariableType);
     const hasSelectedTransition = Boolean(selectedTransition);
     const selectedTransitionTarget = selectedTransition?.target;
     const selectedAvailableTargetIds = selectedTransition?.availableTargetIds;
@@ -409,7 +413,7 @@ function ConditionModal({
     }, [selectedTransitionId, hasSelectedTransition, selectedTransitionTarget, availableTargets]);
 
     useEffect(() => {
-        if (!selectedTransition || !conditionIsBoolean) return;
+        if (!selectedTransition || !conditionIsEqualityOnly) return;
         if (
             selectedTransition.conditionOperator !== "==" &&
             selectedTransition.conditionOperator !== "!="
@@ -425,7 +429,7 @@ function ConditionModal({
             );
         }
     }, [
-        conditionIsBoolean,
+        conditionIsEqualityOnly,
         selectedTransition,
         selectedTransitionId,
     ]);
@@ -497,8 +501,29 @@ function ConditionModal({
         setErrorMessage("");
     };
 
+    const patchSelectedDraft = (changes) => transitionsState.map(transition =>
+        transition.transitionId === selectedTransitionId
+            ? { ...transition, ...changes }
+            : transition
+    );
+
+    const commitCondition = (changes = {}) => {
+        const conditionVariable = changes.conditionVariable !== undefined
+            ? changes.conditionVariable : selectedTransition?.conditionVariable;
+        const variable = editorVariables.find(item => item.id === conditionVariable);
+        const next = patchSelectedDraft({
+            ...changes,
+            conditionOperator: allowedConditionOperator(
+                getVariableType(variable),
+                changes.conditionOperator || selectedTransition?.conditionOperator || "=="
+            ),
+        });
+        setTransitionsState(next);
+        if (selectedTransition?.target) handleSave(next, "condition");
+    };
+
     const handleAddAssignment = () => {
-        if (!selectedTransitionId || editorVariables.length === 0) return;
+        if (!selectedTransitionId) return;
 
         const assignment = {
             assignmentId: createAssignmentId("new-assignment"),
@@ -549,32 +574,36 @@ function ConditionModal({
         setErrorMessage("");
     };
 
+    const commitAssignment = (assignmentId, changes) => {
+        if (!selectedTransitionId) return;
+        const next = transitionsState.map(transition =>
+            transition.transitionId === selectedTransitionId
+                ? { ...transition, assignments: (transition.assignments || []).map(assignment =>
+                    assignment.assignmentId === assignmentId ? { ...assignment, ...changes } : assignment) }
+                : transition
+        );
+        setTransitionsState(next);
+        if (selectedTransition?.target) handleSave(next, "assignment", selectedTransitionId, assignmentId);
+    };
+
     const deleteAssignment = (assignmentId) => {
         if (!selectedTransitionId) return;
-
-        setTransitionsState((current) =>
-            current.map((transition) =>
-                transition.transitionId === selectedTransitionId
-                    ? {
-                        ...transition,
-                        assignments: (transition.assignments || []).filter(
-                            (assignment) =>
-                                assignment.assignmentId !== assignmentId
-                        ),
-                    }
-                    : transition
-            )
+        const next = transitionsState.map(transition =>
+            transition.transitionId === selectedTransitionId
+                ? { ...transition, assignments: (transition.assignments || []).filter(
+                    assignment => assignment.assignmentId !== assignmentId) }
+                : transition
         );
-        setOpenAssignmentExpressionId((current) =>
-            current === assignmentId ? null : current
-        );
+        setTransitionsState(next);
+        setOpenAssignmentExpressionId(current => current === assignmentId ? null : current);
         setActiveAssignmentExpressionSuggestionIndex(-1);
-        setAssignmentExpressionErrors((current) => {
-            const next = { ...current };
-            delete next[assignmentId];
-            return next;
+        setAssignmentExpressionErrors(current => {
+            const updated = { ...current };
+            delete updated[assignmentId];
+            return updated;
         });
         setErrorMessage("");
+        if (selectedTransition?.target) handleSave(next, "assignment-delete");
     };
 
     const updateAssignmentExpressionAutocomplete = (
@@ -585,7 +614,13 @@ function ConditionModal({
         const { context, matches } = getMatchingExpressionVariables(
             value,
             caretPosition,
-            editorVariables
+            editorVariables,
+            {
+                targetVariable: editorVariables.find(variable =>
+                    variable.id === selectedTransition?.assignments?.find(item =>
+                        item.assignmentId === assignmentId)?.location),
+                requireCompatibleType: true,
+            }
         );
 
         setAssignmentExpressionCaretPosition(caretPosition);
@@ -679,6 +714,7 @@ function ConditionModal({
             if (result.valid) {
                 setOpenAssignmentExpressionId(null);
                 setActiveAssignmentExpressionSuggestionIndex(-1);
+                if (selectedTransition?.target) handleSave(transitionsState, "assignment", selectedTransitionId, assignment.assignmentId);
                 event.currentTarget.blur();
             }
         }
@@ -689,12 +725,12 @@ function ConditionModal({
         if (targetOnlyMode || !neighborId) return;
         onHoverTransitionEdge?.(null);
         captureOrderPositions();
-        setTransitionsState((current) => {
-            const movingIndex = current.findIndex((item) => item.transitionId === transitionId);
-            const neighborIndex = current.findIndex((item) => item.transitionId === neighborId);
-            return reorderTransitionItems(current, transitionId, neighborId,
-                neighborIndex < movingIndex ? "before" : "after");
-        });
+        const movingIndex = transitionsState.findIndex(item => item.transitionId === transitionId);
+        const neighborIndex = transitionsState.findIndex(item => item.transitionId === neighborId);
+        const next = reorderTransitionItems(transitionsState, transitionId, neighborId,
+            neighborIndex < movingIndex ? "before" : "after");
+        setTransitionsState(next);
+        if (next !== transitionsState) handleSave(next, "target");
     };
 
     const handleDragOverTransition = (event, targetId) => {
@@ -724,20 +760,20 @@ function ConditionModal({
         const target = transitionsState.find((item) => item.transitionId === targetId);
         if (movingId && movingId !== targetId && moving?.scopeId === target?.scopeId) {
             captureOrderPositions();
-            setTransitionsState((current) =>
-                reorderTransitionItems(current, movingId, targetId, dropIndicator?.id === targetId
-                    ? dropIndicator.position
-                    : event.clientY < event.currentTarget.getBoundingClientRect().top +
-                        event.currentTarget.getBoundingClientRect().height / 2 ? "before" : "after")
-            );
+            const next = reorderTransitionItems(transitionsState, movingId, targetId,
+                dropIndicator?.id === targetId ? dropIndicator.position :
+                    event.clientY < event.currentTarget.getBoundingClientRect().top +
+                        event.currentTarget.getBoundingClientRect().height / 2 ? "before" : "after");
+            setTransitionsState(next);
+            if (next !== transitionsState) handleSave(next, "target");
         }
         finishDraggingTransition();
     };
 
-    const handleAddTransition = () => {
+    const handleAddTransition = (eventOverride = null) => {
         if (targetOnlyMode && !containerEventMode) return;
 
-        const eventId = String(newTransitionEvent || normalizedEvents[0]?.id || "").trim();
+        const eventId = String((eventOverride ?? newTransitionEvent) || normalizedEvents[0]?.id || "").trim();
         if (!isValidScxmlEventDescriptor(eventId)) {
             setErrorMessage("Enter a valid SCXML event descriptor (e.g. Wait.success.* or success.*).");
             return;
@@ -746,7 +782,7 @@ function ConditionModal({
         const transitionId = createTransitionId("new");
         const newTransition = {
             transitionId,
-            edgeId: null,
+            edgeId: `edge-${transitionId}`,
             scopeId: defaultScope?.id || "",
             scopeLabel: defaultScope?.label || sourceNodeName || "Current state",
             scopeDepth: defaultScope?.depth || 0,
@@ -759,8 +795,6 @@ function ConditionModal({
             conditionVariable: usableVars[0]?.id || "",
             conditionOperator: "==",
             conditionValue: "",
-            conditionVariableIsNew: false,
-            conditionVariableInitialValue: "",
             assignments: [],
         };
 
@@ -773,34 +807,28 @@ function ConditionModal({
     const handleDeleteTransition = (transitionId, event) => {
         event.stopPropagation();
         onHoverTransitionEdge?.(null);
-
-        setTransitionsState((current) => {
-            const index = current.findIndex(
-                (transition) => transition.transitionId === transitionId
-            );
-            const next = current.filter(
-                (transition) => transition.transitionId !== transitionId
-            );
-
-            if (selectedTransitionId === transitionId) {
-                const replacement = next[Math.min(index, next.length - 1)];
-                setSelectedTransitionId(replacement?.transitionId || "");
-            }
-
-            return next;
-        });
+        const index = transitionsState.findIndex(item => item.transitionId === transitionId);
+        const next = transitionsState.filter(item => item.transitionId !== transitionId);
+        if (selectedTransitionId === transitionId) {
+            setSelectedTransitionId(next[Math.min(index, next.length - 1)]?.transitionId || "");
+        }
+        setTransitionsState(next);
+        handleSave(next, "target");
     };
 
     const selectTarget = (target) => {
         if (!target) return;
 
-        updateSelectedTransition({
+        const patch = {
             target: target.id,
             targetLabel: target.displayName || target.label || target.id,
             scopeId: target.scopeId || defaultScope?.id || "",
             scopeLabel: target.scopeLabel || defaultScope?.label || sourceNodeName || "Current state",
             scopeDepth: target.scopeDepth || 0,
-        });
+        };
+        const next = patchSelectedDraft(patch);
+        setTransitionsState(next);
+        handleSave(next, "target");
         setTargetQuery(target.displayName || target.label || target.id);
         setTargetAutocompleteOpen(false);
         setActiveTargetSuggestionIndex(-1);
@@ -853,14 +881,54 @@ function ConditionModal({
         }
     };
 
-    const handleSave = () => {
+    const createParameter = (event) => {
+        event.preventDefault();
+        const id = newParameterId.trim();
+        const value = newParameterValue.trim();
+        if (!id || /[\s<>"']/u.test(id) || id === "#_STATE_PREFIX") {
+            setParameterError("Enter a valid, non-reserved parameter ID (no spaces or XML delimiters).");
+            newParameterIdRef.current?.focus();
+            return;
+        }
+        if (!value) {
+            setParameterError("Enter an initial value.");
+            newParameterValueRef.current?.focus();
+            return;
+        }
+        if (globalVariables.some((parameter) => parameter.id === id)) {
+            setParameterError(`Parameter ${id} already exists.`);
+            newParameterIdRef.current?.focus();
+            return;
+        }
+        if (typeof onAddParameter !== "function" || !onAddParameter(id, value)) {
+            setParameterError("Could not create the parameter. Check its ID and try again.");
+            return;
+        }
+        setNewParameterId("");
+        setNewParameterValue("");
+        setParameterError("");
+        newParameterIdRef.current?.focus();
+    };
+
+    // Validate and commit an explicit user action, not each keystroke. A new
+    // transition without a target remains local to the panel until completed.
+    const handleSave = (draft = transitionsState, kind = "target", activeId = selectedTransitionId, assignmentId = null) => {
         setErrorMessage("");
+        const prepared = prepareLiveTransitionCommit({
+            draft,
+            committed: committedTransitionsRef.current,
+            variables: editorVariables,
+            activeId,
+            kind,
+            assignmentId,
+        });
+        const preparedOrdered = groupTransitionsByScope(prepared).flatMap(group => group.items);
 
         if (targetOnlyMode) {
             const normalizedTransitions = [];
 
-            for (let index = 0; index < transitionsState.length; index += 1) {
-                const transition = transitionsState[index];
+            for (let index = 0; index < prepared.length; index += 1) {
+                const transition = prepared[index];
 
                 if (!transition.target) {
                     setSelectedTransitionId(transition.transitionId);
@@ -900,54 +968,27 @@ function ConditionModal({
                 });
             }
 
+            committedTransitionsRef.current = prepared;
             onConfirm({
                 updatedTransitions: normalizedTransitions,
                 newGlobalVars: [],
+                keepOpen: true,
             });
             return;
         }
 
-        const newVariablesById = new Map();
-        const allVariables = [...usableVars];
+        const allVariables = editorVariables;
 
-        for (const transition of orderedTransitions) {
-            if (!isValidScxmlEventDescriptor(transition.event)) {
+        const normalizedTransitions = [];
+
+        for (let index = 0; index < preparedOrdered.length; index += 1) {
+            const transition = preparedOrdered[index];
+
+            if (transition.event && !isValidScxmlEventDescriptor(transition.event)) {
                 setSelectedTransitionId(transition.transitionId);
                 setErrorMessage("A transition must use an SCXML event descriptor, not an editor node ID.");
                 return;
             }
-            if (!transition.conditionEnabled || !transition.conditionVariableIsNew) {
-                continue;
-            }
-
-            const variableId = String(transition.conditionVariable || "").trim();
-            const initialValue = String(
-                transition.conditionVariableInitialValue || ""
-            ).trim();
-
-            if (!variableId || !initialValue) {
-                setSelectedTransitionId(transition.transitionId);
-                setErrorMessage(
-                    "A new condition variable needs both an ID and an initial value."
-                );
-                return;
-            }
-
-            if (!newVariablesById.has(variableId)) {
-                const variable = {
-                    id: variableId,
-                    expr: normalizeDataModelValueInput(initialValue),
-                };
-                newVariablesById.set(variableId, variable);
-                allVariables.push(variable);
-            }
-        }
-
-        const normalizedTransitions = [];
-
-        for (let index = 0; index < orderedTransitions.length; index += 1) {
-            const transition = orderedTransitions[index];
-
             if (!transition.event) {
                 setSelectedTransitionId(transition.transitionId);
                 setErrorMessage(`Transition #${index + 1} needs an event.`);
@@ -998,7 +1039,7 @@ function ConditionModal({
                 }
 
                 const operator =
-                    variableType === VALUE_TYPES.BOOLEAN &&
+                    isEqualityOnlyConditionType(variableType) &&
                     transition.conditionOperator !== "==" &&
                     transition.conditionOperator !== "!="
                         ? "=="
@@ -1064,9 +1105,11 @@ function ConditionModal({
             });
         }
 
+        committedTransitionsRef.current = prepared;
         onConfirm({
             updatedTransitions: normalizedTransitions,
-            newGlobalVars: [...newVariablesById.values()],
+            newGlobalVars: [],
+            keepOpen: true,
         });
     };
 
@@ -1143,17 +1186,21 @@ function ConditionModal({
                                                 <div className="transition-scope-heading">
                                                     <div className="transition-scope-title">
                                                         <span className="transition-scope-name">{scope?.label || sourceNodeName}</span>
-                                                        <span className="transition-scope-type">
+                                                        {showHierarchy && <span className="transition-scope-type">
                                                             {scope?.depth === 0 ? "Local transitions" : "Parent scope"}
-                                                        </span>
+                                                        </span>}
                                                     </div>
-                                                    <span className="transition-scope-order">
+                                                    {showHierarchy && <span className="transition-scope-order">
                                                         {scope?.depth === 0 ? "Evaluated first" : "Evaluated if no child transition matches"}
-                                                    </span>
+                                                    </span>}
                                                 </div>
                                             )}
                                             <div
                                                 data-transition-id={transition.transitionId}
+                                                style={{
+                                                    "--transition-accent": getTransitionHighlightColor(transition.event),
+                                                    "--transition-accent-colorblind": getTransitionHighlightColor(transition.event, true),
+                                                }}
                                                 className={`transition-order-card ${
                                                     isSelected ? "selected" : ""
                                                 } ${draggedTransitionId === transition.transitionId ? "dragging" : ""} ${
@@ -1211,10 +1258,21 @@ function ConditionModal({
                                                                 onClick={(event) => event.stopPropagation()}
                                                                 onChange={(event) => {
                                                                     const value = event.target.value;
-                                                                    setTransitionsState((previous) => previous.map(item =>
+                                                                    setTransitionsState(previous => previous.map(item =>
                                                                         item.transitionId === transition.transitionId
                                                                             ? { ...item, event: value, eventDisplayName: value }
                                                                             : item));
+                                                                }}
+                                                                onKeyDown={(event) => {
+                                                                    if (event.key !== "Enter" || event.isComposing) return;
+                                                                    event.preventDefault();
+                                                                    if (isValidScxmlEventDescriptor(transition.event))
+                                                                        handleSave(transitionsState, "target", transition.transitionId);
+                                                                    else setErrorMessage("Enter a valid SCXML event descriptor.");
+                                                                }}
+                                                                onBlur={() => {
+                                                                    if (isValidScxmlEventDescriptor(transition.event))
+                                                                        handleSave(transitionsState, "target", transition.transitionId);
                                                                 }}
                                                             />
                                                         ) : (
@@ -1310,6 +1368,12 @@ function ConditionModal({
                                     value={newTransitionEvent}
                                     disabled={targetOnlyMode && !containerEventMode}
                                     onChange={(event) => setNewTransitionEvent(event.target.value)}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter" && !event.isComposing) {
+                                            event.preventDefault();
+                                            handleAddTransition(event.currentTarget.value);
+                                        }
+                                    }}
                                 />
                                 <datalist id="scxml-transition-descriptors">
                                     {normalizedEvents.map((event) => <option key={event.id} value={event.id} />)}
@@ -1323,7 +1387,7 @@ function ConditionModal({
                                             ? "Container exit events are fixed."
                                             : "Add transition"
                                     }
-                                    onClick={handleAddTransition}
+                                    onClick={() => handleAddTransition()}
                                 >
                                     <FiPlus /> Add
                                 </button>
@@ -1331,6 +1395,52 @@ function ConditionModal({
                         </div>
                     </div>
 
+                    <div className="transition-expression-column">
+                    {!targetOnlyMode && (
+                        <form className="transition-parameter-quick-add" onSubmit={createParameter}>
+                            <span className="transition-parameter-quick-add-title">Add new parameter</span>
+                            <div className="transition-parameter-quick-add-fields">
+                                <label className="transition-compact-screenreader-label" htmlFor="transition-parameter-id">Parameter ID</label>
+                                <input
+                                    id="transition-parameter-id"
+                                    ref={newParameterIdRef}
+                                    className="slot-field-edit"
+                                    value={newParameterId}
+                                    placeholder="ID"
+                                    aria-label="New parameter ID"
+                                    autoComplete="off"
+                                    onChange={(event) => {
+                                        setNewParameterId(event.target.value);
+                                        setParameterError("");
+                                    }}
+                                    onKeyDown={(event) => {
+                                        if (event.key === "Enter" && !event.isComposing) {
+                                            event.preventDefault();
+                                            newParameterValueRef.current?.focus();
+                                        }
+                                    }}
+                                />
+                                <label className="transition-compact-screenreader-label" htmlFor="transition-parameter-value">Initial value</label>
+                                <input
+                                    id="transition-parameter-value"
+                                    ref={newParameterValueRef}
+                                    className="slot-field-edit"
+                                    value={newParameterValue}
+                                    placeholder="Initial value"
+                                    aria-label="New parameter initial value"
+                                    autoComplete="off"
+                                    onChange={(event) => {
+                                        setNewParameterValue(event.target.value);
+                                        setParameterError("");
+                                    }}
+                                />
+                                <button className="transition-secondary-button transition-primary-button transition-add-parameter-button" type="submit">
+                                    <FiPlus /> Add
+                                </button>
+                            </div>
+                            {parameterError && <span className="transition-parameter-error" role="alert">{parameterError}</span>}
+                        </form>
+                    )}
                     <div
                         ref={conditionCardRef}
                         className={`step-card ${
@@ -1341,6 +1451,17 @@ function ConditionModal({
                         <div className="step-card-header">
                             <span className="step-number">2</span>
                             <span className="step-title">Condition</span>
+                            {selectedTransition && !targetOnlyMode && (
+                                <button
+                                    className={`transition-secondary-button ${selectedTransition.conditionEnabled ? "transition-remove-condition-button" : "transition-primary-button transition-add-assignment-button"}`}
+                                    type="button"
+                                    onClick={() => selectedTransition.conditionEnabled
+                                        ? commitCondition({ conditionEnabled: false })
+                                        : updateSelectedTransition({ conditionEnabled: true })}
+                                >
+                                    {selectedTransition.conditionEnabled ? <><FiX /> Remove</> : <><FiPlus /> Add</>}
+                                </button>
+                            )}
                             {targetOnlyMode && (
                                 <span className="transition-locked-label">
                                     Disabled
@@ -1351,160 +1472,60 @@ function ConditionModal({
                         <div className="step-card-body transition-step-body">
                             {selectedTransition ? (
                                 <>
-                                    <label className="transition-enable-row">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedTransition.conditionEnabled}
-                                            onChange={(event) =>
-                                                updateSelectedTransition({
-                                                    conditionEnabled:
-                                                    event.target.checked,
-                                                })
-                                            }
-                                        />
-                                        <span>Add condition</span>
-                                    </label>
-
+                                    {!selectedTransition.conditionEnabled && (
+                                        <div className="transition-empty-state">No condition yet. Use + Add to create one.</div>
+                                    )}
                                     {selectedTransition.conditionEnabled && (
                                         <>
-                                            <div className="transition-variable-mode-row">
-                                                {!selectedTransition.conditionVariableIsNew ? (
-                                                    <>
-                                                        <select
-                                                            className="skill-select transition-variable-select"
-                                                            value={
-                                                                selectedTransition.conditionVariable
-                                                            }
-                                                            onChange={(event) =>
-                                                                updateSelectedTransition({
-                                                                    conditionVariable:
-                                                                    event.target.value,
-                                                                })
-                                                            }
-                                                        >
-                                                            {usableVars.map((variable) => (
-                                                                <option
-                                                                    key={variable.id}
-                                                                    value={variable.id}
-                                                                >
-                                                                    {variable.id}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        <button
-                                                            className="transition-secondary-button"
-                                                            type="button"
-                                                            onClick={() =>
-                                                                updateSelectedTransition({
-                                                                    conditionVariableIsNew: true,
-                                                                    conditionVariable: "",
-                                                                    conditionVariableInitialValue:
-                                                                        "",
-                                                                })
-                                                            }
-                                                        >
-                                                            <FiPlus /> New variable
-                                                        </button>
-                                                    </>
-                                                ) : (
-                                                    <button
-                                                        className="transition-secondary-button"
-                                                        type="button"
-                                                        onClick={() =>
-                                                            updateSelectedTransition({
-                                                                conditionVariableIsNew: false,
-                                                                conditionVariable:
-                                                                    usableVars[0]?.id || "",
-                                                                conditionVariableInitialValue:
-                                                                    "",
-                                                            })
-                                                        }
+                                            <div className="condition-expression-row transition-expression-builder">
+                                                <div className="transition-expression-variable-control">
+                                                    {conditionVariableType ? (
+                                                        <span className={`datamodel-value-type-badge datamodel-value-type-${conditionVariableType.toLowerCase()}`}>
+                                                            {conditionVariableType}
+                                                        </span>
+                                                    ) : (
+                                                        <span className="datamodel-value-type-badge datamodel-value-type-unknown">Type</span>
+                                                    )}
+                                                    <label className="transition-compact-screenreader-label" htmlFor="transition-condition-variable">Condition variable</label>
+                                                    <select
+                                                        id="transition-condition-variable"
+                                                        className="skill-select transition-variable-select"
+                                                        aria-label="Condition variable"
+                                                        value={selectedTransition.conditionVariable}
+                                                        onChange={event => commitCondition({ conditionVariable: event.target.value })}
                                                     >
-                                                        Use existing variable
-                                                    </button>
-                                                )}
-                                            </div>
-
-                                            {selectedTransition.conditionVariableIsNew && (
-                                                <div className="transition-new-variable-row">
-                                                    <input
-                                                        className="slot-field-edit"
-                                                        type="text"
-                                                        value={
-                                                            selectedTransition.conditionVariable
-                                                        }
-                                                        placeholder="Variable ID"
-                                                        onChange={(event) =>
-                                                            updateSelectedTransition({
-                                                                conditionVariable:
-                                                                event.target.value,
-                                                            })
-                                                        }
-                                                    />
-                                                    <input
-                                                        className="slot-field-edit"
-                                                        type="text"
-                                                        value={
-                                                            selectedTransition.conditionVariableInitialValue
-                                                        }
-                                                        placeholder="Initial value"
-                                                        onChange={(event) =>
-                                                            updateSelectedTransition({
-                                                                conditionVariableInitialValue:
-                                                                event.target.value,
-                                                            })
-                                                        }
-                                                    />
+                                                        {selectedTransition.conditionVariable && !editorVariables.some(variable => variable.id === selectedTransition.conditionVariable) && (
+                                                            <option value={selectedTransition.conditionVariable}>
+                                                                {selectedTransition.conditionVariable} (unavailable)
+                                                            </option>
+                                                        )}
+                                                        {editorVariables.map(variable => <option key={variable.id} value={variable.id}>{variable.id}</option>)}
+                                                    </select>
                                                 </div>
-                                            )}
-
-                                            <div className="condition-expression-row">
-                                                {conditionVariableType ? (
-                                                    <span
-                                                        className={`datamodel-value-type-badge datamodel-value-type-${conditionVariableType.toLowerCase()}`}
-                                                    >
-                                                        {conditionVariableType}
-                                                    </span>
-                                                ) : (
-                                                    <span className="datamodel-value-type-badge datamodel-value-type-unknown">
-                                                        Type
-                                                    </span>
-                                                )}
-
-                                                <span
-                                                    className="condition-expression-variable"
-                                                    title={
-                                                        selectedTransition.conditionVariable ||
-                                                        "Variable"
-                                                    }
-                                                >
-                                                    {selectedTransition.conditionVariable ||
-                                                        "Variable"}
-                                                </span>
 
                                                 <select
                                                     className="skill-select condition-expression-operator"
+                                                    aria-label="Condition operator"
                                                     value={
                                                         selectedTransition.conditionOperator
                                                     }
                                                     onChange={(event) =>
-                                                        updateSelectedTransition({
-                                                            conditionOperator:
-                                                            event.target.value,
+                                                        commitCondition({
+                                                            conditionOperator: event.target.value,
                                                         })
                                                     }
                                                 >
-                                                    {!conditionIsBoolean && (
+                                                    {!conditionIsEqualityOnly && (
                                                         <option value=">">&gt;</option>
                                                     )}
-                                                    {!conditionIsBoolean && (
+                                                    {!conditionIsEqualityOnly && (
                                                         <option value="<">&lt;</option>
                                                     )}
                                                     <option value="==">==</option>
-                                                    {!conditionIsBoolean && (
+                                                    {!conditionIsEqualityOnly && (
                                                         <option value=">=">&gt;=</option>
                                                     )}
-                                                    {!conditionIsBoolean && (
+                                                    {!conditionIsEqualityOnly && (
                                                         <option value="<=">&lt;=</option>
                                                     )}
                                                     <option value="!=">!=</option>
@@ -1532,9 +1553,7 @@ function ConditionModal({
                                                             })
                                                         }
                                                         onCommit={(value) =>
-                                                            updateSelectedTransition({
-                                                                conditionValue: value,
-                                                            })
+                                                            commitCondition({ conditionValue: value })
                                                         }
                                                     />
                                                 </div>
@@ -1565,7 +1584,7 @@ function ConditionModal({
                                     Disabled
                                 </span>
                             )}
-                            {selectedTransition && editorVariables.length > 0 && (
+                            {selectedTransition && (
                                 <button
                                     className="transition-secondary-button transition-primary-button transition-add-assignment-button"
                                     type="button"
@@ -1579,16 +1598,12 @@ function ConditionModal({
                         <div className="step-card-body transition-step-body">
                             {selectedTransition ? (
                                 <>
-                                    {editorVariables.length === 0 ? (
-                                        <div className="transition-help-text">
-                                            Create a data variable before adding an assignment.
-                                        </div>
-                                    ) : (selectedTransition.assignments || []).length === 0 ? (
+                                    {(selectedTransition.assignments || []).length === 0 ? (
                                         <div className="transition-empty-state">
                                             No assignments yet. Use + Add to create one.
                                         </div>
                                     ) : (
-                                        <div className="transition-assignment-list">
+                                        <div className="transition-assignment-list transition-expression-list">
                                             {(selectedTransition.assignments || []).map(
                                                 (assignment, assignmentIndex) => {
                                                     const assignmentVariable =
@@ -1604,7 +1619,8 @@ function ConditionModal({
                                                             ? getMatchingExpressionVariables(
                                                                 assignment.expr || "",
                                                                 assignmentExpressionCaretPosition,
-                                                                editorVariables
+                                                                editorVariables,
+                                                                { targetVariable: assignmentVariable, requireCompatibleType: true }
                                                             ).matches
                                                             : [];
                                                     const isAssignmentExpressionAutocompleteOpen =
@@ -1617,137 +1633,72 @@ function ConditionModal({
                                                             className="transition-assignment-editor"
                                                             key={assignment.assignmentId}
                                                         >
-                                                            <div className="transition-assignment-target-row">
-                                                                {assignmentVariableType ? (
-                                                                    <span
-                                                                        className={`datamodel-value-type-badge datamodel-value-type-${assignmentVariableType.toLowerCase()}`}
-                                                                    >
-                                                                        {assignmentVariableType}
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className="datamodel-value-type-badge datamodel-value-type-unknown">
-                                                                        Type
-                                                                    </span>
-                                                                )}
+                                                            <div className="transition-assignment-equation">
+                                                                <div className="transition-assignment-variable-area">
+                                                                    <label className="transition-field-caption transition-compact-screenreader-label" htmlFor={`assignment-location-${assignment.assignmentId}`}>Variable</label>
+                                                                    <div className="transition-assignment-variable-controls">
+                                                                        {assignmentVariableType ? (
+                                                                            <span className={`datamodel-value-type-badge datamodel-value-type-${assignmentVariableType.toLowerCase()}`}>{assignmentVariableType}</span>
+                                                                        ) : (
+                                                                            <span className="datamodel-value-type-badge datamodel-value-type-unknown">Type</span>
+                                                                        )}
+                                                                        <select
+                                                                            id={`assignment-location-${assignment.assignmentId}`}
+                                                                            className="skill-select transition-assignment-location"
+                                                                            value={assignment.location}
+                                                                            onChange={(event) => commitAssignment(assignment.assignmentId, { location: event.target.value })}
+                                                                        >
+                                                                            {!assignment.location && <option value="">Select variable</option>}
+                                                                            {editorVariables.map(variable => <option key={variable.id} value={variable.id}>{variable.id}</option>)}
+                                                                        </select>
 
-                                                                <select
-                                                                    className="skill-select transition-assignment-location"
-                                                                    value={assignment.location}
-                                                                    onChange={(event) =>
-                                                                        updateAssignment(
-                                                                            assignment.assignmentId,
-                                                                            {
-                                                                                location:
-                                                                                event.target.value,
-                                                                            }
-                                                                        )
-                                                                    }
-                                                                >
-                                                                    {editorVariables.map(
-                                                                        (variable) => (
-                                                                            <option
-                                                                                key={variable.id}
-                                                                                value={variable.id}
-                                                                            >
-                                                                                {variable.id}
-                                                                            </option>
-                                                                        )
-                                                                    )}
-                                                                </select>
-
-                                                                <button
-                                                                    className="transition-assignment-delete-button"
-                                                                    type="button"
+                                                                    </div>
+                                                                </div>
+                                                                <span className="transition-assignment-equals" aria-hidden="true">=</span>
+                                                                <div className="transition-assignment-value-area">
+                                                                    <label className="transition-field-caption transition-compact-screenreader-label" htmlFor={`assignment-value-${assignment.assignmentId}`}>Value / expression</label>
+                                                                    <div className="typed-value-editor-row">
+                                                                        <input
+                                                                            id={`assignment-value-${assignment.assignmentId}`}
+                                                                            key={`${selectedTransition.transitionId}:${assignment.assignmentId}:${assignment.location}`}
+                                                                            ref={(element) => { assignmentExpressionInputRefs.current[assignment.assignmentId] = element; }}
+                                                                            className="slot-field-edit"
+                                                                            type="text"
+                                                                            value={assignment.expr || ""}
+                                                                            placeholder="e.g. @test_value + 1"
+                                                                            autoComplete="off"
+                                                                            spellCheck={false}
+                                                                            onFocus={(event) => updateAssignmentExpressionAutocomplete(assignment.assignmentId, event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+                                                                            onClick={(event) => updateAssignmentExpressionAutocomplete(assignment.assignmentId, event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+                                                                            onChange={(event) => {
+                                                                                const value = event.target.value;
+                                                                                updateAssignment(assignment.assignmentId, { expr: value });
+                                                                                updateAssignmentExpressionAutocomplete(assignment.assignmentId, value, event.target.selectionStart ?? value.length);
+                                                                            }}
+                                                                            onBlur={() => window.setTimeout(() => {
+                                                                                setOpenAssignmentExpressionId(current => current === assignment.assignmentId ? null : current);
+                                                                                setActiveAssignmentExpressionSuggestionIndex(-1);
+                                                                            }, 120)}
+                                                                            onKeyDown={(event) => handleAssignmentExpressionKeyDown(event, assignment, matchingAssignmentExpressionVariables)}
+                                                                        />
+                                                                        {isAssignmentExpressionAutocompleteOpen && (
+                                                                            <ExpressionVariableSuggestions
+                                                                                variables={matchingAssignmentExpressionVariables}
+                                                                                activeIndex={activeAssignmentExpressionSuggestionIndex}
+                                                                                onSelect={(variable) => selectAssignmentExpressionSuggestion(assignment, variable)}
+                                                                                showTypes
+                                                                                upwardAnchor={assignmentExpressionInputRefs.current[assignment.assignmentId]}
+                                                                            />
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                                <button className="transition-assignment-delete-button" type="button"
                                                                     title={`Delete assignment #${assignmentIndex + 1}`}
-                                                                    onClick={() =>
-                                                                        deleteAssignment(
-                                                                            assignment.assignmentId
-                                                                        )
-                                                                    }
-                                                                >
+                                                                    aria-label={`Delete assignment #${assignmentIndex + 1}`}
+                                                                    onClick={() => deleteAssignment(assignment.assignmentId)}>
                                                                     <FiTrash2 />
                                                                 </button>
                                                             </div>
-
-                                                            <div className="typed-value-editor-row">
-                                                                <input
-                                                                    key={`${selectedTransition.transitionId}:${assignment.assignmentId}:${assignment.location}`}
-                                                                    ref={(element) => {
-                                                                        assignmentExpressionInputRefs.current[
-                                                                            assignment.assignmentId
-                                                                            ] = element;
-                                                                    }}
-                                                                    className="slot-field-edit"
-                                                                    type="text"
-                                                                    value={assignment.expr || ""}
-                                                                    placeholder="Value, e.g. @test_value + 1"
-                                                                    autoComplete="off"
-                                                                    spellCheck={false}
-                                                                    onFocus={(event) =>
-                                                                        updateAssignmentExpressionAutocomplete(
-                                                                            assignment.assignmentId,
-                                                                            event.currentTarget.value,
-                                                                            event.currentTarget.selectionStart ??
-                                                                            event.currentTarget.value.length
-                                                                        )
-                                                                    }
-                                                                    onClick={(event) =>
-                                                                        updateAssignmentExpressionAutocomplete(
-                                                                            assignment.assignmentId,
-                                                                            event.currentTarget.value,
-                                                                            event.currentTarget.selectionStart ??
-                                                                            event.currentTarget.value.length
-                                                                        )
-                                                                    }
-                                                                    onChange={(event) => {
-                                                                        const value =
-                                                                            event.target.value;
-                                                                        const caretPosition =
-                                                                            event.target.selectionStart ??
-                                                                            value.length;
-                                                                        updateAssignment(
-                                                                            assignment.assignmentId,
-                                                                            { expr: value }
-                                                                        );
-                                                                        updateAssignmentExpressionAutocomplete(
-                                                                            assignment.assignmentId,
-                                                                            value,
-                                                                            caretPosition
-                                                                        );
-                                                                    }}
-                                                                    onBlur={() =>
-                                                                        window.setTimeout(() => {
-                                                                            setOpenAssignmentExpressionId(
-                                                                                (current) =>
-                                                                                    current ===
-                                                                                    assignment.assignmentId
-                                                                                        ? null
-                                                                                        : current
-                                                                            );
-                                                                            setActiveAssignmentExpressionSuggestionIndex(
-                                                                                -1
-                                                                            );
-                                                                        }, 120)
-                                                                    }
-                                                                    onKeyDown={(event) =>
-                                                                        handleAssignmentExpressionKeyDown(
-                                                                            event,
-                                                                            assignment,
-                                                                            matchingAssignmentExpressionVariables
-                                                                        )
-                                                                    }
-                                                                />
-
-                                                                {isAssignmentExpressionAutocompleteOpen && (
-                                                                    <ExpressionVariableSuggestions
-                                                                        variables={matchingAssignmentExpressionVariables}
-                                                                        activeIndex={activeAssignmentExpressionSuggestionIndex}
-                                                                        onSelect={(variable) => selectAssignmentExpressionSuggestion(assignment, variable)}
-                                                                        showTypes
-                                                                    />
-                                                                )}
-                                                            </div>
-
                                                             {assignmentExpressionErrors[
                                                                 assignment.assignmentId
                                                                 ] && (
@@ -1777,6 +1728,8 @@ function ConditionModal({
                                 </div>
                             )}
                         </div>
+                    </div>
+
                     </div>
 
                     <div className="step-card">
@@ -1896,22 +1849,6 @@ function ConditionModal({
                     </div>
                 </div>
 
-                <div className="bottom-drawer-footer">
-                    <button
-                        className="back-button"
-                        style={{ margin: 0, height: "38px" }}
-                        onClick={onClose}
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        className="filter-button transition-primary-button"
-                        style={{ margin: 0, height: "38px", padding: "0 24px" }}
-                        onClick={handleSave}
-                    >
-                        <FiCheck /> Save & Apply
-                    </button>
-                </div>
             </div>
         </div>
     );

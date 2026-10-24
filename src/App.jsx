@@ -740,7 +740,9 @@ function AppContent() {
         handleOpenStateActions,
         handleOpenParameter,
         handleOpenSlot,
-        handleOpenTransition,
+        // Canvas event-row double clicks open the transition editor directly;
+        // the separate inspector-focus callback remains available elsewhere.
+        handleOpenTransition: openConditionDrawer,
         handleOpenSubMachine,
         handleToggleContainerCollapse: toggleContainerCollapse,
         onContainerResizeStart,
@@ -1716,6 +1718,8 @@ function AppContent() {
                 condition={{
                     drawer: drawerData,
                     variables: availableDataModelParameters,
+                    onAddParameter: addGlobalParameter,
+                    graphEdges: edges,
                     onConfirm: (...args) => {
                         hoverTransitionEdge(null);
                         return handleConfirmDrawer(...args);

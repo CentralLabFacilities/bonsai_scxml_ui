@@ -18,6 +18,7 @@ import {
     makeSelfLoopControlPoints,
 } from "../../utils/transitionSemantics";
 import { rebuildBoundaryTransitionsIncremental } from "../../utils/boundaryTransitions";
+import { findExistingSharedParallelExit } from "../../utils/transitionConnectPolicy.js";
 import {
     getBoundarySourceEvent,
     getExitedBoundarySteps,
@@ -57,6 +58,7 @@ export function useTransitionGraph({
     onSlotConnectionError,
 }) {
     const reconnectingEdgeRef = useRef(null);
+    const drawerSessionRef = useRef(0);
     const [drawerData, setDrawerData] = useState(
         createClosedConditionDrawerState
     );
@@ -112,7 +114,7 @@ export function useTransitionGraph({
                 edges,
             });
             if (nextDrawerData) {
-                setDrawerData(nextDrawerData);
+                setDrawerData({ ...nextDrawerData, draftSessionKey: ++drawerSessionRef.current });
             }
         },
         [nodes, edges]
@@ -511,36 +513,34 @@ export function useTransitionGraph({
                     ? exitedBoundarySteps.slice(currentBoundaryIndex + 1)
                     : exitedBoundarySteps;
 
-            const currentParallel = [...exitedBoundarySteps].reverse().find(
+            // A repeated gesture from the SAME skill can create another
+            // ordered, conditional transition, even to the same target.
+            // A gesture from a DIFFERENT skill in another lane emitting the
+            // same event instead addresses the already shared Parallel exit.
+            // It must not create a second SCXML handler for that event.
+            const sharedParallelId = [...exitedBoundarySteps].reverse().find(
                 (step) => step.kind === "parallel"
             )?.container?.id;
-            const logicalEventName = (state, handle) => {
-                const name = String(state?.data?.fullSkillName || state?.data?.label || state?.id || "")
-                    .split("#")[0].split(".").pop();
-                return `${name}.${handle}`;
-            };
-            const currentEventName = logicalEventName(logicalSourceNode, logicalSourceHandle);
-            const logicalDuplicate = edges.find((edge) => {
-                if (edge.data?.boundaryInternalEdge || edge.data?.compoundInternalEdge ||
-                    edge.data?.parallelInternalEdge || edge.target !== params.target) return false;
-                const otherSourceId = getLogicalEdgeSourceId(edge);
-                const otherHandle = String(getLogicalEdgeSourceHandle(edge));
-                if (otherSourceId === logicalSourceId && otherHandle === logicalSourceHandle) return true;
-                if (!currentParallel) return false;
-                const otherSource = nodes.find((node) => node.id === otherSourceId);
-                if (!otherSource || logicalEventName(otherSource, otherHandle) !== currentEventName) return false;
-                const otherParallel = [...getExitedBoundarySteps(
-                    otherSource, semanticTargetNode, nodes
-                )].reverse().find((step) => step.kind === "parallel")?.container?.id;
-                return otherParallel === currentParallel;
+            const shared = findExistingSharedParallelExit({
+                edges, nodes,
+                sourceId: logicalSourceId,
+                sourceHandle: logicalSourceHandle,
+                targetId: params.target,
+                parallelId: sharedParallelId,
+                logicalSourceIdOf: getLogicalEdgeSourceId,
+                logicalSourceHandleOf: getLogicalEdgeSourceHandle,
+                exitedParallelIdsOf: (sourceId) => {
+                    const state = nodes.find((node) => node.id === sourceId);
+                    return state
+                        ? getExitedBoundarySteps(state, semanticTargetNode, nodes)
+                            .filter((step) => step.kind === "parallel")
+                            .map((step) => step.container.id)
+                        : [];
+                },
             });
-
-            if (logicalDuplicate) {
-                openConditionDrawer(
-                    getLogicalEdgeSourceId(logicalDuplicate),
-                    String(getLogicalEdgeSourceHandle(logicalDuplicate)),
-                    params.target
-                );
+            if (shared) {
+                openConditionDrawer(getLogicalEdgeSourceId(shared),
+                    String(getLogicalEdgeSourceHandle(shared)), params.target);
                 return;
             }
 
@@ -596,7 +596,10 @@ export function useTransitionGraph({
                 );
                 if (outgoing.length > 1) {
                     openConditionDrawer(logicalSourceId, logicalSourceHandle,
-                        params.target, normalized.edges);
+                        params.target, normalized.edges, {
+                            edgeId: semanticEdge.id,
+                            focusSection: "condition",
+                        });
                 }
                 void syncTransitionsForSource?.(logicalSourceId);
                 return;
@@ -622,26 +625,9 @@ export function useTransitionGraph({
                     targetLane.parentId !== sourceLane.parentId
                 );
 
-            const alreadyExists = edges.some((edge) => {
-                const logicalSource =
-                    edge.data?.compoundOriginalSource ||
-                    edge.data?.parallelOriginalSource ||
-                    edge.source;
-                const logicalHandle =
-                    edge.data?.compoundOriginalSourceHandle ||
-                    edge.sourceHandle;
-
-                return (
-                    logicalSource === params.source &&
-                    logicalHandle === params.sourceHandle &&
-                    edge.target === params.target
-                );
-            });
-
-            if (alreadyExists) {
-                openConditionDrawer(params.source, params.sourceHandle, params.target);
-                return;
-            }
+            // Never coalesce a newly drawn edge by endpoint equality: an
+            // event can have multiple ordered, conditional transitions to
+            // the same target. Their identities, not their endpoints, differ.
 
             const sourceCompound =
                 getDirectCompoundForNode(
@@ -802,6 +788,19 @@ export function useTransitionGraph({
                     updateNodeInternals(sourceCompound.id);
                 });
 
+                const nextEdges = [...edges, externalEdge, internalEdge];
+                const semanticOutgoing = nextEdges.filter((edge) =>
+                    !edge.data?.compoundInternalEdge &&
+                    !edge.data?.parallelInternalEdge &&
+                    getLogicalEdgeSourceId(edge) === params.source &&
+                    String(getLogicalEdgeSourceHandle(edge)) === String(handleId)
+                );
+                if (semanticOutgoing.length > 1) {
+                    openConditionDrawer(params.source, handleId, params.target, nextEdges, {
+                        edgeId: externalEdge.id,
+                        focusSection: "condition",
+                    });
+                }
                 void syncTransitionsForSource?.(params.source);
                 return;
             }
@@ -1034,7 +1033,8 @@ export function useTransitionGraph({
                             ...edges,
                             externalEdge,
                             internalEdge,
-                        ]
+                        ],
+                        { edgeId: externalEdge.id, focusSection: "condition" }
                     );
                 }
 
@@ -1089,13 +1089,10 @@ export function useTransitionGraph({
                 newEdge,
             ];
 
-            setEdges(updatedEdges);
-
             /*
              * Event am Source-State aktualisieren
              */
-            setNodes((currentNodes) =>
-                currentNodes.map((node) => {
+            const nextNodes = nodes.map((node) => {
                     if (node.id !== params.source) {
                         return node;
                     }
@@ -1150,24 +1147,24 @@ export function useTransitionGraph({
                             ],
                         },
                     };
-                })
-            );
+                });
+            updateGraph({ nodes: nextNodes, edges: updatedEdges });
 
-            const outgoingFromHandle =
-                updatedEdges.filter(
-                    (edge) =>
-                        edge.source ===
-                        params.source &&
-                        edge.sourceHandle ===
-                        params.sourceHandle
-                );
+            const outgoingFromHandle = updatedEdges.filter((edge) =>
+                !edge.data?.boundaryInternalEdge &&
+                !edge.data?.compoundInternalEdge &&
+                !edge.data?.parallelInternalEdge &&
+                getLogicalEdgeSourceId(edge) === params.source &&
+                String(getLogicalEdgeSourceHandle(edge)) === String(params.sourceHandle)
+            );
 
             if (outgoingFromHandle.length >= 2) {
                 openConditionDrawer(
                     params.source,
                     params.sourceHandle,
                     params.target,
-                    updatedEdges
+                    updatedEdges,
+                    { edgeId: newEdge.id, focusSection: "condition" }
                 );
             }
             void syncTransitionsForSource?.(params.source);

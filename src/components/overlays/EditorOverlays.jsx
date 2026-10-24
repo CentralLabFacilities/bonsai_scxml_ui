@@ -258,13 +258,16 @@ export default function EditorOverlays({
                         isOpen
                         onClose={condition.onClose}
                         onConfirm={condition.onConfirm}
+                        onAddParameter={condition.onAddParameter}
                         globalVariables={condition.variables}
+                        graphEdges={condition.graphEdges}
                         sourceNodeName={condition.drawer.sourceNodeName}
                         sourceEventName={condition.drawer.sourceEventName}
                         candidateTransitions={condition.drawer.candidateTransitions}
                         availableEvents={condition.drawer.availableEvents}
                         availableTargets={condition.drawer.availableTargets}
                         initialTransitionId={condition.drawer.initialTransitionId}
+                        draftSessionKey={condition.drawer.draftSessionKey}
                         initialFocusSection={condition.drawer.initialFocusSection}
                         onHoverTransitionEdge={condition.onHoverTransitionEdge}
                         initialTargetId={condition.drawer.initialTargetId}

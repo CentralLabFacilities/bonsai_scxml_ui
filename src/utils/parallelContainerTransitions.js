@@ -44,7 +44,7 @@ export function applyParallelContainerTransitions({ nodes, edges, parallelId, tr
         const source = matches.find(m => m.sourceId === priorPrimary) || matches[0] || {
             sourceId: parallelId, sourceHandle: event,
         };
-        const id = previous?.id || `edge-${crypto.randomUUID()}`;
+        const id = previous?.id || item.edgeId || `edge-${crypto.randomUUID()}`;
         if (used.has(id)) throw new Error('Duplicate transition identity');
         used.add(id);
         // An older routed edge carries source membership and port IDs from

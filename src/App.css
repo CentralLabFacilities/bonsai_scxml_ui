@@ -4239,12 +4239,6 @@
     color: #e0f2fe;
 }
 
-.transition-new-variable-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-}
-
 .transition-assignment-header {
     min-width: 0;
 }
@@ -10401,10 +10395,9 @@ dialog.skill-paste-choice-overlay {
     outline-color: #2563eb;
 }
 
-/* Container exit routes: preserve clickable source/target cards, but show the
-   direction explicitly. The minmax columns prevent long skill names from
-   forcing the inspector wider. */
-.exit-token-node-references {
+/* Only source -> target route summaries use side-by-side cards. Ordinary
+   exit-token target lists must stay stacked vertically, one target per row. */
+.exit-token-node-references.exit-token-route-references {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 16px minmax(0, 1fr);
     align-items: center;
@@ -10568,4 +10561,271 @@ dialog.skill-paste-choice-overlay {
 }
 .react-flow.editor-viewport-moving .react-flow__viewport {
     will-change: transform;
+}
+
+/* Transition list follows the same success/error/fatal palette as the graph,
+   including the alternate colorblind palette. The priority label and selected
+   state remain distinguishable without relying on hue alone. */
+.transition-order-card {
+    --transition-panel-accent: var(--transition-accent, #38bdf8);
+    border-left-color: var(--transition-panel-accent);
+}
+.transition-order-card:hover,
+.transition-order-card.selected {
+    border-left-color: var(--transition-panel-accent);
+}
+.transition-order-card.selected {
+    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--transition-panel-accent) 40%, transparent);
+}
+.transition-order-card .transition-priority,
+.transition-order-card.selected .transition-event-name {
+    color: var(--transition-panel-accent);
+}
+.transition-order-card:has(.transition-scope-warning) {
+    border-left-color: #f59e0b;
+}
+:root[data-colorblind-mode] .transition-order-card {
+    --transition-panel-accent: var(--transition-accent-colorblind, #56b4e9);
+}
+
+/* Unified transition expression editor: condition and assignment rows use the
+   same restrained surfaces, captions, input heights and action spacing. */
+.transition-expression-builder,
+.transition-assignment-equation {
+    border: 1px solid rgba(100, 116, 139, .45);
+    border-radius: 7px;
+    background: rgba(15, 23, 42, .68);
+    padding: 9px;
+    box-sizing: border-box;
+}
+.condition-expression-row.transition-expression-builder {
+    grid-template-columns: max-content minmax(0, 1fr) 58px minmax(0, 1.1fr);
+    gap: 7px;
+}
+.transition-expression-builder :is(.skill-select, .slot-field-edit),
+.transition-assignment-equation :is(.skill-select, .slot-field-edit) {
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+.transition-assignment-equation {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 19px minmax(0, 1fr) 28px;
+    gap: 7px;
+    align-items: end;
+    min-width: 0;
+}
+.transition-assignment-variable-area,
+.transition-assignment-value-area { min-width: 0; }
+.transition-assignment-variable-controls {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    min-height: 30px;
+}
+.transition-assignment-variable-controls .transition-assignment-location {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.transition-assignment-variable-controls .transition-assignment-new-variable {
+    flex: 0 0 28px;
+    width: 28px;
+    min-width: 28px;
+    min-height: 29px;
+    padding: 0;
+    font-size: 14px;
+}
+.transition-field-caption {
+    display: block;
+    font-size: 10px;
+    font-weight: 650;
+    color: #94a3b8;
+    letter-spacing: .01em;
+    margin-bottom: 6px;
+}
+.transition-assignment-equals {
+    font-size: 18px;
+    font-weight: 700;
+    color: #a5b4fc;
+    text-align: center;
+    align-self: end;
+    line-height: 31px;
+}
+.transition-assignment-equation .transition-assignment-delete-button {
+    align-self: end;
+    margin-bottom: 1px;
+}
+.transition-assignment-equation .typed-value-editor-row { min-width: 0; }
+.transition-assignment-equation .typed-value-editor-row input { width: 100%; }
+.transition-assignment-editor {
+    background: transparent;
+    border: 0;
+    padding: 0;
+    gap: 4px;
+}
+@media (max-width: 900px) {
+    .transition-assignment-equation { grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr) 26px; gap: 4px; padding: 6px; }
+    .transition-assignment-variable-controls { gap: 3px; }
+    .transition-assignment-variable-controls .transition-assignment-new-variable { flex-basis: 24px; width: 24px; min-width: 24px; }
+}
+
+/* Transition editor: vertically stacked condition and assignment editors.
+   A wider expression column avoids crowding the fields. */
+.transition-editor-grid {
+    grid-template-columns: minmax(240px, 1fr) minmax(385px, 1.65fr) minmax(230px, .9fr);
+    align-items: start;
+}
+.transition-expression-column {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+}
+.transition-expression-column > .step-card {
+    width: 100%;
+    min-width: 0;
+}
+/* Compact one-line editors use the wider, vertically stacked panel. */
+.transition-expression-column > .step-card {
+    padding: 10px 12px;
+    gap: 7px;
+}
+.transition-expression-column .transition-step-body { gap: 6px; }
+.transition-expression-column :is(.transition-expression-builder, .transition-assignment-equation) {
+    padding: 6px 8px;
+    align-items: center;
+    gap: 7px;
+}
+.transition-expression-variable-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.transition-expression-variable-control .transition-variable-select {
+    min-width: 0;
+    width: 100%;
+}
+.transition-expression-column .condition-expression-row.transition-expression-builder {
+    grid-template-columns: minmax(0, 1.05fr) 60px minmax(0, 1.4fr);
+}
+.transition-expression-column .transition-assignment-equation {
+    grid-template-columns: minmax(0, 1.05fr) 16px minmax(0, 1.4fr) 26px;
+}
+.transition-compact-screenreader-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+.transition-expression-column .transition-assignment-list { gap: 5px; }
+.transition-expression-column .transition-assignment-variable-controls { min-height: 29px; }
+.transition-expression-column .transition-assignment-equals {
+    align-self: center;
+    line-height: 1;
+}
+.transition-expression-column .transition-assignment-equation .transition-assignment-delete-button {
+    align-self: center;
+    margin-bottom: 0;
+    width: 26px;
+    height: 26px;
+}
+.transition-expression-column .transition-assignment-variable-controls .transition-assignment-location {
+    width: 100%;
+}
+@media (max-width: 1150px) {
+    .transition-editor-grid {
+        grid-template-columns: minmax(220px, .85fr) minmax(345px, 1.4fr);
+    }
+    .transition-editor-grid > .step-card:last-child {
+        grid-column: 1 / -1;
+    }
+}
+@media (max-width: 720px) {
+    .transition-editor-grid { grid-template-columns: minmax(0, 1fr); }
+    .transition-editor-grid > .step-card:last-child { grid-column: auto; }
+    .transition-expression-column .condition-expression-row.transition-expression-builder {
+        grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1.2fr);
+        gap: 5px;
+    }
+    .transition-expression-column .transition-assignment-equation {
+        grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1.2fr) 26px;
+        gap: 5px;
+    }
+}
+
+/* At unusually narrow window widths, keep every input usable rather than
+   shrinking expression fields until their contents become unreadable. */
+@media (max-width: 480px) {
+    .transition-expression-column .condition-expression-row.transition-expression-builder {
+        grid-template-columns: minmax(0, 1fr) 54px;
+    }
+    .transition-expression-column .condition-expression-value {
+        grid-column: 1 / -1;
+    }
+    .transition-expression-column .transition-assignment-equation {
+        grid-template-columns: minmax(0, 1fr) 14px 26px;
+    }
+    .transition-expression-column .transition-assignment-value-area {
+        grid-column: 1 / -1;
+        grid-row: 2;
+    }
+    .transition-expression-column .transition-assignment-equation .transition-assignment-delete-button {
+        grid-column: 3;
+        grid-row: 1;
+    }
+}
+
+/* The transition editor uses the same compact horizontal controls for
+   creating workflow parameters and editing transition expressions. */
+.transition-parameter-quick-add {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 12px;
+    border: 1px solid #334155;
+    border-radius: 7px;
+    background: #131f30;
+    min-width: 0;
+}
+.transition-parameter-quick-add-title {
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 650;
+}
+.transition-parameter-quick-add-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) auto;
+    gap: 6px;
+    align-items: center;
+}
+.transition-parameter-quick-add-fields .slot-field-edit { min-width: 0; width: 100%; box-sizing: border-box; }
+.transition-add-parameter-button { min-height: 28px; padding: 0 9px; }
+.transition-parameter-error { color: #fca5a5; font-size: 11px; line-height: 1.35; }
+.transition-remove-condition-button {
+    margin-left: auto;
+    min-height: 26px;
+    padding: 0 8px;
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #fca5a5;
+}
+.transition-remove-condition-button:hover { border-color: #f87171; color: #fecaca; }
+/* Keep the assignment section's header stationary when many rows are added.
+   Scroll just the expressions, without growing the whole bottom drawer. */
+.transition-expression-column .transition-assignment-list {
+    max-height: clamp(144px, 25vh, 300px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+    padding-right: 5px;
+    scroll-padding-block: 6px;
+}
+@media (max-width: 480px) {
+    .transition-parameter-quick-add-fields { grid-template-columns: minmax(0, 1fr) auto; }
+    .transition-parameter-quick-add-fields #transition-parameter-value { grid-column: 1; grid-row: 2; }
+    .transition-parameter-quick-add-fields .transition-add-parameter-button { grid-column: 2; grid-row: 2; }
 }

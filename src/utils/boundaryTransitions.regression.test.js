@@ -47,3 +47,22 @@ test('boundary helper IDs do not change when rebuilding the same graph', () => {
     assert.ok(helperIds(once).length > 0);
     assert.deepEqual(helperIds(once), helperIds(twice));
 });
+
+test('two explicit connections with the same source, event and target remain distinct transitions', () => {
+    const nodes = [
+        { id: 'container', type: 'compound', position: { x: 0, y: 0 }, data: { events: [] } },
+        { id: 'skill', type: 'custom', parentId: 'container', position: { x: 30, y: 40 }, data: { label: 'Wait', events: [{ id: 'success' }] } },
+        { id: 'target', type: 'custom', position: { x: 800, y: 80 }, data: {} },
+    ];
+    const first = { id: 'first', source: 'skill', sourceHandle: 'success', target: 'target', data: { cond: '' } };
+    const second = { id: 'second', source: 'skill', sourceHandle: 'success', target: 'target', data: { cond: 'attempts > 2' } };
+    const initial = rebuildBoundaryTransitions(nodes, [first]);
+    const withSecond = rebuildBoundaryTransitionsIncremental(initial.nodes, [...initial.edges, second], {
+        previousEdges: initial.edges, changedEdgeIds: [second.id],
+    });
+    const semantic = withSecond.edges.filter(e => !e.data?.boundaryInternalEdge);
+    assert.deepEqual(semantic.map(e => e.id).sort(), ['first', 'second']);
+    assert.equal(semantic[1].data.cond, 'attempts > 2');
+    const again = rebuildBoundaryTransitions(withSecond.nodes, withSecond.edges);
+    assert.deepEqual(again.edges.filter(e => !e.data?.boundaryInternalEdge).map(e => e.id).sort(), ['first', 'second']);
+});

@@ -72,25 +72,9 @@ export const normalizeAssignmentExpressionForScxml = (value) => {
         return expression;
     }
 
-    // Older editor versions could accidentally persist a complete expression
-    // as a quoted string. Unwrap that form when it is clearly an expression
-    // containing a UI-style @variable reference and an operator. Genuine
-    // string literals remain quoted.
-    const first = expression[0];
-    const last = expression[expression.length - 1];
-    if (
-        expression.length >= 2 &&
-        (first === "\"" || first === "'") &&
-        last === first
-    ) {
-        const inner = expression.slice(1, -1).trim();
-        if (
-            /@[A-Za-z_#]/.test(inner) &&
-            /(?:==|!=|>=|<=|&&|\|\||[+\-*/%<>])/.test(inner)
-        ) {
-            expression = inner;
-        }
-    }
+    // Quoting is explicit literal intent. Never unwrap a quoted expression,
+    // even if its text happens to contain @references or operators. Previous
+    // versions converted strings such as "'@count + 1'" into executable JEXL.
 
     // Only transform unquoted portions so literal strings such as
     // "contact@example.org" or "@literal" are not modified.

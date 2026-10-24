@@ -30,7 +30,15 @@ export const createTransitionDrawerCommitHandler = ({
     updateNodeInternals,
     syncTransitionsForSource,
     setDrawerData,
-}) => ({ updatedTransitions, newGlobalVars = [], newGlobalVar = null }) => {
+}) => ({ updatedTransitions, newGlobalVars = [], newGlobalVar = null, keepOpen = false, variablesOnly = false }) => {
+    if (variablesOnly) {
+        const variables = [...newGlobalVars, ...(newGlobalVar ? [newGlobalVar] : [])];
+        if (variables.length) setGlobalDataModel(previous => {
+            const ids = new Set(previous.map(variable => variable.id));
+            return [...previous, ...variables.filter(variable => variable?.id && !ids.has(variable.id))];
+        });
+        return;
+    }
     if (drawerData.containerEventMode) {
         // Parallel transitions are semantic events on their container, never
         // a collection of independent lane transitions. Publish nodes/edges
@@ -51,7 +59,7 @@ export const createTransitionDrawerCommitHandler = ({
             void syncTransitionsForSource?.(drawerData.containerNodeId, {
                 preserveContainerOrder: true,
             });
-            setDrawerData(previous => ({ ...previous, isOpen: false }));
+            if (!keepOpen) setDrawerData(previous => ({ ...previous, isOpen: false }));
         } catch (error) {
             // Validation is performed in the modal. In case a stale target or
             // modified document slips through, keep the graph unchanged.
@@ -188,7 +196,7 @@ export const createTransitionDrawerCommitHandler = ({
         });
 
         if (acceptedUpdates.size === 0) {
-            setDrawerData((previous) => ({
+            if (!keepOpen) setDrawerData((previous) => ({
                 ...previous,
                 isOpen: false,
             }));
@@ -308,7 +316,7 @@ export const createTransitionDrawerCommitHandler = ({
             void syncTransitionsForSource?.(sourceId);
         });
 
-        setDrawerData((previous) => ({
+        if (!keepOpen) setDrawerData((previous) => ({
             ...previous,
             isOpen: false,
         }));
@@ -382,7 +390,7 @@ export const createTransitionDrawerCommitHandler = ({
         return {
             ...(cleanedExisting || {}),
             id:
-                cleanedExisting?.id ||
+                cleanedExisting?.id || transition.edgeId ||
                 `edge-${sourceId}-${eventId}-${transition.target}-${crypto.randomUUID()}`,
             source: sourceId,
             target: transition.target,
@@ -579,5 +587,5 @@ export const createTransitionDrawerCommitHandler = ({
         preserveContainerOrder: updatedOrders.size > 0,
     });
 
-    setDrawerData((previous) => ({ ...previous, isOpen: false }));
+    if (!keepOpen) setDrawerData((previous) => ({ ...previous, isOpen: false }));
 };
