@@ -84,6 +84,15 @@ export async function inspectWorkflowSource(
 }
 
 /**
+ * Clear the in-memory Rust cache of inspected behavior workflows.
+ * This does not delete any files or alter the active editor document.
+ */
+export async function clearWorkflowInspectionCache() {
+  if (!isTauri()) return 0;
+  return await invoke('clear_workflow_inspection_cache');
+}
+
+/**
  * Check if running inside Tauri (desktop app).
  */
 export function isTauri() {

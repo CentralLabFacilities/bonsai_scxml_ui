@@ -3,6 +3,7 @@ import { COMPARISON_PATTERN, toEditorConditionOperator, allowedConditionOperator
 import { getTransitionHighlightColor } from "../../utils/editorGraph.js";
 import { prepareLiveTransitionCommit } from "../../utils/transitionLiveCommit.js";
 import { hasTransitionScopeHierarchy, reconcileExternallyRemovedTransitions } from "../../utils/transitionDrawerSync.js";
+import { appendPublishedGraphTransitions } from "../../utils/transitionDrawerLiveSync.js";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
     FiArrowRight,
@@ -163,6 +164,8 @@ function ConditionModal({
                             sourceEventName = "",
                             sourceNodeName,
                             candidateTransitions = [],
+                            liveCandidateTransitions = null,
+                            sharedContainerExits = [],
                             availableEvents = [],
                             availableTargets = [],
                             initialTransitionId = null,
@@ -182,6 +185,7 @@ function ConditionModal({
     const [parameterError, setParameterError] = useState("");
     const committedTransitionsRef = useRef([]);
     const observedEdgeIdsRef = useRef(new Set());
+    const lastGraphEdgeIdsRef = useRef(new Set());
     const usableVars = useMemo(
         () => (globalVariables || []).filter((variable) => String(variable.id || "").trim() !== "#_STATE_PREFIX"),
         [globalVariables]
@@ -285,6 +289,7 @@ function ConditionModal({
         setTransitionsState(hydrated);
         committedTransitionsRef.current = hydrated;
         const visible = new Set(graphEdges.map(edge => edge.id));
+        lastGraphEdgeIdsRef.current = new Set(visible);
         observedEdgeIdsRef.current = new Set(hydrated.map(t => t.edgeId).filter(id => id && visible.has(id)));
         setErrorMessage("");
         setAssignmentExpressionErrors({});
@@ -317,6 +322,35 @@ function ConditionModal({
         isOpen,
         draftSessionKey,
     ]);
+
+    // A connection drawn while this editor is already open is an independent
+    // canonical edge. Append it immediately without restarting the draft
+    // session (or losing unsaved conditions/assignments on existing rows).
+    useEffect(() => {
+        if (!isOpen || !Array.isArray(liveCandidateTransitions)) return;
+        const liveIds = new Set(graphEdges.map(edge => edge.id));
+        const previousIds = lastGraphEdgeIdsRef.current;
+        const hydrated = liveCandidateTransitions.map((transition, index) =>
+            hydrateTransition(transition, index, usableVars, sourceEventName)
+        );
+        const newCanonical = hydrated.filter(item =>
+            item.edgeId && liveIds.has(item.edgeId) && !previousIds.has(item.edgeId)
+        );
+        if (newCanonical.length) {
+            setTransitionsState(current => appendPublishedGraphTransitions(
+                current, hydrated, previousIds, liveIds
+            ));
+            // These edges are now committed graph data and can be removed by
+            // subsequent canvas deletion, even while the editor stays open.
+            const known = new Set(committedTransitionsRef.current.map(item => item.edgeId));
+            committedTransitionsRef.current = [
+                ...committedTransitionsRef.current,
+                ...newCanonical.filter(item => !known.has(item.edgeId)),
+            ];
+            newCanonical.forEach(item => observedEdgeIdsRef.current.add(item.edgeId));
+        }
+        lastGraphEdgeIdsRef.current = liveIds;
+    }, [isOpen, graphEdges, liveCandidateTransitions]);
 
     // Canvas deletions must be reflected in the open panel. Track only edges
     // that really appeared in the graph; new, unpublished drafts are never
@@ -1353,10 +1387,41 @@ function ConditionModal({
                                     })
                                 ) : (
                                     <div className="transition-empty-state">
-                                        No transitions yet.
+                                        {sharedContainerExits.length ? "No direct transitions." : "No transitions yet."}
                                     </div>
                                 )}
                             </div>
+
+                            {!targetOnlyMode && sharedContainerExits.length > 0 && (
+                                <div className="transition-order-list" aria-label="Shared container transitions">
+                                    <div className="transition-scope-heading">
+                                        <div className="transition-scope-title">
+                                            <span className="transition-scope-name">Shared container exits</span>
+                                        </div>
+                                        <span className="transition-scope-order">Caught by the enclosing container</span>
+                                    </div>
+                                    {sharedContainerExits.map(exit => (
+                                        <div key={`${exit.edgeId}:${exit.event}`} className="transition-order-card"
+                                             style={{
+                                                 "--transition-accent": getTransitionHighlightColor(exit.event),
+                                                 "--transition-accent-colorblind": getTransitionHighlightColor(exit.event, true),
+                                             }}
+                                             title="Shared transition defined at the container boundary; edit it from its original source">
+                                            <div className="transition-order-main">
+                                                <div className="transition-order-title-row">
+                                                    <span className="transition-event-name">{exit.event}</span>
+                                                    <span className="transition-scope-type">{exit.scopeLabel}</span>
+                                                </div>
+                                                <div className="transition-order-summary">
+                                                    <span>{exit.cond || "No condition"}</span>
+                                                    <FiArrowRight />
+                                                    <span>{exit.targetLabel}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
 
                             <div className="transition-add-row">
                                 <input

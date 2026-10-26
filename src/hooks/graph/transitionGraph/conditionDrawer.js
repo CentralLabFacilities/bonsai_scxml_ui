@@ -1,6 +1,7 @@
 import { isValidScxmlEventDescriptor } from "../../../utils/transitionEventValidation.js";
 import { isNodeInsideContainer } from "../../../utils/editorGeometry";
 import { getTransitionScope } from "../../../utils/transitionScopes";
+import { getSharedContainerExitsForSkill } from "../../../utils/transitionDrawerLiveSync.js";
 import {
     getSkillPackageName,
     getStoredTransitionAssignments,
@@ -384,6 +385,7 @@ export const buildConditionDrawerData = ({
         initialTransitionId: initialTransition?.transitionId || null,
         initialFocusSection: options?.focusSection || null,
         candidateTransitions: drawerTransitions,
+        sharedContainerExits: getSharedContainerExitsForSkill(sourceId, nodes, currentEdges),
         availableEvents: [...eventMap.values()],
         availableTargets,
         targetOnlyMode,

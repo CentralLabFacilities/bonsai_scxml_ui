@@ -47,3 +47,10 @@ test('skill names with different qualified bases are distinct SCXML IDs', () => 
     assert.equal(validateStateRename([...nodes, other], 'wait-other', '2'), null);
     assert.equal(validateStateRename([...nodes, other], 'wait-other', '1'), null);
 });
+
+test('a parallel lane is renamed as a container state, not as a skill instance', () => {
+    const lane = { id: 'lane', type: 'parallelLane', parentId: 'p', data: { label: 'Lane_1', fullSkillName: 'Lane_1' } };
+    assert.equal(proposedExportedStateName(lane, 'Left'), 'Left');
+    assert.equal(validateStateRename([...nodes, lane], 'lane', 'Left'), null);
+    assert.match(validateStateRename([...nodes, lane], 'lane', 'Container'), /already in use/);
+});

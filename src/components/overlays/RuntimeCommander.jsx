@@ -2,11 +2,12 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FiAlertCircle, FiAlertTriangle, FiChevronDown, FiChevronLeft, FiChevronRight, FiFolder, FiPause, FiPlay, FiRefreshCw, FiSettings, FiSquare, FiX, FiSkipBack, FiSkipForward, FiRadio } from "react-icons/fi";
 import { isTauri, openFile } from "../../tauri-client.js";
-import { classifyWebCommanderMessages, getWebCommanderSnapshot, getWebCommanderEventSnapshot, getWebCommanderStatus, loadWebCommander, requestWebCommander } from "../../utils/webCommander.js";
+import { classifyWebCommanderMessages, getWebCommanderSnapshot, getWebCommanderStatus, loadWebCommander, requestWebCommander } from "../../utils/webCommander.js";
 import { loadRuntimeConfiguration, saveRuntimeConfiguration } from "../../utils/editorPreferences.js";
 import { Button, InlineFeedback, TextInput } from "../ui/index.js";
 import { useBonsaiRuntimeSocket } from "../../hooks/editor/useBonsaiRuntimeSocket.js";
 import { runtimePayload } from "../../utils/runtimeEventFrames.js";
+import { matchesLoadedInitial, initialWorkflowStateIds } from "../../utils/runtimeWorkflowIdentity.js";
 import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
 
@@ -17,6 +18,9 @@ const STATUS_LABELS = {
     INITIALIZED_BUT_WARNINGS: "Ready with warnings",
     RUNNING: "Running",
     PAUSED: "Paused",
+    STOPPED: "Stopped",
+    COMPLETED: "Completed",
+    FAILED: "Failed",
 };
 
 export default function RuntimeCommander({
@@ -32,6 +36,7 @@ export default function RuntimeCommander({
     onRuntimeReset,
     onLogLoadRequested,
     onRuntimeGap,
+    onRuntimeBackendRestart,
     onRuntimeBaseline,
     runtimeTimeline,
     selectedRuntimeFrame,
@@ -54,6 +59,7 @@ export default function RuntimeCommander({
     const [isFollowing, setIsFollowing] = useState(false);
     const [followCamera, setFollowCamera] = useState(true);
     const [optionsOpen, setOptionsOpen] = useState(false);
+    const [timelineExpanded, setTimelineExpanded] = useState(false);
     const [resultsOpen, setResultsOpen] = useState(false);
     const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
     const [autoOpenSubMachines, setAutoOpenSubMachines] = useState(false);
@@ -62,6 +68,7 @@ export default function RuntimeCommander({
     const [automaticEnabled, setAutomaticEnabled] = useState(true);
     const [error, setError] = useState("");
     const [statusError, setStatusError] = useState("");
+    const [runtimeNotice, setRuntimeNotice] = useState("");
     const [busyAction, setBusyAction] = useState("");
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isBrowsing, setIsBrowsing] = useState(false);
@@ -80,6 +87,7 @@ export default function RuntimeCommander({
     const observedRunningRef = useRef(false);
     const terminalStopRequestedRef = useRef(false);
     const [terminalStopPending, setTerminalStopPending] = useState(false);
+    const acceptedRunRef = useRef(false);
     const eventVersionRef = useRef(0);
     const eventRef = useRef(null);
     const id = useId();
@@ -131,13 +139,11 @@ export default function RuntimeCommander({
         setIsRefreshing(true);
         const startedAtVersion = eventVersionRef.current;
         try {
-            let next;
-            try { next = await getWebCommanderEventSnapshot(request.controller.signal); }
-            catch { next = await getWebCommanderSnapshot(request.controller.signal); }
+            const next = await getWebCommanderSnapshot(request.controller.signal);
             if (ownerRef.current !== owner || readRef.current !== request) return;
             if (eventVersionRef.current === startedAtVersion) {
                 setSnapshot(next);
-                onRuntimeBaseline?.(next);
+                // Control status is not a replayable event/variable baseline.
             }
             setStatusError("");
             if (followingRef.current && ["RUNNING", "PAUSED"].includes(next.status)) observedRunningRef.current = true;
@@ -183,48 +189,104 @@ export default function RuntimeCommander({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [shouldObserve]);
 
-    const { connection: eventConnection } = useBonsaiRuntimeSocket({
-        enabled: shouldObserve,
+    const { connection: eventConnection, address: eventSocketAddress,
+        diagnostic: eventSocketDiagnostic, hasConnected: eventSocketEverConnected } = useBonsaiRuntimeSocket({
+        // Listen even when the floating Run panel is closed: external runs
+        // must still reach the timeline and follow-focus projection.
+        enabled: true,
         onEvent: (message) => {
             const payload = runtimePayload(message);
             eventVersionRef.current += 1;
-            if (message.type === "status") {
-                if (["RUNNING", "PAUSED"].includes(payload.value)) observedRunningRef.current = true;
-                else if (observedRunningRef.current && followingRef.current) {
+            if (message.type === "status" && payload.value === "LOADING") {
+                setRuntimeNotice("Loaded");
+                acceptedRunRef.current = false;
+                followingRef.current = false;
+                setIsFollowing(false);
+                loadedWorkflowRef.current = null;
+                setLoadedWorkflow(null);
+                onRuntimeReset?.();
+            }
+            if (message.type === "started") {
+                const currentWorkflow = loadedWorkflowRef.current || getTabSnapshot?.() || workflowTab;
+                if (!matchesLoadedInitial(currentWorkflow, payload.initial)) {
+                    const expected = initialWorkflowStateIds(currentWorkflow);
+                    setRuntimeNotice(`Ignored run: backend started at ${String(payload.initial || "(missing)")}.
+                        Loaded workflow initial: ${expected.join(" / ") || "not available"}.`);
+                    acceptedRunRef.current = false;
                     followingRef.current = false;
-                    observedRunningRef.current = false;
                     setIsFollowing(false);
+                    onRuntimeReset?.();
+                    setSnapshot((current) => ({ ...current, status: "RUNNING", currentStates: [], checkedAt: Date.now() }));
+                    return;
                 }
-                setSnapshot((current) => ({ status: String(payload.value || "UNKNOWN"),
-                    currentStates: current?.currentStates || [], stateIds: current?.stateIds || [],
-                    transitions: current?.transitions || [], checkedAt: Date.now() }));
-            } else if (message.type === "state_entered" || message.type === "state_exited") {
+                acceptedRunRef.current = true;
+                setRuntimeNotice("");
+                if (!loadedWorkflowRef.current) {
+                    const tabsSnapshot = getTabsSnapshot?.() || [currentWorkflow];
+                    loadedWorkflowRef.current = currentWorkflow;
+                    setLoadedWorkflow(currentWorkflow);
+                    onExecutionUpdate?.({ workflow: currentWorkflow, tabsSnapshot,
+                        following: true, action: "load", ...displayOptionsRef.current });
+                }
+                followingRef.current = true;
+                setIsFollowing(true);
+                onRuntimeStarted?.();
+                setSnapshot((current) => ({ ...current, status: "RUNNING", currentStates: [],
+                    transitions: [], checkedAt: Date.now() }));
+            }
+            if (message.type === "status") {
+                if (acceptedRunRef.current && ["RUNNING", "PAUSED"].includes(payload.value))
+                    observedRunningRef.current = true;
+                setSnapshot((current) => ({ ...current, status: String(payload.value || "UNKNOWN"),
+                    currentStates: current?.currentStates || [], checkedAt: Date.now() }));
+            } else if (acceptedRunRef.current && (message.type === "state_entered" || message.type === "state_exited")) {
                 setSnapshot((current) => {
                     const states = new Set(current?.currentStates || []);
                     if (message.type === "state_entered") states.add(payload.state);
                     else states.delete(payload.state);
-                    return { status: current?.status || "RUNNING", currentStates: [...states],
-                        stateIds: current?.stateIds || [], transitions: current?.transitions || [], checkedAt: Date.now() };
+                    return { ...current, status: current?.status || "RUNNING", currentStates: [...states],
+                        checkedAt: Date.now() };
                 });
-            } else if (message.type === "stopped") {
+            } else if (message.type === "stopped" || message.type === "completed") {
+                if (acceptedRunRef.current) {
+                    const state = message.type === "stopped" ? "STOPPED"
+                        : payload.outcome === "failure" ? "FAILED" : "COMPLETED";
+                    setSnapshot((current) => ({ ...current, status: state, currentStates: [], checkedAt: Date.now() }));
+                }
                 terminalStopRequestedRef.current = false;
                 setTerminalStopPending(false);
-                setSnapshot((current) => ({ ...current, status: "INITIALIZED", currentStates: [], checkedAt: Date.now() }));
                 followingRef.current = false;
                 setIsFollowing(false);
             }
-            if (loadedWorkflowRef.current) onRuntimeEvent?.(message);
-            if (message.type === "terminal" && loadedWorkflowRef.current &&
-                isRootTerminalState(loadedWorkflowRef.current, payload.state)) {
-                // Stop the engine, not just the GUI's playback. The deferred
-                // effect also handles terminal arriving before start completes.
-                terminalStopRequestedRef.current = true;
-                setTerminalStopPending(true);
+            // Initial attachment to an in-progress run is deliberately ignored.
+            // After reconnecting, a previously observed run remains accepted.
+            if (acceptedRunRef.current) {
+                onRuntimeEvent?.(message);
+            }
+            if (message.type === "stopped" || message.type === "completed") acceptedRunRef.current = false;
+        },
+        onGap: (reason) => {
+            if (acceptedRunRef.current) {
+                onRuntimeGap?.();
+                setSnapshot((current) => ({ ...current, currentStates: [], statusStale: true }));
+            }
+            setStatusError(reason);
+        },
+        onConnectionLost: () => {
+            if (acceptedRunRef.current) {
+                onRuntimeGap?.();
+                setSnapshot((current) => ({ ...current, currentStates: [], statusStale: true }));
             }
         },
-        onResync: (baseline) => {
-            setSnapshot(baseline);
-            onRuntimeGap?.(baseline);
+        onRestart: () => {
+            acceptedRunRef.current = false;
+            followingRef.current = false;
+            setIsFollowing(false);
+            loadedWorkflowRef.current = null;
+            setLoadedWorkflow(null);
+            setSnapshot(null);
+            setRuntimeNotice("Backend restarted; waiting for the next matching run.");
+            onRuntimeBackendRestart?.();
         },
         onConnectionIssue: (reason) => setStatusError(reason),
     });
@@ -232,6 +294,18 @@ export default function RuntimeCommander({
     useEffect(() => {
         if (eventConnection === "connected") setStatusError("");
     }, [eventConnection]);
+
+    // Loading a different top-level workflow in the editor invalidates the
+    // previously loaded runtime graph; visiting a nested tab does not.
+    useEffect(() => {
+        if (!workflowTab || workflowTab.parentTabId) return;
+        if (!loadedWorkflowRef.current || loadedWorkflowRef.current.id === workflowTab.id) return;
+        loadedWorkflowRef.current = null;
+        acceptedRunRef.current = false;
+        followingRef.current = false;
+        setLoadedWorkflow(null);
+        setIsFollowing(false);
+    }, [workflowTab?.id, workflowTab?.parentTabId]);
 
     const close = () => {
         if (operationRef.current) return;
@@ -307,10 +381,12 @@ export default function RuntimeCommander({
                 setLoadSucceeded(null);
                 setDiagnosticsPopupOpen(false);
                 setResultsOpen(false);
+                setTimelineExpanded(false);
                 setAutomaticEnabled(true);
                 setEventName("");
                 setSnapshot(null);
                 setStatusError("");
+                acceptedRunRef.current = false;
                 onRuntimeReset?.();
                 onExecutionUpdate?.({ workflow: null, snapshot: null, following: false,
                     followCamera: followCameraRef.current, ...displayOptionsRef.current });
@@ -347,6 +423,7 @@ export default function RuntimeCommander({
                     : action === "stop_events" ? JSON.stringify(enabled) : undefined;
                 if (action === "fire_event" && !body) throw new Error("Enter a transition event first.");
                 if (action === "start") {
+                    setTimelineExpanded(false);
                     terminalStopRequestedRef.current = false;
                     setTerminalStopPending(false);
                     onRuntimeReset?.();
@@ -355,6 +432,7 @@ export default function RuntimeCommander({
                 await requestWebCommander(action, { method: "POST", body, signal: operation.controller.signal });
                 if (ownerRef.current !== owner) return;
                 if (action === "stop_events") setAutomaticEnabled(enabled);
+                if (action === "resume") setSnapshot((current) => ({ ...current, status: "RUNNING", statusStale: false }));
                 if ((action === "start" || action === "resume") && loadedWorkflowRef.current) {
                     followingRef.current = true;
                     setIsFollowing(true);
@@ -602,29 +680,44 @@ export default function RuntimeCommander({
                             </div>}
                             </div>
                         </details>}
-                    {runtimeTimeline?.frames?.length > 0 && <div className="runtime-event-timeline" aria-label="Cached runtime snapshots">
-                        <div className="runtime-event-timeline-header">
-                            <strong>{selectedRuntimeFrame?.kind === "state" ? selectedRuntimeFrame.state
-                                : selectedRuntimeFrame?.transition
-                                    ? `${selectedRuntimeFrame.transition.source} → ${selectedRuntimeFrame.transition.target}`
-                                    : "Transition"}</strong>
+                    {(runtimeNotice || (eventConnection !== "connected" && eventSocketDiagnostic)) &&
+                        <div className="runtime-event-stream-state" role="status">
+                            {runtimeNotice && <p className="runtime-event-stream-warning">{runtimeNotice}</p>}
+                            {eventConnection !== "connected" && eventSocketDiagnostic &&
+                                <p className="runtime-event-stream-warning" role="alert">{eventSocketDiagnostic}</p>}
+                        </div>}
+                    {runtimeTimeline?.frames?.length > 0 && <div className="runtime-event-timeline" aria-label="Runtime event timeline">
+                        <button type="button" className="runtime-event-timeline-toggle"
+                            aria-expanded={timelineExpanded} aria-controls={`${id}-timeline-content`}
+                            onClick={() => setTimelineExpanded((value) => !value)}>
+                            {timelineExpanded ? <FiChevronDown aria-hidden="true" /> : <FiChevronRight aria-hidden="true" />}
+                            <strong>Timeline</strong>
                             <span>Snapshot {runtimeTimeline.index + 1} / {runtimeTimeline.frames.length}</span>
-                        </div>
-                        <input type="range" min="0" max={Math.max(0, runtimeTimeline.frames.length - 1)}
-                            value={Math.max(0, runtimeTimeline.index)}
-                            onChange={(event) => onRuntimeSeek?.(Number(event.target.value))}
-                            aria-label="Select runtime snapshot" />
-                        <div className="runtime-event-timeline-navigation">
-                            <button type="button" disabled={runtimeTimeline.index <= 0}
-                                onClick={() => onRuntimeSeek?.(runtimeTimeline.index - 1)}><FiSkipBack /> Previous</button>
-                            <button type="button" aria-pressed={runtimeTimeline.watching}
-                                onClick={onRuntimeLive}><FiRadio /> Live</button>
-                            <button type="button" disabled={runtimeTimeline.index >= runtimeTimeline.frames.length - 1}
-                                onClick={() => onRuntimeSeek?.(runtimeTimeline.index + 1)}>Next <FiSkipForward /></button>
-                        </div>
-                        {(runtimeTimeline.hasGap || runtimeTimeline.truncated) && <p className="runtime-event-timeline-alert">
-                            {runtimeTimeline.hasGap ? "Event history gap: recovered snapshots may be incomplete." : "Local snapshot cache limit reached."}
-                        </p>}
+                        </button>
+                        {timelineExpanded && <div id={`${id}-timeline-content`} className="runtime-event-timeline-content">
+                            <div className="runtime-event-timeline-header">
+                                <strong>{selectedRuntimeFrame?.kind === "state"
+                                    ? String(selectedRuntimeFrame.state || "Skill").split(".").pop().replace(/#1$/, "")
+                                    : selectedRuntimeFrame?.transition
+                                        ? `${String(selectedRuntimeFrame.transition.source || "?").split(".").pop().replace(/#1$/, "")} → ${String(selectedRuntimeFrame.transition.target || "?").split(".").pop().replace(/#1$/, "")}`
+                                        : "Transition"}</strong>
+                            </div>
+                            <input type="range" min="0" max={Math.max(0, runtimeTimeline.frames.length - 1)}
+                                value={Math.max(0, runtimeTimeline.index)}
+                                onChange={(event) => onRuntimeSeek?.(Number(event.target.value))}
+                                aria-label="Select runtime snapshot" />
+                            <div className="runtime-event-timeline-navigation">
+                                <button type="button" disabled={runtimeTimeline.index <= 0}
+                                    onClick={() => onRuntimeSeek?.(runtimeTimeline.index - 1)}><FiSkipBack /> Previous</button>
+                                <button type="button" aria-pressed={runtimeTimeline.watching}
+                                    onClick={onRuntimeLive}><FiRadio /> Live</button>
+                                <button type="button" disabled={runtimeTimeline.index >= runtimeTimeline.frames.length - 1}
+                                    onClick={() => onRuntimeSeek?.(runtimeTimeline.index + 1)}>Next <FiSkipForward /></button>
+                            </div>
+                            {(runtimeTimeline.hasGap || runtimeTimeline.truncated) && <p className="runtime-event-timeline-alert">
+                                {runtimeTimeline.hasGap ? "Incomplete history · active-state set may be partially unknown." : "Local event history limit reached."}
+                            </p>}
+                        </div>}
                     </div>}
                     <div className="runtime-log-controls runtime-commander-toolbar" aria-label="Execution controls">
                         <div className="runtime-commander-primary-actions">

@@ -70,20 +70,6 @@ function SlotNode({ id, data, selected = false }) {
             } ${isSlotClone ? "slot-node-reference" : ""} ${selected ? "selected-slot-node" : ""}`}
             style={getSlotTypeStyle(slotType)}
         >
-            {runtimeSlotValue && (
-                <div
-                    className="slot-node-runtime-value"
-                    title={`Runtime value at ${runtimeSlotValue.timestamp || "this step"}${
-                        runtimeSlotValue.state
-                            ? ` · ${runtimeSlotValue.state}`
-                            : ""
-                    }`}
-                >
-                    <span className="slot-node-runtime-value-label">value</span>
-                    <code>{runtimeValueText}</code>
-                </div>
-            )}
-
             <ConnectionHandle
                 id={writeHandleId}
                 type="target"
@@ -138,6 +124,14 @@ function SlotNode({ id, data, selected = false }) {
             <div className="slot-node-path" title={normalizedPath}>
                 {normalizedPath}
             </div>
+
+            {runtimeSlotValue && (
+                <div className="slot-node-runtime-value"
+                    title={`Observed at ${runtimeSlotValue.timestamp || "runtime"}${runtimeSlotValue.stale ? " · Stale" : ""}`}>
+                    <span className="slot-node-runtime-value-label">Value</span>
+                    <code>{runtimeValueText}</code>
+                </div>
+            )}
 
             <div className="slot-node-access-guide" aria-hidden="true">
                 <div className="slot-node-access slot-node-access-write">

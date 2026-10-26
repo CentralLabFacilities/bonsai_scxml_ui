@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use crate::core::model::{DataModelEntryDto, Workflow, WorkflowDto, WorkflowIndex};
@@ -43,9 +44,21 @@ struct CachedInspection {
 }
 
 static INSPECTION_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedInspection>>> = OnceLock::new();
+// Prevent an in-flight inspection from repopulating the cache after Clear.
+static INSPECTION_CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 fn cache() -> &'static Mutex<HashMap<PathBuf, CachedInspection>> {
     INSPECTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(crate) fn clear_workflow_inspection_cache() -> usize {
+    let mut guard = cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    INSPECTION_CACHE_GENERATION.fetch_add(1, Ordering::SeqCst);
+    let count = guard.len();
+    guard.clear();
+    count
 }
 
 fn file_stamp(path: &Path) -> Option<FileStamp> {
@@ -63,6 +76,7 @@ pub(crate) fn inspect_workflow_source(
     current_file_path: Option<&str>,
 ) -> Result<WorkflowInspectionResult, String> {
     let resolved = resolve_workflow_source_path(src, directories, current_file_path)?;
+    let generation = INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst);
     let stamp = file_stamp(&resolved.path);
 
     if let Some(stamp) = stamp.as_ref() {
@@ -103,13 +117,15 @@ pub(crate) fn inspect_workflow_source(
         let mut guard = cache()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        guard.insert(
-            resolved.path,
-            CachedInspection {
-                stamp,
-                result: result.clone(),
-            },
-        );
+        if generation == INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst) {
+            guard.insert(
+                resolved.path,
+                CachedInspection {
+                    stamp,
+                    result: result.clone(),
+                },
+            );
+        }
     }
 
     Ok(result)

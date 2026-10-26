@@ -189,8 +189,9 @@ function GeneralDetailsSection({
     const transitionButtonTargetId = !isContainerState && firstEditableExitToken
         ? skillOutgoingTransitions.find((transition) => transition.eventId === firstEditableExitToken.id)?.targetNodeId || null
         : null;
+    const isParallelLane = selectedNode.type === "parallelLane";
     const canOpenTransitionPanel =
-        isContainerState || Boolean(transitionButtonSourceId && transitionButtonEventId);
+        (isContainerState && !isParallelLane) || Boolean(transitionButtonSourceId && transitionButtonEventId);
 
     return (
         <div className="allgemein-container">
@@ -207,7 +208,7 @@ function GeneralDetailsSection({
                         : "General View"}
                 </h3>
 
-                <button
+                {!isParallelLane && <button
                     className="initial-button"
                     onClick={onSetInitial}
                     title={
@@ -223,7 +224,7 @@ function GeneralDetailsSection({
                         : hasInitialNode
                             ? "Set initial instead"
                             : "Set initial"}
-                </button>
+                </button>}
             </div>
 
             {isSubMachine ? (
@@ -405,7 +406,7 @@ function GeneralDetailsSection({
                 </>
             )}
 
-            {!hasNopSend && (
+            {!hasNopSend && !isParallelLane && (
                 <div className="events-container">
                     <div className="compact-slot-header">
                         <h3>Exit Tokens</h3>

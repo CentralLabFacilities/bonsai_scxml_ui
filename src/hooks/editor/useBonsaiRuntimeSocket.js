@@ -1,114 +1,114 @@
 import { useEffect, useRef, useState } from "react";
-import { getWebCommanderEventSnapshot } from "../../utils/webCommander.js";
+import { runtimeSocketAddresses } from "../../utils/runtimeSocketAddresses.js";
 
-/** Direct WebSocket to WebCommander. Fetch is proxied in Tauri, WebSocket is not. */
+/** Live-only SCXML event stream: no replay cursor or snapshot endpoint exists. */
 export function bonsaiRuntimeSocketUrl() {
-    const secure = window.location.protocol === "https:";
-    // Desktop, localhost dev server and embedded UI all connect to the running WebCommander.
-    const host = ["localhost", "127.0.0.1"].includes(window.location.hostname)
-        ? window.location.hostname : "localhost";
-    return `${secure ? "wss" : "ws"}://${host}:8080/bonsai/ws`;
+    return runtimeSocketAddresses(window.location.hostname)[0];
 }
 
-export function useBonsaiRuntimeSocket({ enabled, onEvent, onResync, onConnectionIssue }) {
-    const callbacks = useRef({ onEvent, onResync, onConnectionIssue });
-    callbacks.current = { onEvent, onResync, onConnectionIssue };
-    const checkpoint = useRef({ runId: null, sequence: 0 });
+export function useBonsaiRuntimeSocket({ enabled, onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue }) {
+    const callbacks = useRef({});
+    callbacks.current = { onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue };
+    const lastSequence = useRef(null);
     const [connection, setConnection] = useState("disconnected");
+    const [address, setAddress] = useState("");
+    const [diagnostic, setDiagnostic] = useState("");
+    const [hasConnected, setHasConnected] = useState(false);
     const [generation, reconnect] = useState(0);
-    const reconnectNow = () => reconnect((number) => number + 1);
+    const reconnectNow = () => reconnect((value) => value + 1);
 
     useEffect(() => {
-        if (!enabled) { setConnection("disconnected"); return undefined; }
+        if (!enabled) {
+            setConnection("disconnected");
+            setAddress("");
+            setDiagnostic("");
+            lastSequence.current = null;
+            return undefined;
+        }
+        const endpoints = runtimeSocketAddresses(window.location.hostname);
         let socket;
         let timer;
         let cancelled = false;
-        let attempts = 0;
-        let resyncing = false;
-        let highWater = null;
-        let highWaterRunId = null;
-        const connect = () => {
-            if (cancelled || resyncing) return;
-            const cursor = checkpoint.current;
-            const query = new URLSearchParams();
-            if (cursor.sequence) query.set("since", String(cursor.sequence));
-            if (cursor.runId) query.set("runId", cursor.runId);
-            const address = bonsaiRuntimeSocketUrl() + (query.size ? `?${query}` : "");
-            try { socket = new WebSocket(address); }
-            catch (error) { callbacks.current.onConnectionIssue?.(String(error)); retry(); return; }
-            setConnection("connecting");
-            socket.onopen = () => { attempts = 0; setConnection("connected"); };
-            socket.onmessage = async ({ data }) => {
-                let message;
-                try { message = JSON.parse(data); }
-                catch { return; }
-                if (cancelled || socket.readyState !== WebSocket.OPEN) return;
-                if (message.type === "hello") {
-                    // A hello is a high-water mark, not an acknowledged event.
-                    highWater = Number.isSafeInteger(message.sequence) ? message.sequence : highWater;
-                    highWaterRunId = message.runId || highWaterRunId;
-                    if (checkpoint.current.runId && message.runId && message.runId !== checkpoint.current.runId) {
-                        await resync("Server run changed");
-                    }
-                    return;
-                }
-                if (message.type === "resync_required") { await resync("WebSocket event history expired or overflowed"); return; }
-                if (resyncing) return;
-                if (checkpoint.current.runId && message.runId && message.runId !== checkpoint.current.runId) {
-                    highWater = Number.isSafeInteger(message.sequence) ? Math.max(0, message.sequence - 1) : highWater;
-                    highWaterRunId = message.runId;
-                    await resync("Server run changed"); return;
-                }
-                const number = message.sequence;
-                if (Number.isSafeInteger(number)) {
-                    if (number <= checkpoint.current.sequence && (!message.runId || message.runId === checkpoint.current.runId)) return;
-                    if (checkpoint.current.sequence && number !== checkpoint.current.sequence + 1) {
-                        await resync("Missing runtime event sequence"); return;
-                    }
-                }
-                // Only advance the cursor AFTER the consumer has processed this event.
-                try { callbacks.current.onEvent?.(message); }
-                catch (error) { callbacks.current.onConnectionIssue?.(`Event handler failed: ${String(error)}`); return; }
-                checkpoint.current = {
-                    runId: message.runId || checkpoint.current.runId,
-                    sequence: Number.isSafeInteger(number) ? number : checkpoint.current.sequence,
-                };
-            };
-            socket.onerror = () => callbacks.current.onConnectionIssue?.("Could not connect to Bonsai runtime WebSocket on port 8080.");
-            socket.onclose = () => { if (!cancelled && !resyncing) retry(); };
+        let endpointIndex = 0;
+        let cycles = 0;
+        let wasConnected = false;
+        const report = (message) => {
+            if (cancelled) return;
+            setDiagnostic(message);
+            callbacks.current.onConnectionIssue?.(message);
         };
         const retry = () => {
-            if (cancelled || resyncing) return;
+            if (cancelled) return;
+            const switchedHost = endpointIndex < endpoints.length - 1;
+            endpointIndex = (endpointIndex + 1) % endpoints.length;
+            if (!switchedHost) cycles += 1;
             setConnection("reconnecting");
-            window.clearTimeout(timer);
-            timer = window.setTimeout(connect, Math.min(8000, 450 * 2 ** Math.min(attempts++, 5)));
+            clearTimeout(timer);
+            // Try the alternate loopback hostname promptly before backing off.
+            timer = setTimeout(connect, switchedHost ? 250 : Math.min(8000, 450 * 2 ** Math.min(cycles, 5)));
         };
-        const resync = async (reason) => {
-            if (resyncing || cancelled) return;
-            resyncing = true;
-            setConnection("resyncing");
-            socket?.close();
-            callbacks.current.onConnectionIssue?.(`${reason}. Recovering from snapshot; earlier event history is incomplete.`);
-            // Anchor at the hello high-water mark BEFORE fetching the snapshot,
-            // so no event published during HTTP acquisition is skipped on replay.
-            const anchor = highWater;
-            try {
-                const baseline = await getWebCommanderEventSnapshot();
-                if (cancelled) return;
-                callbacks.current.onResync?.(baseline);
-                checkpoint.current = { runId: highWaterRunId, sequence: Number.isSafeInteger(anchor) ? anchor : 0 };
-            } catch (error) {
-                if (cancelled) return;
-                callbacks.current.onConnectionIssue?.(`Snapshot recovery failed: ${String(error)}`);
-                callbacks.current.onResync?.(null);
-                checkpoint.current = { runId: highWaterRunId, sequence: Number.isSafeInteger(anchor) ? anchor : 0 };
-            } finally {
-                resyncing = false;
-                if (!cancelled) retry();
+        const connect = () => {
+            if (cancelled) return;
+            const target = endpoints[endpointIndex];
+            setAddress(target);
+            let opened = false;
+            let hadError = false;
+            try { socket = new WebSocket(target); }
+            catch (error) {
+                report(`Cannot create a WebSocket to ${target}: ${String(error)}`);
+                retry();
+                return;
             }
+            setConnection(wasConnected || cycles > 0 || endpointIndex > 0 ? "reconnecting" : "connecting");
+            socket.onopen = () => {
+                if (cancelled) return;
+                opened = true;
+                wasConnected = true;
+                cycles = 0;
+                setHasConnected(true);
+                setDiagnostic("");
+                setConnection("connected");
+            };
+            socket.onmessage = ({ data }) => {
+                let message;
+                try { message = JSON.parse(data); } catch { return; }
+                if (cancelled || message?.type === "hello") return;
+                if (message.type === "resync_required") {
+                    callbacks.current.onGap?.("Backend reports lost events; history cannot be recovered.");
+                    return;
+                }
+                const sequence = message.sequence;
+                if (Number.isSafeInteger(sequence)) {
+                    const last = lastSequence.current;
+                    if (last !== null && sequence < last) {
+                        callbacks.current.onRestart?.();
+                    } else if (last !== null && sequence === last) return;
+                    else if (last !== null && sequence > last + 1) {
+                        callbacks.current.onGap?.(`Missing SCXML event sequences ${last + 1}–${sequence - 1}.`);
+                    }
+                    lastSequence.current = sequence;
+                }
+                try { callbacks.current.onEvent?.(message); }
+                catch (error) { callbacks.current.onConnectionIssue?.(`Runtime event processing failed: ${String(error)}`); }
+            };
+            socket.onerror = () => {
+                if (cancelled) return;
+                hadError = true;
+                // Browsers deliberately hide the handshake's HTTP response here.
+                report(`WebSocket error connecting to ${target}. Check the WebView console for a rejected handshake, mixed-content, or Content Security Policy error.`);
+            };
+            socket.onclose = (event) => {
+                if (cancelled) return;
+                if (opened) callbacks.current.onConnectionLost?.();
+                const detail = `WebSocket ${opened ? "closed" : "failed before opening"} at ${target}`
+                    + ` (code ${event.code}${event.reason ? `, reason: ${event.reason}` : ""}${event.wasClean ? ", clean" : ", unclean"}).`;
+                // A close code of 1006 cannot identify why a browser handshake failed.
+                report(`${detail}${hadError ? " Browser console may contain the underlying cause." : ""}`);
+                retry();
+            };
         };
         connect();
-        return () => { cancelled = true; window.clearTimeout(timer); socket?.close(); };
+        return () => { cancelled = true; clearTimeout(timer); socket?.close(); };
     }, [enabled, generation]);
-    return { connection, reconnectNow };
+    return { connection, address, diagnostic, hasConnected, reconnectNow };
 }

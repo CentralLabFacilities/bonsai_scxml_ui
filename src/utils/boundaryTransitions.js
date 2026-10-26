@@ -256,26 +256,26 @@ const rebuildBoundaryTransitionsImpl = (sourceNodes = [], sourceEdges = []) => {
                 return;
             }
 
-            // An event handler exported on a Parallel catches the matching
-            // skill event in every lane. One outer edge must remain; its
-            // inbound helpers are projections, not extra SCXML transitions.
-            // Recompute membership so new/reparented skills are included and
-            // old lane membership cannot leave stale helper edges behind.
+            // A shared external exit is shown from every matching skill in
+            // its enclosing Compound, just as it already is for a Parallel.
+            // Choose the closest crossed container: do not accidentally pull
+            // unrelated Wait skills from an outer container into a nested one.
+            // These helpers are presentation only, not additional SCXML edges.
             const sourceSteps = getSourceSteps(sourceNode.id, semanticTargetNode);
-            const enclosingParallelStep = [...sourceSteps].reverse().find(
-                (step) => step.kind === "parallel"
+            const sharedStep = sourceSteps.find((step) =>
+                step.kind === "compound" || step.kind === "parallel"
             );
-            if (enclosingParallelStep) {
-                const parallel = byId.get(enclosingParallelStep.container.id);
+            if (sharedStep) {
+                const owner = byId.get(sharedStep.container.id);
                 const sourceName = String(
                     sourceNode.data?.fullSkillName || sourceNode.data?.label || sourceNode.id
                 ).split('#')[0].split('.').pop();
                 const rawEvent = String(edge.data?.boundaryImportedRawEvent || '').trim() ||
                     `${sourceName}.${primarySource.sourceHandle}`;
-                const cacheKey = `${parallel.id}\u0000${rawEvent}`;
+                const cacheKey = `${owner.id}\u0000${rawEvent}`;
                 if (!parallelSourcesCache.has(cacheKey)) {
                     parallelSourcesCache.set(cacheKey, findContainerEventSources({
-                        owner: parallel, rawEvent, nodes, index: graphIndex,
+                        owner, rawEvent, nodes, index: graphIndex,
                     }));
                 }
                 const sharedSources = parallelSourcesCache.get(cacheKey);

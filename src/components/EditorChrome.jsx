@@ -15,8 +15,9 @@ import {
     FiShare2,
     FiCode,
     FiAlertCircle,
+    FiTrash2,
 } from "react-icons/fi";
-import { isTauri } from "../tauri-client.js";
+import { clearWorkflowInspectionCache, isTauri } from "../tauri-client.js";
 import { PANEL_LIMITS } from "../utils/editorPreferences.js";
 import { isDocumentGuardOpen } from "../hooks/interaction/useGlobalEditorShortcuts.js";
 import { Button, IconButton } from "./ui/index.js";
@@ -38,6 +39,39 @@ function Header({
     const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
     const optionsMenuRef = useRef(null);
     const optionsButtonRef = useRef(null);
+    const [clearingCaches, setClearingCaches] = useState(false);
+    const [cacheClearMessage, setCacheClearMessage] = useState("");
+
+    const handleClearCaches = async () => {
+        if (clearingCaches || !window.confirm(
+            "Clear cached skill descriptions, skill definitions, and behavior workflow inspections? " +
+            "Saved workflows, current editor content, and preferences will not be deleted."
+        )) return;
+
+        setClearingCaches(true);
+        setCacheClearMessage("");
+        let inspectionError = null;
+        try {
+            if (IS_DESKTOP) {
+                // Clear the native inspection cache too: this is separate from
+                // the JavaScript skill caches and cannot be reset by React.
+                try {
+                    await clearWorkflowInspectionCache();
+                } catch (error) {
+                    inspectionError = error;
+                    console.error("Could not clear workflow inspection cache:", error);
+                }
+            }
+            // Listeners invalidate both resolved and in-flight skill definitions.
+            // The tooltip's refresh key remounts it, dropping hover descriptions.
+            window.dispatchEvent(new Event("bonsai:clear-skill-caches"));
+            setCacheClearMessage(inspectionError
+                ? "Skill caches cleared, but workflow inspection cache failed to clear."
+                : "Caches cleared. Updated descriptions will load on next use.");
+        } finally {
+            setClearingCaches(false);
+        }
+    };
 
     useEffect(() => {
         if (!fileMenuOpen) return undefined;
@@ -186,7 +220,7 @@ function Header({
                     }}
                     onKeyDown={(event) => {
                         if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-                        const items = Array.from(optionsMenuRef.current?.querySelectorAll('[role="menuitemcheckbox"]') || []);
+                        const items = Array.from(optionsMenuRef.current?.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]') || []);
                         if (!items.length) return;
                         event.preventDefault();
                         const index = items.indexOf(document.activeElement);
@@ -258,6 +292,16 @@ function Header({
                                 </span>
                             </button>
                             <p className="editor-options-menu-help">Colorblind-friendly transition, slot and status colors.</p>
+                            <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid #475569" }}>
+                                <button type="button" role="menuitem" disabled={clearingCaches}
+                                    onClick={() => { void handleClearCaches(); }}>
+                                    <FiTrash2 aria-hidden="true" />
+                                    <span>{clearingCaches ? "Clearing caches…" : "Clear caches…"}</span>
+                                </button>
+                                <p className="editor-options-menu-help" role="status" aria-live="polite">
+                                    {cacheClearMessage || "Clears skill descriptions, definitions and inspected behaviors. Keeps workflows and preferences."}
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>

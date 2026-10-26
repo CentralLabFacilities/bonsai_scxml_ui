@@ -202,7 +202,7 @@ export function CompoundNode({ id, data = {}, selected = false }) {
     );
 }
 
-export function ParallelNode({ id, data, selected = false }) {
+export function ParallelNode({ id, data = {}, selected = false }) {
     const isCollapsed = Boolean(data.isCollapsed);
     const events = getContainerExitEvents(data, "parallel");
     const collapsedLayout = getCollapsedBoundaryLayout(events);

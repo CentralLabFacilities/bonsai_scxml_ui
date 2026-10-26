@@ -1,173 +1,182 @@
-/** Global runtime snapshots: a state frame contains ALL concurrently active states.
- * Consecutive entries are one configuration; exits and transitions form a separate
- * transition frame. Every frame freezes the complete active-state/value set.
- */
-const CHANGE_TYPES = new Set(["datamodel_assignment", "slot_written", "slot_cleared"]);
+/** Deterministic, per-event live SCXML reducer. Hidden events change the runtime
+ * state but never manufacture a visible timeline step. Each visible frame freezes
+ * its own historical state, including scoped variables and stale indicators. */
 const INTERNAL_NAMES = new Set(["#_SLOTS", "#_STATE_PREFIX"]);
 export const isInternalRuntimeName = (name) => INTERNAL_NAMES.has(String(name ?? "").trim());
-const compareChanges = (a, b) => String(a.timestamp || "").localeCompare(String(b.timestamp || "")) ||
-    (Number(a.sequence) || 0) - (Number(b.sequence) || 0);
-export const runtimePayload = (message) => message?.data && typeof message.data === "object"
-    ? message.data : message?.details && typeof message.details === "object" ? message.details : {};
-
-const known = (value) => value === true || value === "true";
-export function runtimeChange(message) {
-    if (!CHANGE_TYPES.has(message.type)) return null;
-    const data = runtimePayload(message);
-    if (message.type === "datamodel_assignment" && isInternalRuntimeName(data.location)) return null;
-    const kind = message.type.startsWith("slot_") ? "slot" : "variable";
-    const key = kind === "slot" ? data.slot : data.location;
-    const hasPrevious = Object.prototype.hasOwnProperty.call(data, "oldValue");
-    const previousKnown = data.oldValueKnown === undefined ? hasPrevious : known(data.oldValueKnown);
-    const previous = !previousKnown ? "Unknown" : data.oldValuePresent === false || data.oldValuePresent === "false"
-        ? "Not set" : hasPrevious ? String(data.oldValue) : "Unknown";
-    const value = message.type === "slot_cleared" ? "Cleared" : String(data.newValue ?? data.value ?? "Unknown");
-    return { kind, key: String(key || "Unknown"), previous, value, timestamp: message.timestamp,
-        sequence: message.sequence, source: data.sourceState || data.state || "", dataType: data.dataType || "",
-        expression: data.expression || "", oldValueKnown: previousKnown };
-}
+export const runtimePayload = (message) => message?.details && typeof message.details === "object"
+    ? message.details : message?.data && typeof message.data === "object" ? message.data : {};
+const has = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+const truth = (value) => value === true || value === "true";
 
 export const emptyRuntimeTimeline = () => ({ frames: [], activeStates: [], status: "UNKNOWN", truncated: false,
-    hasGap: false, runId: null, lastSequence: 0, variables: {}, parameters: {}, slots: {},
-    completedStates: [], stateEntryHistory: [], pendingEntryAssignments: [] });
+    hasGap: false, partiallyUnknown: false, lastSequence: 0, runId: null, outcome: null, scopes: {},
+    variables: {}, parameters: {}, slots: {}, completedStates: [], stateEntryHistory: [],
+    pendingEntryAssignments: [], lastEvent: null, pendingChanges: [], assignmentHistory: [],
+    skillEntryCounts: {} });
 
-const valueOf = (data) => String(data.newValue ?? data.value ?? "Unknown");
-const applyAssignment = (variables, message) => {
+/** Prefer type-preserving JSON fields; the old display strings are fallback only. */
+function typedValue(json, fallback) {
+    if (typeof json === "string") {
+        try {
+            const parsed = JSON.parse(json);
+            if (parsed && typeof parsed === "object" && parsed.$bonsaiUnsupportedType)
+                return { value: `[Unsupported: ${parsed.$bonsaiUnsupportedType}]`, dataType: parsed.$bonsaiUnsupportedType };
+            return { value: parsed === null ? "null" : typeof parsed === "object" ? JSON.stringify(parsed) : String(parsed),
+                dataType: parsed === null ? "null" : typeof parsed };
+        } catch { /* fall back to explicitly supplied formatted value */ }
+    }
+    if (fallback && typeof fallback === "object" && fallback.$bonsaiUnsupportedType)
+        return { value: `[Unsupported: ${fallback.$bonsaiUnsupportedType}]`, dataType: fallback.$bonsaiUnsupportedType };
+    return { value: fallback === null ? "null" : typeof fallback === "object" ? JSON.stringify(fallback) : String(fallback ?? "Unknown"),
+        dataType: typeof fallback };
+}
+function initializedValues(data, message) {
+    let raw = data.values;
+    if (typeof data.valuesJson === "string") {
+        try { raw = JSON.parse(data.valuesJson); } catch { /* values fallback */ }
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) raw = message.values || {};
+    return Object.fromEntries(Object.entries(raw).filter(([key]) => !isInternalRuntimeName(key))
+        .map(([name, value]) => [name, { ...typedValue(undefined, value), stale: false,
+            sequence: message.sequence, timestamp: message.timestamp }]));
+}
+function flattenScopes(scopes) {
+    // Preserve the owning scope even if multiple states declare the same ID.
+    return Object.fromEntries(Object.entries(scopes).flatMap(([scope, entries]) =>
+        Object.entries(entries).map(([name, entry]) => [`${scope}:${name}`, { ...entry, name, scope }])));
+}
+export function runtimeChange(message) {
+    if (message?.type !== "datamodel_assignment") return null;
     const data = runtimePayload(message);
-    if (!data.location || isInternalRuntimeName(data.location)) return variables;
-    return { ...variables, [String(data.location)]: { value: valueOf(data), source: String(data.sourceState || "") } };
-};
+    if (!data.location || isInternalRuntimeName(data.location)) return null;
+    const next = typedValue(data.newValueJson, data.newValue ?? data.value);
+    const previousKnown = truth(data.oldValueKnown) || (has(data, "oldValue") && !has(data, "oldValueKnown"));
+    return { kind: "variable", key: String(data.location), scope: String(data.scope || "global"),
+        previous: previousKnown ? String(data.oldValue) : "Unknown", oldValueKnown: previousKnown,
+        value: next.value, dataType: data.newValueType || next.dataType,
+        source: String(data.sourceState || ""), expression: String(data.expression || ""),
+        timestamp: message.timestamp, sequence: message.sequence };
+}
 const transitionOf = (data) => ({ source: String(data.source || ""), target: String(data.target || ""),
-    event: String(data.event || "") });
+    event: String(data.event || ""), declaredEvent: String(data.declaredEvent || "") });
 
-/** Pure reducer. In particular, a sibling's state_exited must never close another
- * active lane. We group adjacent entries/exits, but never invent microstep barriers
- * that the WebSocket protocol does not publish. Sequence order is retained.
- */
 export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
     if (!message?.type || ["hello", "resync_required"].includes(message.type)) return previous;
     const data = runtimePayload(message);
     const type = message.type;
     const active = new Set(previous.activeStates || []);
-    const completed = new Set(previous.completedStates || []);
-    let variables = previous.variables || {};
+    let scopes = previous.scopes || {};
     let parameters = previous.parameters || {};
-    let slots = previous.slots || {};
     let status = previous.status;
-    let pending = previous.pendingEntryAssignments || [];
-    let frames = previous.frames || [];
-    let stateEntryHistory = previous.stateEntryHistory || [];
-    const prior = frames.at(-1);
-    const entered = type === "state_entered" && Boolean(data.state);
-    const exited = type === "state_exited" && Boolean(data.state);
-    const transitioned = type === "transition";
-    const change = runtimeChange(message);
-
-    if (type === "status") {
-        status = String(data.value || "UNKNOWN");
-        if (["UNKNOWN", "LOADING", "INITIALIZED", "INITIALIZED_BUT_WARNINGS"].includes(status)) {
-            active.clear();
-            completed.clear();
-            pending = [];
-            stateEntryHistory = [];
+    let outcome = previous.outcome;
+    let history = previous.stateEntryHistory || [];
+    let partiallyUnknown = previous.partiallyUnknown;
+    let skillEntryCounts = previous.skillEntryCounts || {};
+    if (type === "status") status = String(data.value || "UNKNOWN");
+    if (type === "started") { status = "RUNNING"; outcome = null; partiallyUnknown = false; }
+    if (type === "completed") { outcome = data.outcome === "failure" ? "failure" : "success";
+        status = outcome === "failure" ? "FAILED" : "COMPLETED"; active.clear(); }
+    if (type === "stopped") { status = "STOPPED"; outcome = "stopped"; active.clear(); }
+    if (type === "state_entered" && data.state) {
+        // Skill parameters are execution-local: never show previous invocation's
+        // resolved values while the next invocation has not resolved its own.
+        const prefix = `${String(data.state)}:`;
+        parameters = Object.fromEntries(Object.entries(parameters).filter(([key]) => !key.startsWith(prefix)));
+        active.add(String(data.state));
+        history = [...history, { state: String(data.state), sequence: message.sequence }].slice(-256);
+        if (message.skillSnapshot !== false && !/^(?:End|Fatal)$/i.test(String(data.state).split(/[.#]/)[0])) {
+            skillEntryCounts = { ...skillEntryCounts, [String(data.state)]: (skillEntryCounts[String(data.state)] || 0) + 1 };
         }
     }
-    if (type === "stopped") { active.clear(); pending = []; }
-    if (entered) {
-        active.add(String(data.state)); completed.delete(String(data.state));
-        stateEntryHistory = [...stateEntryHistory, { state: String(data.state), sequence: message.sequence }].slice(-256);
+    if (type === "state_exited" && data.state) active.delete(String(data.state));
+    if (type === "datamodel_scope_initialized" && data.scope) {
+        scopes = { ...scopes, [String(data.scope)]: initializedValues(data, message) };
     }
-    if (type === "terminal" && data.state) completed.add(String(data.state));
-    if (exited) active.delete(String(data.state));
-
-    // An onentry assign may precede state_entered. Buffer it if the owning state
-    // is not yet active; never leak the future value into the outgoing snapshot.
-    const sourceState = String(data.sourceState || "");
-    const earlyEntry = type === "datamodel_assignment" && sourceState && !active.has(sourceState)
-        && !isInternalRuntimeName(data.location)
-        && !(prior?.exitedStates || []).includes(sourceState);
-    if (earlyEntry) pending = [...pending, message];
-    else if (type === "datamodel_assignment") variables = applyAssignment(variables, message);
-
+    const change = runtimeChange(message);
+    // Preserve each assignment as a distinct timestamped event. `frame.changes`
+    // is a visual summary and may contain repeats when a skill exits; it must
+    // not be used as the source for a chronological assignment history.
+    let assignmentHistory = previous.assignmentHistory || [];
+    if (change) {
+        const scope = change.scope;
+        const preceding = scopes[scope]?.[change.key];
+        const historicalChange = !change.oldValueKnown && preceding && Object.hasOwn(preceding, "value")
+            ? { ...change, previous: String(preceding.value), oldValueKnown: true }
+            : change;
+        assignmentHistory = [...assignmentHistory, historicalChange].slice(-5000);
+        scopes = { ...scopes, [scope]: { ...(scopes[scope] || {}), [change.key]: {
+            ...typedValue(data.newValueJson, data.newValue ?? data.value), dataType: data.newValueType || change.dataType,
+            stale: false, timestamp: message.timestamp, sequence: message.sequence, source: change.source,
+        } } };
+    }
     if (type === "parameter" && data.name && !isInternalRuntimeName(data.name)) {
         const state = String(data.state || "");
         const name = String(data.name);
         parameters = { ...parameters, [`${state}:${name}`]: {
-            name, state, value: String(data.value ?? "Unknown"), timestamp: message.timestamp,
+            state, name, value: String(data.newValue ?? data.value ?? "Unknown"),
+            expression: String(data.expression || ""), stale: false, timestamp: message.timestamp,
         } };
     }
-    if ((type === "slot_written" || type === "slot_cleared") && data.slot) {
-        const path = `/${String(data.slot).replace(/^\/+/, "")}`;
-        slots = { ...slots, [path]: {
-            value: type === "slot_cleared" ? "Cleared" : valueOf(data),
-            timestamp: message.timestamp, state: data.sourceState || data.state || "", dataType: data.dataType || "",
-        } };
-    }
-
-    const matching = entered ? pending.filter((entry) =>
-        String(runtimePayload(entry).sourceState || "") === String(data.state)) : [];
-    if (matching.length) {
-        for (const entry of matching) variables = applyAssignment(variables, entry);
-        pending = pending.filter((entry) => !matching.includes(entry));
-    }
-    const resetEvent = type === "stopped" || type === "terminal" ||
-        (type === "status" && ["UNKNOWN", "LOADING", "INITIALIZED", "INITIALIZED_BUT_WARNINGS"].includes(status));
-    if (resetEvent && pending.length) {
-        // An unmatched assign is observable, but its intended state never entered.
-        // Keep the event on its preceding frame instead of dropping it.
-        if (prior) {
-            frames = [...frames.slice(0, -1), { ...prior,
-                events: [...prior.events, ...pending],
-                changes: [...prior.changes, ...pending.map(runtimeChange).filter(Boolean)].sort(compareChanges),
-            }];
+    // A skill gets exactly one selectable snapshot when it enters. Exiting it
+    // finalizes that same occurrence; it never creates a duplicate timeline row.
+    // Transitions remain independent snapshots. Non-skill entry/exit events
+    // still update the active-state set and historical variable state.
+    const skillEntry = type === "state_entered" && message.skillSnapshot !== false
+        && !/^(?:End|Fatal)$/i.test(String(data.state || "").split(/[.#]/)[0]);
+    const focused = skillEntry || type === "transition";
+    // Keep assignments between two snapshots rather than dropping them when
+    // their individual timeline rows are hidden. This is a time interval, not
+    // proof that the exiting skill wrote the variable.
+    const pendingChanges = change ? [...(previous.pendingChanges || []), change].slice(-2000)
+        : (previous.pendingChanges || []);
+    const transition = type === "transition" ? transitionOf(data) : null;
+    const variables = flattenScopes(scopes);
+    const frames = focused ? [...previous.frames, {
+        id: `${message.sequence ?? message.timestamp ?? previous.frames.length}:${type}`,
+        sequence: message.sequence, timestamp: message.timestamp, receivedAtMs: Date.now(), receivedAtPerf: performance.now(), type,
+        kind: type === "transition" ? "transition" : "state",
+        occurrence: skillEntry ? skillEntryCounts[String(data.state)] : undefined,
+        phase: type === "transition" ? "exiting" : "entering",
+        state: String(data.state || data.sourceState || ""), enteredStates: skillEntry ? [String(data.state)] : [],
+        exitedStates: [], exitingStates: [],
+        transition, transitions: transition ? [transition] : [],
+        completedStates: [], finishedStates: [], stateEntryHistory: history,
+        events: [message], changes: pendingChanges,
+        activeStates: [...active], scopes, variables, parameters, slots: previous.slots || {},
+        partiallyUnknown, closed: false,
+    }] : previous.frames;
+    const lastEvent = ["started", "state_entered", "state_exited", "transition", "parameter",
+        "datamodel_assignment", "completed", "stopped"].includes(type) ? {
+        type, sequence: message.sequence, timestamp: message.timestamp,
+        state: String(data.state || data.sourceState || (transition?.target || "")),
+        transition,
+    } : previous.lastEvent;
+    let finalized = frames;
+    // Preserve a skill's changing parameters and datamodel over its execution;
+    // the entry snapshot is its execution summary, finalized at exit.
+    if (type === "state_exited" && data.state) {
+        const index = [...frames].map((item) => item.type === "state_entered" && item.state === String(data.state) && !item.closed).lastIndexOf(true);
+        if (index >= 0) {
+            const prior = frames[index];
+            finalized = [...frames];
+            finalized[index] = { ...prior, closed: true, exitSequence: message.sequence,
+                exitTimestamp: message.timestamp, finalScopes: scopes,
+                finalVariables: variables, finalParameters: parameters,
+                // Graph state remains the entry-time state for historical highlighting.
+                changes: [...(prior.changes || []), ...pendingChanges] };
         }
-        pending = [];
     }
+    const clipped = finalized.length > maxFrames ? finalized.slice(-maxFrames) : finalized;
+    return { ...previous, status, outcome, activeStates: [...active], stateEntryHistory: history, scopes, variables,
+        parameters, partiallyUnknown, frames: clipped, truncated: previous.truncated || finalized.length > maxFrames,
+        skillEntryCounts, assignmentHistory,
+        pendingChanges: focused ? [] : (type === "state_exited" ? [] : pendingChanges), lastEvent, lastSequence: Number.isSafeInteger(message.sequence) ? message.sequence : previous.lastSequence };
+}
 
-    const record = entered || exited || transitioned || type === "terminal"
-        || (change && !earlyEntry) || (type === "parameter" && !isInternalRuntimeName(data.name));
-    if (record) {
-        const last = frames.at(-1);
-        // Adjacent state entries (Parallel + lanes + their initial skills) share a
-        // single frame. Sibling exits and multiple transitions share another.
-        const phase = entered ? "entering" : (exited || transitioned ? "exiting" : last?.phase || "active");
-        const newFrame = !last || (entered && last.phase !== "entering")
-            || ((exited || transitioned) && last.kind !== "transition")
-            || (type === "terminal" && last.phase === "entering" && !completed.has(String(last.state)));
-        const frame = newFrame ? {
-            id: `${message.runId || "run"}:${message.sequence ?? `${message.timestamp}:${frames.length}`}`,
-            kind: entered ? "state" : "transition", phase,
-            state: entered ? String(data.state) : "", enteredStates: [], exitedStates: [],
-            exitingStates: exited ? [...(previous.activeStates || [])] : [],
-            completedStates: [], finishedStates: [], transition: null, transitions: [],
-            timestamp: matching[0]?.timestamp || message.timestamp,
-            events: [], changes: [], activeStates: [], variables: {}, parameters: {}, slots: {},
-            closed: false,
-        } : last;
-        const transitions = transitioned ? [...(frame.transitions || []), transitionOf(data)] : frame.transitions || [];
-        const next = { ...frame, phase,
-            kind: entered ? "state" : (exited || transitioned ? "transition" : frame.kind),
-            state: entered ? (frame.state || String(data.state)) : frame.state,
-            enteredStates: entered ? [...frame.enteredStates, String(data.state)] : frame.enteredStates,
-            exitedStates: exited ? [...frame.exitedStates, String(data.state)] : frame.exitedStates,
-            exitingStates: frame.exitingStates.length ? frame.exitingStates
-                : exited ? [...(previous.activeStates || [])] : [],
-            completedStates: type === "terminal" && data.state
-                ? [...frame.completedStates, String(data.state)] : frame.completedStates,
-            finishedStates: [...completed], stateEntryHistory,
-            transitions, transition: transitions.at(-1) || null,
-            events: [...frame.events, ...matching, message],
-            changes: [...frame.changes, ...matching.map(runtimeChange).filter(Boolean),
-                ...(change && !earlyEntry ? [change] : [])].sort(compareChanges),
-            activeStates: [...active], variables, parameters, slots,
-            closed: exited || type === "terminal",
-        };
-        frames = newFrame ? [...frames, next] : [...frames.slice(0, -1), next];
-        if (frames.length > maxFrames) frames = frames.slice(-maxFrames);
-    }
-    return { ...previous, frames, activeStates: [...active], completedStates: [...completed], stateEntryHistory,
-        variables, parameters, slots, status, pendingEntryAssignments: pending,
-        lastSequence: Number.isSafeInteger(message.sequence) ? message.sequence : previous.lastSequence,
-        runId: message.runId || previous.runId,
-        truncated: previous.truncated || frames.length >= maxFrames };
+/** Invalidate only current truth. Historical frames remain unchanged. */
+export function invalidateRuntimeTimeline(previous) {
+    const stale = (entries) => Object.fromEntries(Object.entries(entries).map(([key, value]) => [key, { ...value, stale: true }]));
+    const scopes = Object.fromEntries(Object.entries(previous.scopes || {}).map(([key, value]) => [key, stale(value)]));
+    return { ...previous, hasGap: true, partiallyUnknown: true, activeStates: [], scopes,
+        variables: flattenScopes(scopes), parameters: stale(previous.parameters || {}) };
 }

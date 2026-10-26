@@ -8,23 +8,34 @@ export function getRuntimeVariableValues(declarations = [], observed = {}) {
     const merged = new Map();
     for (const variable of declarations || []) {
         const name = String(variable?.id || "").trim();
-        if (!name || isInternalRuntimeName(name)) continue;
-        merged.set(name, {
-            name,
-            value: String(variable?.expr ?? variable?.value ?? "Not initialized"),
-            dataType: variable?.type || variable?.valueType || "",
-            initial: true,
-            scope: name.startsWith("_") ? "global" : "local",
+        if (!name || name.startsWith("#") || isInternalRuntimeName(name)) continue;
+        const scope = name.startsWith("_") ? "global" : "local";
+        merged.set(`${scope}:${name}`, {
+            name, scope, value: String(variable?.expr ?? variable?.value ?? "Not initialized"),
+            dataType: variable?.type || variable?.valueType || "", initial: true,
         });
     }
-    for (const [name, value] of Object.entries(observed || {})) {
-        if (isInternalRuntimeName(name)) continue;
-        const declared = merged.get(name) || { name };
-        // The editor's global/local convention is the source of truth. A
-        // runtime snapshot may call the entire datamodel "global" even when
-        // its entries are declared local; a later assignment must not move them.
-        merged.set(name, { ...declared, ...value, name, initial: false,
-            scope: name.startsWith("_") ? "global" : "local" });
+    // New protocol carries a dictionary of independently owned scopes. A local
+    // `hello` must never overwrite global `hello` or a sibling's local `hello`.
+    const scoped = Object.hasOwn(observed || {}, "global") || Object.values(observed || {})
+        .some((entry) => entry && typeof entry === "object" && !Object.hasOwn(entry, "value"));
+    if (scoped) {
+        for (const [owner, values] of Object.entries(observed || {})) {
+            for (const [name, value] of Object.entries(values || {})) {
+                if (String(name).startsWith("#") || isInternalRuntimeName(name)) continue;
+                const scope = String(name).startsWith("_") ? "global" : "local";
+                const key = `${owner}:${name}`;
+                merged.delete(`local:${name}`);
+                merged.delete(`global:${name}`);
+                merged.set(key, { ...value, name, scope, owner, initial: false });
+            }
+        }
+    } else {
+        for (const [name, value] of Object.entries(observed || {})) {
+            if (String(name).startsWith("#") || isInternalRuntimeName(name)) continue;
+            const scope = name.startsWith("_") ? "global" : "local";
+            merged.set(`${scope}:${name}`, { ...value, name, scope, initial: false });
+        }
     }
     return [...merged.values()];
 }

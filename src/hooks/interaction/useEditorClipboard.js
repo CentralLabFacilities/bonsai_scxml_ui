@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isDocumentGuardOpen, isEditorShortcutBlocked } from "./useGlobalEditorShortcuts";
+import { isEditorShortcutBlocked } from "./useGlobalEditorShortcuts";
 
-import {
-    buildEditorCloneNode,
-    isCloneableEditorNode,
-} from "../../utils/editorClones";
 import {
     cloneClipboardValue,
     getPersistentGraphClipboard,
@@ -50,8 +46,6 @@ export const useEditorClipboard = ({
         clientX: null,
         clientY: null,
     });
-    const [pendingSkillPaste, setPendingSkillPaste] = useState(null);
-    const pendingSkillPasteActionRef = useRef(null);
     const captureGraphSelectionRef = useRef(null);
     const requestGraphPasteRef = useRef(null);
 
@@ -128,15 +122,6 @@ export const useEditorClipboard = ({
                 return false;
             }
 
-            // Remember which single node the user explicitly copied before
-            // recursively adding container descendants. This lets a copied
-            // compound/parallel still be pasted as one editor reference even
-            // though its clipboard payload contains the complete subtree.
-            const explicitReferenceSourceNodeId =
-                nodesToCopy.length === 1 && slotNodesToCopy.length === 0
-                    ? nodesToCopy[0].id
-                    : null;
-
             // Copying a container must copy its complete subtree, including
             // structural parallel lanes. Those lanes are not directly
             // selectable, but they are required to preserve the hierarchy
@@ -185,7 +170,6 @@ export const useEditorClipboard = ({
             );
 
             const clipboard = {
-                explicitReferenceSourceNodeId,
                 nodes: nodesToCopy.map((node) =>
                     cloneClipboardValue({
                         ...node,
@@ -265,7 +249,7 @@ export const useEditorClipboard = ({
             });
         };
 
-        const pasteClipboard = (pasteMode = "copy", targetPosition = null) => {
+        const pasteClipboard = (targetPosition = null) => {
             const clipboard =
                 graphClipboardRef.current || getPersistentGraphClipboard();
             if (clipboard && graphClipboardRef.current !== clipboard) {
@@ -283,116 +267,6 @@ export const useEditorClipboard = ({
                 clipboard,
                 resolvedPasteTarget
             );
-
-            if (pasteMode === "clone") {
-                const explicitSourceId =
-                    clipboard?.explicitReferenceSourceNodeId || null;
-                const copiedNode = explicitSourceId
-                    ? copiedStateNodes.find((node) => node.id === explicitSourceId) || null
-                    : copiedNodeCount === 1
-                        ? copiedStateNodes[0] || copiedSlotNodes[0] || null
-                        : null;
-
-                if (!copiedNode) return false;
-
-                if (copiedNode?.type === "slot") {
-                    const pastedSlotAliases = buildPastedSlotAliases({
-                        copiedSlotNodes: [copiedNode],
-                        translation: pasteTranslation,
-                        slotNodes,
-                    });
-                    const cloneNode = pastedSlotAliases[0];
-                    if (!cloneNode) return false;
-
-                    const nextSlotNodes = [
-                        ...slotNodes.map((node) => ({
-                            ...node,
-                            selected: false,
-                        })),
-                        cloneNode,
-                    ];
-
-                    setNodes((currentNodes) =>
-                        currentNodes.map((node) => ({
-                            ...node,
-                            selected: false,
-                        }))
-                    );
-                    setSlotNodes(nextSlotNodes);
-                    setEdges((currentEdges) =>
-                        currentEdges.map((edge) => ({
-                            ...edge,
-                            selected: false,
-                        }))
-                    );
-                    setSlotEdges((currentEdges) =>
-                        currentEdges.map((edge) => ({
-                            ...edge,
-                            selected: false,
-                        }))
-                    );
-                    setSelectedNodeId(cloneNode.id);
-                    setRightPanelTab("details");
-                    setActiveTab("slots");
-
-                    requestAnimationFrame(() => {
-                        updateNodeInternals(cloneNode.id);
-                    });
-
-                    return true;
-                }
-
-                const sourceNode = copiedNode
-                    ? nodes.find((node) => node.id === copiedNode.id)
-                    : null;
-
-                if (!isCloneableEditorNode(sourceNode)) return false;
-
-                // References have their own compact visual size. Do not use
-                // the source container dimensions here: a large compound or
-                // parallel would otherwise place its small reference far away
-                // from the requested paste position.
-                const referenceSize = { width: 180, height: 58 };
-                const cloneNode = buildEditorCloneNode(sourceNode, {
-                    x:
-                        Number(resolvedPasteTarget.x || 0) -
-                        referenceSize.width / 2,
-                    y:
-                        Number(resolvedPasteTarget.y || 0) -
-                        referenceSize.height / 2,
-                });
-                if (!cloneNode) return false;
-
-                setSlotNodes((currentNodes) =>
-                    currentNodes.map((node) => ({
-                        ...node,
-                        selected: false,
-                    }))
-                );
-                setNodes((currentNodes) => [
-                    ...currentNodes.map((node) => ({
-                        ...node,
-                        selected: false,
-                    })),
-                    cloneNode,
-                ]);
-                setEdges((currentEdges) =>
-                    currentEdges.map((edge) => ({
-                        ...edge,
-                        selected: false,
-                    }))
-                );
-                setSelectedNodeId(cloneNode.id);
-                setRightPanelTab("details");
-                setActiveTab("allgemein");
-
-                requestAnimationFrame(() => {
-                    updateNodeInternals(cloneNode.id);
-                });
-                void syncStateEditorPositions?.(sourceNode.id);
-
-                return true;
-            }
 
             // Slot declarations are unique semantic SCXML objects. Copy/paste
             // therefore creates visual aliases for selected slots instead of a
@@ -505,67 +379,10 @@ export const useEditorClipboard = ({
             return true;
         };
 
-        const requestPasteClipboard = (targetPosition = null) => {
-            if (pendingSkillPasteActionRef.current) return true;
-
-            const clipboard =
-                graphClipboardRef.current || getPersistentGraphClipboard();
-            if (clipboard && graphClipboardRef.current !== clipboard) {
-                graphClipboardRef.current = clipboard;
-            }
-            const copiedStateNodes = clipboard?.nodes || [];
-            const copiedSlotNodes = clipboard?.slotNodes || [];
-            const copiedNodeCount =
-                copiedStateNodes.length + copiedSlotNodes.length;
-            if (copiedNodeCount === 0) return false;
-
-            // Slots have one semantic declaration per path, so normal
-            // copy/paste directly creates another visual alias.
-            if (copiedNodeCount === 1 && copiedSlotNodes.length === 1) {
-                return pasteClipboard("copy", targetPosition);
-            }
-
-            const explicitSourceId =
-                clipboard?.explicitReferenceSourceNodeId || null;
-            const copiedNode = explicitSourceId
-                ? copiedStateNodes.find((node) => node.id === explicitSourceId) || null
-                : copiedNodeCount === 1
-                    ? copiedStateNodes[0] || null
-                    : null;
-            const sourceNode = copiedNode
-                ? nodes.find((node) => node.id === copiedNode.id)
-                : null;
-
-            if (isCloneableEditorNode(sourceNode)) {
-                // Keep the pending action itself outside React state. This
-                // avoids copying callback-heavy node data into a dialog state
-                // while still letting the user decide how this paste behaves.
-                pendingSkillPasteActionRef.current = {
-                    clone: () => pasteClipboard("clone", targetPosition),
-                    copy: () => pasteClipboard("copy", targetPosition),
-                };
-                const sourceTypeLabel =
-                    sourceNode.type === "compound"
-                        ? "Compound"
-                        : sourceNode.type === "parallel"
-                            ? "Parallel"
-                            : sourceNode.type === "submachine"
-                                ? "Sub-State-Machine"
-                                : "State";
-
-                setPendingSkillPaste({
-                    label: sourceNode.data?.label || sourceTypeLabel,
-                    fullSkillName:
-                        sourceNode.data?.fullSkillName ||
-                        sourceNode.data?.label ||
-                        sourceTypeLabel,
-                    sourceTypeLabel,
-                });
-                return true;
-            }
-
-            return pasteClipboard("copy", targetPosition);
-        };
+        // Clipboard pastes always produce an independent copy. References can
+        // still be created explicitly through the node context menu.
+        const requestPasteClipboard = (targetPosition = null) =>
+            pasteClipboard(targetPosition);
 
         captureGraphSelectionRef.current = captureSelection;
         requestGraphPasteRef.current = requestPasteClipboard;
@@ -663,44 +480,13 @@ export const useEditorClipboard = ({
         syncStateEditorPositions,
     ]);
 
-    const resolvePendingSkillPaste = useCallback((choice) => {
-        const action = pendingSkillPasteActionRef.current?.[choice];
-        pendingSkillPasteActionRef.current = null;
-        setPendingSkillPaste(null);
-        action?.();
-    }, []);
-
-    const cancelPendingSkillPaste = useCallback(() => {
-        pendingSkillPasteActionRef.current = null;
-        setPendingSkillPaste(null);
-    }, []);
-
-    useEffect(() => {
-        if (!pendingSkillPaste) return undefined;
-
-        const handlePendingPasteKey = (event) => {
-            if (event.defaultPrevented || isDocumentGuardOpen() || document.querySelector("dialog[open]")) return;
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            cancelPendingSkillPaste();
-        };
-
-        window.addEventListener("keydown", handlePendingPasteKey, true);
-        return () =>
-            window.removeEventListener("keydown", handlePendingPasteKey, true);
-    }, [pendingSkillPaste, cancelPendingSkillPaste]);
-
     return {
         hasGraphClipboard,
-        pendingSkillPaste,
         flowContainerRef,
         editorPointerPositionRef,
         handleGraphSelectionChange,
         captureGraphSelection: () => captureGraphSelectionRef.current?.(),
         requestGraphPaste: (targetPosition = null) =>
             requestGraphPasteRef.current?.(targetPosition),
-        resolvePendingSkillPaste,
-        cancelPendingSkillPaste,
     };
 };

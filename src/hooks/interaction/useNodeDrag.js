@@ -10,6 +10,8 @@ import {
     growParallelToLaneContents,
     isAutoParallelLaneCompound,
     findDropContainerAtPoint,
+    growContainerForDraggedChild,
+    shouldKeepDragInContainerNearBorder,
     resolveNodeCollisionsAndRefit,
     orderNodesParentsFirst,
 } from "../../utils/editorGeometry";
@@ -567,7 +569,7 @@ export function useNodeDrag({
             const sourceCompound =
                 draggedParent?.type === "compound" ? draggedParent : null;
 
-            const targetContainer = findDropContainerAtPoint(
+            const hoveredContainer = findDropContainerAtPoint(
                 dropPoint,
                 currentNodes,
                 {
@@ -576,6 +578,23 @@ export function useNodeDrag({
                     graphIndex,
                 }
             );
+
+            // A skill can protrude over its current container border while
+            // the pointer is only a few pixels outside it. Retain the old
+            // membership and grow the container instead of accidentally
+            // dropping the skill into the root or adjacent parallel lane.
+            // Deliberate drops farther outside still reparent as before.
+            const originDropParent = isAutoParallelLaneCompound(draggedParent)
+                ? graphIndex.byId.get(draggedParent.parentId)
+                : draggedParent;
+            const nestedHoverInsideOrigin = hoveredContainer && originDropParent &&
+                graphIndex.getAncestorIds(hoveredContainer).has(originDropParent.id);
+            const targetContainer = !nestedHoverInsideOrigin &&
+                shouldKeepDragInContainerNearBorder(
+                    draggedNode, originDropParent, dropPoint, currentNodes, graphIndex
+                )
+                ? originDropParent
+                : hoveredContainer;
 
             const targetCompoundCandidate =
                 targetContainer?.type === "compound"
@@ -606,15 +625,16 @@ export function useNodeDrag({
             // The shared drop resolver already chooses the deepest real
             // user-facing container; automatic lane wrappers are mapped above.
 
-            // Dropping inside the existing parent is a pure position edit. A
-            // drag must not invoke collision resolution, automatic packing or
-            // any "sticky" border clamp: the released position is authoritative.
+            // Keep manual positioning authoritative (no collision packing),
+            // but grow the containing tree when this child's new footprint
+            // reaches across its border. This also works for nested compounds.
             if (sourceCompound?.id === targetCompound?.id && sourceCompound) {
-                return { nodes: currentNodes.map((candidate) =>
+                const unrestricted = currentNodes.map((candidate) =>
                     candidate.id === draggedNode.id
                         ? { ...candidate, extent: undefined, expandParent: undefined }
                         : candidate
-                ) };
+                );
+                return { nodes: growContainerForDraggedChild(unrestricted, draggedNode.id) };
             }
 
             if (
@@ -717,13 +737,14 @@ export function useNodeDrag({
                 targetLane && sourceLane?.id === targetLane.id &&
                 draggedNode.parentId === targetLane.id
             ) {
-                // Position is already relative to this lane (or its compound
-                // wrapper). Never move the node or its siblings at drag stop.
-                return { nodes: currentNodes.map((candidate) =>
+                // Preserve the exact dropped position and reflow the lane
+                // frames only when the child requires more room.
+                const unrestricted = currentNodes.map((candidate) =>
                     candidate.id === draggedNode.id
                         ? { ...candidate, extent: undefined, expandParent: undefined }
                         : candidate
-                ) };
+                );
+                return { nodes: growContainerForDraggedChild(unrestricted, draggedNode.id) };
             }
 
             const targetParallel = targetLane

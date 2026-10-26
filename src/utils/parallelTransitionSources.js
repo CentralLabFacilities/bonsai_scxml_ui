@@ -41,6 +41,20 @@ export function findContainerEventSources({
         if (!prefix) continue;
 
         const handle = getTransitionExitToken(descriptor, prefix);
+        // If the skill already declares concrete exit tokens, only connect
+        // the matching one. A shared Wait.success must not create a success
+        // handle on a Wait instance that only supports failure. An empty API
+        // list is allowed here for imported/partially hydrated skills.
+        const declared = (node.data?.events || []).filter((event) =>
+            !event?.editorBoundarySynthetic && !event?.editorImportedSynthetic
+        );
+        if (!handle.includes('*') && declared.length > 0 && !declared.some((event) =>
+            String(event?.id || '') === handle ||
+            transitionDescriptorCovers(
+                normalizedDescriptor(event.rawEvent || event.name || event.id, prefix),
+                normalizedDescriptor(descriptor, prefix)
+            )
+        )) continue;
         // A direct, unconditional transition to a target still inside this
         // Parallel belongs to the skill (or a nearer compound), so it wins
         // over a handler declared on the Parallel. The editor stores the

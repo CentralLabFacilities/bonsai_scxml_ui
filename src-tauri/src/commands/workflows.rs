@@ -49,6 +49,11 @@ pub(crate) async fn inspect_workflow_source(
 }
 
 #[tauri::command]
+pub(crate) fn clear_workflow_inspection_cache() -> usize {
+    crate::workspace::inspection::clear_workflow_inspection_cache()
+}
+
+#[tauri::command]
 pub(crate) async fn parse_scxml_workflow(
     xml: String,
     store: State<'_, WorkflowDocumentStore>,

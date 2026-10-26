@@ -363,14 +363,11 @@ function AppContent() {
 
     const {
         hasGraphClipboard,
-        pendingSkillPaste,
         flowContainerRef,
         editorPointerPositionRef,
         handleGraphSelectionChange,
         captureGraphSelection,
         requestGraphPaste,
-        resolvePendingSkillPaste,
-        cancelPendingSkillPaste,
     } = useEditorClipboard({
         activeMode,
         selectedNodeId,
@@ -432,6 +429,7 @@ function AppContent() {
 
     const {
         drawerData,
+        liveDrawerData,
         setDrawerData,
         slotConnectionDrag,
         pendingSlotRename,
@@ -811,6 +809,21 @@ function AppContent() {
         runRustReadQuery: rustWorkflowDocument.runReadQuery,
         validationRevision: rustWorkflowDocument.validationRevision,
     });
+
+    // Switching the selected skill also switches an already-open Transitions
+    // panel. Edge clicks that open another source do not change selection and
+    // must not be immediately overridden by this effect.
+    const previousTransitionSelectionRef = useRef(selectedNodeId);
+    useEffect(() => {
+        const previous = previousTransitionSelectionRef.current;
+        previousTransitionSelectionRef.current = selectedNodeId;
+        if (!drawerData.isOpen || !selectedNodeId || previous === selectedNodeId ||
+            drawerData.sourceNodeId === selectedNodeId) return;
+        const node = nodes.find(item => item.id === selectedNodeId);
+        if (!node || !['custom', 'submachine'].includes(node.type) ||
+            node.data?.isSkillClone || node.data?.isStateClone) return;
+        openConditionDrawer(selectedNodeId);
+    }, [selectedNodeId, drawerData.isOpen, drawerData.sourceNodeId, nodes, openConditionDrawer]);
 
     const {
         selectedNode,
@@ -1225,7 +1238,7 @@ function AppContent() {
         switchTab,
         getActiveDocumentIdentity,
         suspendFollow: isDraggingNode || drawerData.isOpen || activeMode === "code" || isHintPageOpen
-            || isCreateSlotModalOpen || Boolean(documentGuard || pendingSubMachineCreation || pendingSkillPaste
+            || isCreateSlotModalOpen || Boolean(documentGuard || pendingSubMachineCreation
                 || pendingSlotRename || stateMachineLoading || runtimePreparation || contextMenu),
     });
 
@@ -1716,13 +1729,14 @@ function AppContent() {
                             : handleCreateEmptySubMachine(pendingSubMachineCreation.flowPosition, fileConfig);
                     },
                 }}
-                paste={{ pending: pendingSkillPaste, onCancel: cancelPendingSkillPaste, onResolve: resolvePendingSkillPaste }}
                 tabPathTooltip={tabPathTooltip}
                 condition={{
                     drawer: drawerData,
                     variables: availableDataModelParameters,
                     onAddParameter: addGlobalParameter,
                     graphEdges: edges,
+                    liveCandidateTransitions: liveDrawerData?.candidateTransitions,
+                    sharedContainerExits: liveDrawerData?.sharedContainerExits || drawerData.sharedContainerExits || [],
                     onConfirm: (...args) => {
                         hoverTransitionEdge(null);
                         return handleConfirmDrawer(...args);

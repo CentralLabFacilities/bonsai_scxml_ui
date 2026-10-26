@@ -191,7 +191,6 @@ export default function EditorOverlays({
     runtimePreparation,
     hint,
     subMachine,
-    paste,
     tabPathTooltip,
     condition,
     slots,
@@ -200,7 +199,6 @@ export default function EditorOverlays({
     runtimeCommander = null,
 }) {
     const progressPercent = Math.round(Math.max(0, Math.min(1, runtimePreparation?.progress || 0)) * 100);
-    const pasteCancelButtonRef = useRef(null);
     const renameCancelButtonRef = useRef(null);
     const renameTitleId = useId();
     const renameDescriptionId = useId();
@@ -261,6 +259,8 @@ export default function EditorOverlays({
                         onAddParameter={condition.onAddParameter}
                         globalVariables={condition.variables}
                         graphEdges={condition.graphEdges}
+                        liveCandidateTransitions={condition.liveCandidateTransitions}
+                        sharedContainerExits={condition.sharedContainerExits}
                         sourceNodeName={condition.drawer.sourceNodeName}
                         sourceEventName={condition.drawer.sourceEventName}
                         candidateTransitions={condition.drawer.candidateTransitions}
@@ -319,31 +319,6 @@ export default function EditorOverlays({
                             <Button ref={renameCancelButtonRef} onClick={slotRename.onCancel}>Cancel</Button>
                             <Button variant="primary" onClick={slotRename.onConfirm}>Rename and Connect</Button>
                         </div>
-                    </div>
-                </CreationDialog>
-            )}
-
-            {paste.pending && (
-                <CreationDialog
-                    className="skill-paste-choice-overlay"
-                    labelledBy="skill-paste-choice-title"
-                    onCancel={paste.onCancel}
-                    initialFocusRef={pasteCancelButtonRef}
-                >
-                    <div className="skill-paste-choice-dialog">
-                        <h3 id="skill-paste-choice-title">Paste {paste.pending.sourceTypeLabel || "State"}</h3>
-                        <p>How should <strong>{paste.pending.label}</strong> be pasted?</p>
-                        <div className="skill-paste-choice-options">
-                            <button type="button" className="skill-paste-choice-option" onClick={() => paste.onResolve("clone")}>
-                                <span className="skill-paste-choice-option-title">Reference</span>
-                                <span className="skill-paste-choice-option-description">Inbound-only reference to the original state.</span>
-                            </button>
-                            <button type="button" className="skill-paste-choice-option" onClick={() => paste.onResolve("copy")}>
-                                <span className="skill-paste-choice-option-title">Copy</span>
-                                <span className="skill-paste-choice-option-description">Create an independent copy of the selected state.</span>
-                            </button>
-                        </div>
-                        <button ref={pasteCancelButtonRef} type="button" className="skill-paste-choice-cancel" onClick={paste.onCancel}>Cancel</button>
                     </div>
                 </CreationDialog>
             )}

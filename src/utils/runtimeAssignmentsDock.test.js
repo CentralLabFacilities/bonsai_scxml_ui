@@ -37,3 +37,44 @@ test("Run Logs stays in the editor; narrow mode has no phantom Inspector-width t
     assert.match(cssRule('.app[data-panel-mode="drawers"] .runtime-assignments-panel'), /grid-column:\s*2/);
     assert.match(cssRule('.app[data-panel-mode="drawers"] .editor-side-panel-inspector'), /right:\s*0/);
 });
+
+
+test("Run Assignments can shrink independently of the Inspector", () => {
+    assert.match(app, /minAssignmentsWidth = Math\.min\(190/);
+    assert.match(app, /className="editor-panel-resize editor-panel-resize-assignments"/);
+    assert.match(app, /setRunAssignmentsWidth\(constrainAssignmentsWidth/);
+    assert.match(app, /"--inspector-resize-width": panels\.isDocked && \(panels\.inspectorOpen \|\| assignmentsVisible\)/);
+    assert.match(cssRule(".editor-panel-resize-assignments"), /grid-column:\s*4/);
+});
+
+test("Run Assignments uses compact MemorySlot values without descriptive subtitles or slot key", () => {
+    assert.match(drawer, /<CurrentValues title="Global Variables" values=/);
+    assert.match(drawer, /<CurrentValues title="Local Variables" values=/);
+    assert.doesNotMatch(drawer, /Globally accessible ·|Locally accessible ·/);
+    assert.doesNotMatch(drawer, /Values reconstructed from timestamped slot writes/);
+    assert.doesNotMatch(drawer, /No historical observation/);
+    assert.doesNotMatch(drawer, /entry\.key/);
+    assert.match(drawer, /: replay \? "null"/);
+    assert.match(drawer, /className="datamodel-compact-list"/);
+});
+
+test("Loading event shows the requested short status", () => {
+    const commander = readFileSync(new URL("../components/overlays/RuntimeCommander.jsx", import.meta.url), "utf8");
+    assert.match(commander, /setRuntimeNotice\("Loaded"\)/);
+    assert.doesNotMatch(commander, /Backend is loading; waiting for the next matching run/);
+});
+
+
+test("local runtime assignment changes use their declared or inferred type accent", () => {
+    assert.match(drawer, /const local = change\.kind === "variable" && change\.scope === "local"/);
+    assert.match(drawer, /valueType\(change\.value, change\.dataType \|\| declaredTypeByName\.get\(change\.name\)\)/);
+    assert.match(drawer, /datamodel-type-accent-\$\{type\}/);
+    assert.match(drawer, /declaredVariables=\{declaredVariables\}/);
+    for (const [type, hex] of Object.entries({
+        string: "38bdf8", boolean: "a855f7", integer: "14b8a6", double: "f59e0b", other: "64748b",
+    })) {
+        assert.match(cssRule(`.runtime-snapshot-change-row.local.datamodel-type-accent-${type}`),
+            new RegExp(`border-left-color:\\s*#${hex}`, "i"));
+    }
+    assert.match(cssRule(".runtime-snapshot-change-row.slot"), /var\(--editor-slot-write/);
+});

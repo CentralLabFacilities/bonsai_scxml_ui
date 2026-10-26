@@ -73,9 +73,11 @@ function DetailsPanel({
         ? String(selectedNode.data?.editorInstanceId || selectedNode.id || "").trim()
         : "";
     const hasClones = Array.isArray(cloneNodes) && cloneNodes.length > 0;
+    const isParallelLane = selectedNode.type === "parallelLane";
     const isContainerState =
         selectedNode.type === "compound" ||
-        selectedNode.type === "parallel";
+        selectedNode.type === "parallel" ||
+        isParallelLane;
     const selectedSkillType = String(selectedNode.data?.fullSkillName || "")
         .split("#")[0]
         .split(".")
@@ -103,13 +105,13 @@ function DetailsPanel({
         .split(".")
         .pop() || selectedNode.data?.label || "—";
     const hidesParameterAndSlots =
-        !isSubMachine &&
-        ["nop", "fatal", "end"].includes(selectedSkillType);
+        isParallelLane || (!isSubMachine &&
+        ["nop", "fatal", "end"].includes(selectedSkillType));
     const hidesEntryExit =
-        !isSubMachine &&
+        isParallelLane || (!isSubMachine &&
         (selectedSkillType === "fatal" ||
             selectedSkillType === "end" ||
-            (isNopSkill && hasNopSend));
+            (isNopSkill && hasNopSend)));
 
     const inspectorTabs = [{ id: "allgemein", label: "Overall" }];
     if (!isEditorClone) {

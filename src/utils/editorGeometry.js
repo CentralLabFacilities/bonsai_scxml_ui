@@ -283,6 +283,100 @@ const fitCompoundAndAncestorCompoundsImpl = (allNodes, compoundId) => {
     return context.nodes;
 };
 
+// Keep a dragged child in its original scope when the pointer only grazes
+// the border. A drop well outside the container must still reparent normally.
+// Use the *node footprint* as well as the pointer so a large skill with its
+// center already outside is not indefinitely captured by the old parent.
+export const shouldKeepDragInContainerNearBorder = (
+    node, container, dropPoint, allNodes, graphIndex = null,
+    tolerance = 36
+) => {
+    if (!node || !container || !dropPoint || container.data?.isCollapsed) return false;
+    if (container.type !== "compound" && container.type !== "parallelLane") return false;
+    const index = graphIndex || createEditorNodeIndex(allNodes);
+    const pos = index.getAbsolutePosition(container);
+    const size = getNodeSize(container);
+    const right = pos.x + size.width;
+    const bottom = pos.y + size.height;
+    const outside = dropPoint.x < pos.x || dropPoint.x > right ||
+        dropPoint.y < pos.y || dropPoint.y > bottom;
+    if (!outside || dropPoint.x < pos.x - tolerance || dropPoint.x > right + tolerance ||
+        dropPoint.y < pos.y - tolerance || dropPoint.y > bottom + tolerance) return false;
+
+    const child = index.getAbsolutePosition(node);
+    const childSize = getNodeSize(node);
+    const overlapWidth = Math.max(0, Math.min(child.x + childSize.width, right) - Math.max(child.x, pos.x));
+    const overlapHeight = Math.max(0, Math.min(child.y + childSize.height, bottom) - Math.max(child.y, pos.y));
+    return overlapWidth * overlapHeight >= childSize.width * childSize.height * 0.25;
+};
+
+// A drag inside the *same* parent is not a reparent and must not pack or
+// move siblings. It still has to resize the containing Compound/Parallel when
+// the released node crosses its visual border. In particular, a generated
+// lane compound must be measured through its lane (not with the ordinary
+// compound exit gutter).
+export const growContainerForDraggedChild = (allNodes, nodeId) => {
+    const index = createEditorNodeIndex(allNodes);
+    const child = index.byId.get(nodeId);
+    const parent = child?.parentId ? index.byId.get(child.parentId) : null;
+    if (!child || !parent) return allNodes;
+
+    // Do not reflow or enlarge a parent after an ordinary move that still
+    // fits. Only the child's footprint crossing the actual frame border
+    // activates auto-growth (not merely entering reserved exit padding).
+    const parentSize = getNodeSize(parent);
+    const childSize = getNodeSize(child);
+    const childX = Number(child.position?.x || 0);
+    const childY = Number(child.position?.y || 0);
+    if (childX >= 0 && childY >= 0 &&
+        childX + childSize.width <= parentSize.width &&
+        childY + childSize.height <= parentSize.height) {
+        return allNodes;
+    }
+
+    if (parent.type === "compound" && !isAutoParallelLaneCompound(parent)) {
+        // A compound's origin may move when a child crosses its left or top
+        // edge. Shift direct children by the opposite amount to preserve every
+        // child's absolute position; then run the ordinary grow-only fit.
+        const shiftX = Math.max(0, -Number(child.position?.x || 0));
+        const shiftY = Math.max(0, -Number(child.position?.y || 0));
+        const rebased = shiftX || shiftY
+            ? allNodes.map((node) => {
+                if (node.id === parent.id) {
+                    const size = getNodeSize(node);
+                    return {
+                        ...withNodeDimensions(node, size.width + shiftX, size.height + shiftY),
+                        position: {
+                            x: Number(node.position?.x || 0) - shiftX,
+                            y: Number(node.position?.y || 0) - shiftY,
+                        },
+                    };
+                }
+                return node.parentId === parent.id
+                    ? {
+                        ...node,
+                        position: {
+                            x: Number(node.position?.x || 0) + shiftX,
+                            y: Number(node.position?.y || 0) + shiftY,
+                        },
+                    }
+                    : node;
+            })
+            : allNodes;
+        return fitCompoundAndAncestorCompounds(rebased, parent.id);
+    }
+
+    const lane = parent.type === "parallelLane"
+        ? parent
+        : isAutoParallelLaneCompound(parent)
+            ? index.byId.get(parent.parentId)
+            : null;
+    if (lane?.type === "parallelLane" && lane.parentId) {
+        return growParallelToLaneContents(allNodes, lane.parentId);
+    }
+    return allNodes;
+};
+
 export const getAbsoluteNodePosition = (node, allNodes, graphIndex = null) => {
     let x = node?.position?.x || 0;
     let y = node?.position?.y || 0;

@@ -27,6 +27,7 @@ pub fn run() {
             commands::files::read_file,
             commands::workflows::read_workflow_source,
             commands::workflows::inspect_workflow_source,
+            commands::workflows::clear_workflow_inspection_cache,
             commands::workflows::parse_scxml_workflow,
             commands::workflows::serialize_scxml_workflow,
             commands::workflows::serialize_editor_workflow,

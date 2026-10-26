@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { applyGraphTransaction } from "../../utils/graphTransaction.js";
-import { followParallelResizeGesture } from "../../utils/containerState.js";
+import { followParallelResizeGesture, reconcileMeasuredParallelLanes } from "../../utils/containerState.js";
 import { isMovingPositionBatch, collectDraggedPositions } from "../../utils/dragPositionBatch.js";
 import { traceResizeNodeChanges, traceResizeNodeMutation } from "../../utils/resizeDiagnostics.js";
 
@@ -103,6 +103,16 @@ export function useEditorGraphState() {
                         node.id === change.id && node.type === "parallel")) continue;
                 next = followParallelResizeGesture(next, change.id,
                     Number(change.dimensions.width), Number(change.dimensions.height));
+            }
+            // A mode change can remeasure a skill after its lane was laid out.
+            // Reflow only the affected parallel branches, after applying those
+            // new dimensions; never do expensive fitting during live resizing.
+            const remeasuredIds = changes
+                .filter((change) => change.type === "dimensions" &&
+                    change.resizing !== true && change.dimensions)
+                .map((change) => change.id);
+            if (remeasuredIds.length) {
+                next = reconcileMeasuredParallelLanes(next, remeasuredIds);
             }
             return next;
         });

@@ -134,6 +134,24 @@ function compileContexts(workflow, tabsSnapshot) {
     return { workflow, contexts, states, containerStates, wrappers };
 }
 
+
+/**
+ * Resolve an executable SCXML state to the uniquely matching editor skill.
+ * Reuse the same invocation-aware model as live execution so that nested
+ * sub-state machines are matched by their runtime suffix, not just their
+ * unqualified skill name. Ambiguous or unknown states remain unresolved.
+ */
+export function resolveRuntimeSkill(workflow, tabsSnapshot, state) {
+    const id = runnerId(state);
+    if (!id) return null;
+    const model = compileContexts(workflow, tabsSnapshot);
+    const matches = model?.states.get(id) || EMPTY;
+    if (matches.length !== 1) return null;
+    const { context, group } = matches[0];
+    const node = context.document.byId.get(group.id);
+    return node ? { node, tab: context.document.tab } : null;
+}
+
 function projectEntry(entry, tabId, validTabs, visibleById) {
     let { context, group, contextual = false } = entry;
     while (context && (context.document.tab.id !== tabId || !contextValid(context, validTabs))) {
@@ -224,6 +242,8 @@ export function useLiveExecution({
     visibleNodes = EMPTY,
     visibleEdges = EMPTY,
     fitView,
+    getViewport,
+    setViewport,
     switchTab,
     suspendFollow = false,
     getActiveDocumentIdentity,
@@ -507,7 +527,24 @@ export function useLiveExecution({
                 follow.pending = null;
                 const ids = focusedParallel ? [focusedParallel.node.id]
                     : activeTransition?.cameraIds.length ? activeTransition.cameraIds : projection.cameraIds;
-                fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55, duration: 320, maxZoom: 1.15 });
+                // Fit first, then lift the focused nodes above the floating run
+                // controller. Offset uses its measured height; no offset when
+                // the run overlay is closed or while an older focus is cancelled.
+                const panel = document.getElementById("workflow-tab-panel");
+                const overlay = panel?.querySelector(".runtime-commander-dialog");
+                const overlayHeight = overlay?.getBoundingClientRect().height || 0;
+                const panelHeight = panel?.getBoundingClientRect().height || 0;
+                const lift = Math.min(panelHeight * 0.2, overlayHeight * 0.5);
+                const fitted = fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55,
+                    duration: 300, maxZoom: 1.15 });
+                if (lift > 0 && getViewport && setViewport) {
+                    void Promise.resolve(fitted).then((didFit) => {
+                        if (didFit === false || cancelled ||
+                            (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity)) return;
+                        const viewport = getViewport();
+                        setViewport({ ...viewport, y: viewport.y - lift }, { duration: 120 });
+                    });
+                }
             };
             // Tab restoration owns two frames; fit after its viewport restore.
             schedule(() => arrived ? schedule(fit) : fit());
@@ -518,7 +555,7 @@ export function useLiveExecution({
         };
     }, [model, statesKey, wantsCamera, action, liveActive, rootValid, activeTabId,
         activeDocumentGeneration, activeFingerprint, suspendFollow, projection, activeTransition,
-        liveExecution?.focusRequest, fitView, switchTab, getActiveDocumentIdentity, focusedParallel?.key,
+        liveExecution?.focusRequest, fitView, getViewport, setViewport, switchTab, getActiveDocumentIdentity, focusedParallel?.key,
         parallelViews.length]);
 
     return { liveVisibleNodes: runtimeNodes, liveVisibleEdges: runtimeEdges,

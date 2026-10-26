@@ -11000,3 +11000,21 @@ dialog.skill-paste-choice-overlay {
 .react-flow__node:has(.node-parameter-inline-editor) {
     z-index: 2000 !important;
 }
+
+/* The React Flow lane wrapper IS the node-drop rectangle. Draw its outline
+   there (not on a nested visual layer), without adding border thickness to
+   its measured dimensions. Stay visible in Event, Slot and Overview modes. */
+.react-flow__node-parallelLane {
+    box-sizing: border-box;
+    border: 0 !important;
+    border-radius: 2px;
+    background: rgba(2, 132, 199, 0.025);
+    box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.28);
+}
+.react-flow__node-parallelLane:hover {
+    box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.48);
+}
+.react-flow__node-parallelLane.selected,
+.react-flow__node-parallelLane:has(.parallel-lane-selected) {
+    box-shadow: inset 0 0 0 1.5px rgba(2, 132, 199, 0.65);
+}

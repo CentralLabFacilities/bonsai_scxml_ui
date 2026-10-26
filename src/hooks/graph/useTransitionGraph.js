@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { MarkerType } from "@xyflow/react";
 import {
     COMPOUND_PADDING_X,
@@ -119,6 +119,20 @@ export function useTransitionGraph({
         },
         [nodes, edges]
     );
+
+    // Keep the open panel subscribed to the current graph. Do not restart its
+    // editing session when React Flow or Rust publishes a new edge.
+    const liveDrawerData = useMemo(() => {
+        if (!drawerData.isOpen || !drawerData.sourceNodeId || drawerData.containerEventMode ||
+            drawerData.targetOnlyMode) return null;
+        return buildConditionDrawerData({
+            sourceId: drawerData.sourceNodeId,
+            sourceHandle: drawerData.sourceEventName,
+            nodes,
+            edges,
+        });
+    }, [drawerData.isOpen, drawerData.sourceNodeId, drawerData.sourceEventName,
+        drawerData.containerEventMode, drawerData.targetOnlyMode, nodes, edges]);
 
     const isValidConnection = useCallback((connection) => {
         const possibleInitialCompound = nodes.find(
@@ -1158,7 +1172,11 @@ export function useTransitionGraph({
                 String(getLogicalEdgeSourceHandle(edge)) === String(params.sourceHandle)
             );
 
-            if (outgoingFromHandle.length >= 2) {
+            // An already-open panel follows a connection from another skill.
+            // For its current skill, the live edge sync will append the row:
+            // reopening here would reset unfinished condition/assignment edits.
+            if ((drawerData.isOpen && drawerData.sourceNodeId !== params.source) ||
+                (!drawerData.isOpen && outgoingFromHandle.length >= 2)) {
                 openConditionDrawer(
                     params.source,
                     params.sourceHandle,
@@ -1179,6 +1197,8 @@ export function useTransitionGraph({
             syncTransitionsForSource,
             handleFlowSlotConnect,
             openConditionDrawer,
+            drawerData.isOpen,
+            drawerData.sourceNodeId,
         ]
     );
 
@@ -1210,6 +1230,7 @@ export function useTransitionGraph({
 
     return {
         drawerData,
+        liveDrawerData,
         setDrawerData,
         slotConnectionDrag,
         pendingSlotRename,

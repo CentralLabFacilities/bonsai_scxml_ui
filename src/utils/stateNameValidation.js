@@ -10,14 +10,14 @@ export const getExportedStateName = (node) =>
     text(node?.data?.fullSkillName) || text(node?.data?.label) || text(node?.id);
 
 export const isEditorOnlyInstanceName = (node) => {
-    if (node?.type === "compound" || node?.type === "parallel" || node?.type === "submachine") return false;
+    if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) return false;
     const skill = text(node?.data?.fullSkillName).split("#")[0].split(".").pop().toLowerCase();
     return ["nop", "fatal", "end"].includes(skill);
 };
 
 export const proposedExportedStateName = (node, requestedName) => {
     const next = text(requestedName);
-    if (["compound", "parallel", "submachine"].includes(node?.type)) {
+    if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) {
         return next || text(node.id);
     }
     const base = text(node?.data?.fullSkillName).split("#")[0] || text(node?.data?.label);

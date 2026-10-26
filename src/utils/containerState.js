@@ -11,9 +11,9 @@ import {
 } from "./editorGeometry.js";
 
 export function getContainerExitEvents(data, type) {
-    const events = type === "parallel"
-        ? data.events || []
-        : Array.isArray(data.events) ? data.events : [];
+    // Imported/in-flight node data may temporarily have no event array.
+    // Never let a malformed Parallel node crash the whole canvas.
+    const events = Array.isArray(data?.events) ? data.events : [];
     const uniqueEvents = [];
     const seen = new Set();
 
@@ -30,7 +30,7 @@ export function getContainerExitEvents(data, type) {
         uniqueEvents.push({ ...event, id: eventId });
     });
 
-    if (type === "parallel" && Array.isArray(data.collapsedTransitionHandles)) {
+    if (type === "parallel" && Array.isArray(data?.collapsedTransitionHandles)) {
         data.collapsedTransitionHandles.forEach((event) => {
             const eventId = String(event?.id || "").trim();
             if (!eventId || seen.has(eventId)) return;
@@ -125,6 +125,95 @@ export function followParallelResizeGesture(nodes, parallelId, width, height) {
         };
     });
     return changed ? result : nodes;
+}
+
+/**
+ * React Flow measures skill nodes again when switching Event/Overview/Slot
+ * modes. The new measurements do not automatically rearrange sibling lane
+ * frames: a skill can grow into the next lane while the old divider remains.
+ *
+ * Refit ONLY parallels containing remeasured nodes. The visual React Flow
+ * wrapper is the drop hitbox, so its saved dimensions, lane positions and
+ * automatic routing wrapper must be updated in the same document transaction.
+ * Unlike a resize gesture, this does not move user-placed skill nodes.
+ */
+export function reconcileMeasuredParallelLanes(nodes, changedNodeIds) {
+    if (!Array.isArray(nodes) || !nodes.length || !changedNodeIds?.length) return nodes;
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const affected = new Set();
+    for (const changedId of changedNodeIds) {
+        let current = byId.get(changedId);
+        const seen = new Set();
+        while (current && !seen.has(current.id)) {
+            seen.add(current.id);
+            if (current.type === "parallel") affected.add(current.id);
+            current = byId.get(current.parentId);
+        }
+    }
+    if (affected.size === 0) return nodes;
+
+    const depth = (id) => {
+        let count = 0;
+        let current = byId.get(id);
+        const seen = new Set();
+        while (current?.parentId && !seen.has(current.id)) {
+            seen.add(current.id);
+            count += 1;
+            current = byId.get(current.parentId);
+        }
+        return count;
+    };
+    const parallelIds = [...affected].sort((a, b) => depth(b) - depth(a));
+    let result = nodes;
+
+    for (const parallelId of parallelIds) {
+        const parallel = result.find((node) => node.id === parallelId);
+        if (!parallel || parallel.data?.isCollapsed) continue;
+        // Explicit sizes on containers represent a deliberate resize. Atomic
+        // skills, in contrast, have different actual sizes in each mode; use
+        // their latest DOM measurements without persisting those dimensions.
+        const measuredProjection = result.map((node) => {
+            if (node.type !== "custom" && node.type !== "submachine") return node;
+            const width = Number(node.measured?.width);
+            const height = Number(node.measured?.height);
+            if (!(width > 0) && !(height > 0)) return node;
+            return {
+                ...node,
+                width: width > 0 ? Math.max(width, Number(node.style?.width) || 0) : getNodeSize(node).width,
+                height: height > 0 ? Math.max(height, Number(node.style?.height) || 0) : getNodeSize(node).height,
+            };
+        });
+        const minimum = measureParallelMinimumSize(measuredProjection, parallelId);
+        if (!minimum) continue;
+        const size = getNodeSize(parallel);
+        const resized = resizeParallelLanes(
+            result, parallelId,
+            Math.max(size.width, minimum.width),
+            Math.max(size.height, minimum.height),
+            minimum,
+        );
+        // resizeParallelLanes constructs frame objects unconditionally; don't
+        // publish identical geometry (which would trigger another measurement).
+        let changed = false;
+        const sameGeometryNumber = (a, b) => a === b ||
+            (Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) < 0.05);
+        const stable = resized.map((candidate, index) => {
+            const previous = result[index];
+            if (candidate === previous) return previous;
+            const equal = sameGeometryNumber(candidate.width, previous.width) &&
+                sameGeometryNumber(candidate.height, previous.height) &&
+                sameGeometryNumber(candidate.style?.width, previous.style?.width) &&
+                sameGeometryNumber(candidate.style?.height, previous.style?.height) &&
+                sameGeometryNumber(candidate.position?.x, previous.position?.x) &&
+                sameGeometryNumber(candidate.position?.y, previous.position?.y) &&
+                candidate.expandParent === previous.expandParent;
+            if (equal) return previous;
+            changed = true;
+            return candidate;
+        });
+        if (changed) result = stable;
+    }
+    return result;
 }
 
 export function resizeParallelLanes(nodes, parallelId, width, height, cachedMinimum = null) {

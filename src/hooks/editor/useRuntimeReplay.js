@@ -125,7 +125,7 @@ export function useRuntimeReplay({
     const [runtimeTraceNeedsFit, setRuntimeTraceNeedsFit] = useState(false);
     const [runtimePlaying, setRuntimePlaying] = useState(false);
     const [runtimePlaybackDelay, setRuntimePlaybackDelay] = useState(800);
-    const [runtimeChangesPanelOpen, setRuntimeChangesPanelOpen] = useState(true);
+    const [runtimeChangesPanelOpen, setRuntimeChangesPanelOpen] = useState(false);
     const [runtimeFocusRequest, setRuntimeFocusRequest] = useState(0);
     const runtimeFocusHandledRef = useRef(-1);
     const runtimeReplayContextsRef = useRef([]);

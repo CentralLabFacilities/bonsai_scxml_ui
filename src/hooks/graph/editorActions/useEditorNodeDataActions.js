@@ -75,6 +75,7 @@ export function useEditorNodeDataActions({
                     const isContainerOrSub =
                         node.type === "compound" ||
                         node.type === "parallel" ||
+                        node.type === "parallelLane" ||
                         node.type === "submachine";
 
                     if (isContainerOrSub) {
@@ -134,6 +135,7 @@ export function useEditorNodeDataActions({
             const isContainerOrSub =
                 sourceNode.type === "compound" ||
                 sourceNode.type === "parallel" ||
+                sourceNode.type === "parallelLane" ||
                 sourceNode.type === "submachine";
 
             if (isContainerOrSub) {

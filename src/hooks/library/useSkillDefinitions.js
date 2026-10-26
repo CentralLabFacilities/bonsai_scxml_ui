@@ -113,6 +113,18 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
     }, [loadSkills]);
 
     useEffect(() => {
+        const clearSkillCaches = () => {
+            // Invalidate pending requests as well as cached resolved definitions.
+            // Bumping this key also drops the SkillLibrary tooltip's own cache.
+            skillDataGenerationRef.current += 1;
+            skillDataCacheRef.current.clear();
+            setSkillLibraryRefreshVersion((version) => version + 1);
+        };
+        window.addEventListener("bonsai:clear-skill-caches", clearSkillCaches);
+        return () => window.removeEventListener("bonsai:clear-skill-caches", clearSkillCaches);
+    }, []);
+
+    useEffect(() => {
         void loadSkills();
 
         const intervalId = window.setInterval(() => {

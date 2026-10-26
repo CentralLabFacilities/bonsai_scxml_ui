@@ -285,3 +285,77 @@ test("resizing from a left corner preserves React Flow's new parallel position",
     assert.equal(byId(resized, "l1").position.y, 64);
     assert.equal(byId(resized, "l2").position.y + byId(resized, "l2").height, 455);
 });
+
+
+test("parallel exits tolerate missing or malformed data while graph updates", () => {
+    assert.deepEqual(getContainerExitEvents(undefined, "parallel"), []);
+    assert.deepEqual(getContainerExitEvents({ events: { invalid: true } }, "parallel"), []);
+    assert.deepEqual(getContainerExitEvents({ events: "success" }, "parallel"), []);
+    assert.deepEqual(getContainerExitEvents({ events: [{ id: "success", target: "outside" }] }, "parallel").map(e => e.id), ["success"]);
+});
+
+// The lane React Flow hitbox must follow changing node measurements when the
+// user switches Event/Overview/Slot modes (including legacy lane wrappers).
+test('mode-switch measurement reflows lane borders and drop hitboxes without moving skills', async () => {
+    const { reconcileMeasuredParallelLanes } = await import('./containerState.js');
+    const nodes = [
+        { id: 'p', type: 'parallel', position: { x: 10, y: 12 }, width: 460, height: 429,
+            style: { width: 460, height: 429 } },
+        { id: 'l1', type: 'parallelLane', parentId: 'p', position: { x: 0, y: 64 }, width: 460, height: 160,
+            style: { width: 460, height: 160 } },
+        { id: 'l2', type: 'parallelLane', parentId: 'p', position: { x: 0, y: 224 }, width: 460, height: 160,
+            style: { width: 460, height: 160 } },
+        { id: 'wait1', type: 'custom', parentId: 'l1', position: { x: 40, y: 40 },
+            measured: { width: 180, height: 60 } },
+        { id: 'wait2', type: 'custom', parentId: 'l2', position: { x: 40, y: 40 },
+            measured: { width: 180, height: 60 } },
+    ];
+    const changed = nodes.map(n => n.id === 'wait1'
+        ? { ...n, measured: { width: 180, height: 185 } } : n);
+    const fitted = reconcileMeasuredParallelLanes(changed, ['wait1']);
+    const first = byId(fitted, 'l1'), second = byId(fitted, 'l2'), parallel = byId(fitted, 'p');
+    assert.ok(first.height >= 40 + 185 + 40, 'event/overview content must be inside the visible lane frame');
+    assert.equal(second.position.y, first.position.y + first.height, 'lane dividers must be contiguous');
+    assert.equal(second.position.y + second.height + 45, parallel.height, 'bottom lane and parallel share one boundary');
+    assert.equal(first.width, parallel.width);
+    assert.equal(second.width, parallel.width);
+    assert.equal(byId(fitted, 'wait1'), changed[3], 'skill geometry is not rewritten');
+    assert.equal(byId(fitted, 'wait2'), changed[4], 'other skill is not touched');
+    assert.equal(reconcileMeasuredParallelLanes(fitted, ['wait1']), fitted, 'same measurements do not loop');
+    const smaller = fitted.map(n => n.id === 'wait1' ? { ...n, measured: { width: 180, height: 60 } } : n);
+    const back = reconcileMeasuredParallelLanes(smaller, ['wait1']);
+    assert.equal(byId(back, 'l2').position.y, byId(back, 'l1').position.y + byId(back, 'l1').height);
+});
+
+test('mode-switch measurement also fits a legacy automatic lane compound', async () => {
+    const { reconcileMeasuredParallelLanes } = await import('./containerState.js');
+    const nodes = [
+        { id: 'p', type: 'parallel', position: { x: 0, y: 0 }, width: 500, height: 429,
+            style: { width: 500, height: 429 } },
+        { id: 'l1', type: 'parallelLane', parentId: 'p', position: { x: 0, y: 64 }, width: 500, height: 160,
+            style: { width: 500, height: 160 } },
+        { id: 'l2', type: 'parallelLane', parentId: 'p', position: { x: 0, y: 224 }, width: 500, height: 160,
+            style: { width: 500, height: 160 } },
+        { id: 'wrapper', type: 'compound', parentId: 'l1', position: { x: 0, y: 0 }, width: 500, height: 160,
+            style: { width: 500, height: 160 }, data: { autoParallelLaneCompound: true } },
+        { id: 'wait', type: 'custom', parentId: 'wrapper', position: { x: 40, y: 45 },
+            measured: { width: 175, height: 215 } },
+    ];
+    const updated = reconcileMeasuredParallelLanes(nodes, ['wait']);
+    assert.ok(byId(updated, 'l1').height >= 45 + 215 + 40);
+    assert.equal(byId(updated, 'wrapper').height, byId(updated, 'l1').height);
+    assert.equal(byId(updated, 'wrapper').width, byId(updated, 'l1').width);
+    assert.equal(byId(updated, 'l2').position.y, byId(updated, 'l1').position.y + byId(updated, 'l1').height);
+    assert.equal(byId(updated, 'wait'), nodes[4]);
+});
+
+test('unrelated measurements and a collapsed parallel do not reflow lanes', async () => {
+    const { reconcileMeasuredParallelLanes } = await import('./containerState.js');
+    const nodes = [
+        { id: 'p', type: 'parallel', data: { isCollapsed: true }, width: 210, height: 80 },
+        { id: 'lane', parentId: 'p', type: 'parallelLane', position: { x: 0, y: 64 }, width: 500, height: 200 },
+        { id: 'wait', parentId: 'lane', type: 'custom', measured: { width: 200, height: 210 }, position: { x: 40, y: 40 } },
+    ];
+    assert.equal(reconcileMeasuredParallelLanes(nodes, ['other']), nodes);
+    assert.equal(reconcileMeasuredParallelLanes(nodes, ['wait']), nodes);
+});
