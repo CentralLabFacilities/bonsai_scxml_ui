@@ -1,0 +1,79 @@
+.run-log-panel {
+    flex: 0 0 auto;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    max-height: calc(100% - 150px);
+    color: #d5dce5;
+    background: #171c24;
+    border-top: 1px solid #374151;
+    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+.run-log-resize { position: absolute; top: 0; left: 0; right: 0; z-index: 2; height: 6px; cursor: ns-resize; touch-action: none; }
+.run-log-header { height: 35px; min-height: 35px; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: #252b35; border-bottom: 1px solid #343c48; }
+.run-log-title { border: 0; color: #e5e7eb; background: none; display: inline-flex; gap: 8px; align-items: center; padding: 4px 3px; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.run-log-dot { width: 7px; height: 7px; border-radius: 50%; background: #6b7280; flex: 0 0 auto; }
+.run-log-dot.connected { background: #4ade80; }
+.run-log-dot.connecting,.run-log-dot.reconnecting { background: #fbbf24; }
+.run-log-status,.run-log-count { color: #a7b0be; font-size: 11px; font-weight: 400; white-space: nowrap; }
+.run-log-count { margin-left: auto; }
+.run-log-actions { display: flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; }
+.run-log-actions button, .run-log-actions select { font: inherit; height: 25px; color: #cbd5e1; border: 1px solid #485263; background: #313a47; border-radius: 4px; cursor: pointer; }
+.run-log-actions button { width: 27px; display: inline-flex; align-items: center; justify-content: center; }
+.run-log-actions button:hover, .run-log-actions button.active { color: #fff; background: #475569; }
+.run-log-actions select { padding: 0 4px; max-width: 104px; }
+.run-log-search { display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; min-width: 78px; width: min(150px, 16vw); height: 25px; border-radius: 4px; border: 1px solid #485263; background: #111827; color: #94a3b8; box-sizing: border-box; }
+.run-log-search input { min-width: 0; width: 100%; background: transparent; color: #e2e8f0; font: inherit; border: 0; outline: 0; }
+.run-log-issue { color: #fbbf24; background: #42331e; padding: 3px 10px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.run-log-viewport { flex: 1 1 auto; min-height: 0; position: relative; overflow: auto; overscroll-behavior: contain; scrollbar-color: #596577 #171c24; }
+.run-log-virtual-space { position: relative; min-width: 100%; }
+.run-log-row { display: flex; gap: 10px; align-items: center; position: absolute; left: 0; right: 0; box-sizing: border-box; white-space: pre; padding: 0 12px; border-bottom: 1px solid #202733; font-variant-numeric: tabular-nums; min-width: max-content; }
+.run-log-row:hover { background: #2b3340; }
+.run-log-time { width: 94px; flex: 0 0 94px; color: #92a1b5; }
+.run-log-level { width: 45px; flex: 0 0 45px; font-weight: 700; color: #9ca3af; }
+.run-log-row.level-info .run-log-level { color: #86c8ed; }
+.run-log-row.level-debug .run-log-level,.run-log-row.level-trace .run-log-level { color: #9ca3af; }
+.run-log-row.level-warn .run-log-level,.run-log-row.level-warn .run-log-message { color: #fbbf24; }
+.run-log-row.level-error .run-log-level,.run-log-row.level-error .run-log-message,
+.run-log-row.level-fatal .run-log-level,.run-log-row.level-fatal .run-log-message { color: #fca5a5; }
+.run-log-message { flex: 0 0 auto; color: #dbe4f0; }
+.run-log-row.extra .run-log-message { color: #abb6c7; }
+.run-log-logger { font-size: 11px; color: #8091a7; margin-left: 8px; }
+.run-log-empty { position: absolute; top: 12px; left: 14px; color: #8d99ab; }
+.run-log-footer { height: 23px; min-height: 23px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; background: #202733; color: #98a7b9; border-top: 1px solid #343c48; font-size: 10px; }
+.run-log-panel button:focus-visible,.run-log-panel input:focus-visible,.run-log-panel select:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+@media(max-width: 1000px) {
+    .run-log-header { gap: 5px; padding: 0 6px; }
+    .run-log-status,.run-log-count { display: none; }
+    .run-log-search { width: 95px; }
+}
+
+.run-log-search-clear { flex: 0 0 auto; width: 18px !important; height: 18px !important;
+    border: 0 !important; background: transparent !important; color: #94a3b8; padding: 0;
+    display: inline-flex; align-items: center; justify-content: center; }
+.run-log-search-clear:hover { color: white !important; }
+
+/* A stack trace is a single collapsed row until the user opens it. Keep the
+   toggle within the virtualized scroll area so long traces stay efficient. */
+.run-log-stack-toggle {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 5px;
+    margin-left: -5px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: #b1c7df;
+    font: inherit;
+    cursor: pointer;
+}
+.run-log-stack-toggle svg { flex: 0 0 auto; }
+.run-log-stack-toggle:hover { color: #ffffff; background: #374151; }
+.run-log-stack-toggle:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; }
+.run-log-stack-line { color: #9caabc; }
