@@ -367,7 +367,7 @@ export default function RuntimeCommander({
                 const includeMapping = Object.fromEntries(behaviorDirectories
                     .filter((directory) => directory.key?.trim() && directory.path?.trim())
                     .map((directory) => [directory.key.trim(), (directory.resolvedPath || directory.path).trim()]));
-                // Connect before loading so configuration/startup logs are captured.
+                // Connect before loading so configuration/startup ui_logs are captured.
                 // Repeated Load calls reset the log panel even for the same workflow.
                 onLogLoadRequested?.();
                 sent = true;

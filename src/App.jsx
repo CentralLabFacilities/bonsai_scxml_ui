@@ -11,7 +11,7 @@ import Header, { EditorNotice, EditorPanel, EditorPanelLedge, EditorPanelResizer
 import SkillLibrary from "./components/library/SkillLibrary";
 import BehaviorLibrary from "./components/library/BehaviorLibrary";
 import EditorCanvas from "./components/canvas/EditorCanvas";
-import RunLogPanel from "./components/logs/RunLogPanel.jsx";
+import RunLogPanel from "./components/ui_logs/RunLogPanel.jsx";
 import EditorUtilityBar from "./components/EditorUtilityBar.jsx";
 import EditorOverlays from "./components/overlays/EditorOverlays.jsx";
 import WorkflowTabBar from "./components/WorkflowTabBar";

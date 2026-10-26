@@ -233,7 +233,7 @@ export function useRuntimeReplay({
                     store.set(cacheKey, { log: parsed, cache: prepared });
                     // Keep a small LRU-like in-memory cache. Re-loading a recent
                     // trace against the same graph becomes effectively instant
-                    // without allowing large logs to accumulate indefinitely.
+                    // without allowing large ui_logs to accumulate indefinitely.
                     while (store.size > 4) {
                         const oldestKey = store.keys().next().value;
                         store.delete(oldestKey);

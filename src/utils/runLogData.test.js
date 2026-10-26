@@ -16,7 +16,7 @@ test('parses the server log protocol with epoch milliseconds and nullable stack 
     assert.equal(entry.message, 'State machine started');
     assert.equal(entry.stackTrace, '');
     assert.match(formatRunLogTimestamp(entry.timestamp), /^\d\d:\d\d:\d\d\.\d{3}$/);
-    assert.equal(RUN_LOG_URL, 'ws://127.0.0.1:8765/bonsai/logs');
+    assert.equal(RUN_LOG_URL, 'ws://127.0.0.1:8765/bonsai/ui_logs');
 });
 
 test('malformed messages are ignored rather than crashing the stream', () => {
@@ -45,7 +45,7 @@ test('stack traces and multiline messages produce searchable, independent consol
 });
 
 
-test('expanding one stack trace leaves other logs collapsed with stable keys', () => {
+test('expanding one stack trace leaves other ui_logs collapsed with stable keys', () => {
     const entries = [11, 12].map((id) => ({
         id, timestamp: 1, level: 'ERROR', logger: 'Engine', message: 'Failed',
         stackTrace: 'Exception\n\tat Test.java:1',
