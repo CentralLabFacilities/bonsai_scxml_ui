@@ -53,6 +53,7 @@ function DetailsPanel({
                           onNavigateClone,
                           containerOutgoingTransitions = [],
                           skillOutgoingTransitions = [],
+                          skillSharedExits = [],
                           onNavigateTransitionNode,
                           onHoverTransitionNode,
                           onHoverTransitionEdge,
@@ -434,6 +435,7 @@ function DetailsPanel({
                         editableExitTokens={editableExitTokens}
                         availableTargetNodes={availableTargetNodes}
                         skillOutgoingTransitions={skillOutgoingTransitions}
+                        skillSharedExits={skillSharedExits}
                         containerOutgoingTransitions={containerOutgoingTransitions}
                         parallelLanes={parallelLanes}
                         onSetInitial={onSetInitial}

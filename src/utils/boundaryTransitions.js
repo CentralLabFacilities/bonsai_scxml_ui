@@ -396,6 +396,14 @@ const rebuildBoundaryTransitionsImpl = (sourceNodes = [], sourceEdges = []) => {
                                 boundaryExitId: exitId,
                                 boundaryOriginalSource: path.sourceId,
                                 boundaryOriginalSourceHandle: path.sourceHandle,
+                                // A second matching skill/lane shows the same
+                                // enclosing SCXML transition, but does not own it.
+                                // This flag affects presentation only.
+                                ...(pathIndex > 0 ? {
+                                    implicitSharedExit: true,
+                                    sharedExitOriginSourceId: primarySource.sourceId,
+                                    sharedExitOriginSourceHandle: primarySource.sourceHandle,
+                                } : {}),
                                 ...(step.kind === "compound"
                                     ? {
                                         compoundInternalEdge: true,

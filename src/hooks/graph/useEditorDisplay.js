@@ -817,13 +817,15 @@ export function useEditorDisplay({
         ]
     );
 
-    // Rendering every background transition with obstacle-aware smart routing is
-    // disproportionately expensive on large workflows. Keep the complete
-    // semantic graph loaded, but switch only the unfocused presentation to a
-    // cheap Bezier path once the graph crosses this threshold. Focused/selected
-    // transitions still use the full smart-routed, labelled representation.
+    // Keep smart-edge components mounted throughout a node drag. Temporarily
+    // replacing them with Beziers unregisters their routes from SmartEdgeProvider;
+    // remounting after drop can leave obstacle-avoiding routes pending or stale.
+    // The obstacle snapshot itself remains frozen during the drag (above), so
+    // the worker only receives the final geometry when the drag stops.
+    // For genuinely large graphs the usual lightweight *background* mode still
+    // applies independently of the drag gesture.
     const useLightweightBackgroundTransitions =
-        isDraggingNode || smartTransitionEdges.length >= 180;
+        smartTransitionEdges.length >= 180;
 
     // Cache all presentation variants independently from React Flow selection.
     // Selecting one edge used to rebuild base/focused objects for the complete
@@ -875,6 +877,14 @@ export function useEditorDisplay({
                     : semanticEdge.markerEnd;
                 if (markerEnd) delete markerEnd.color;
                 semanticEdge = { ...semanticEdge, style, markerEnd };
+            }
+            // Class-only styling keeps implicit legs identifiable without
+            // triggering React state changes during hover or dragging.
+            if (clearedEdge.data?.implicitSharedExit) {
+                semanticEdge = withEdgeClassName(
+                    semanticEdge,
+                    "editor-implicit-shared-edge"
+                );
             }
             const edge = useLightweightBackgroundTransitions
                 ? {
@@ -1741,30 +1751,13 @@ export function useEditorDisplay({
             ];
         }
 
-        // Dragging is the hottest interaction path in the editor. Keeping every
-        // transition/slot edge mounted means React Flow still has to maintain a
-        // very large SVG tree while only one node is moving. During the drag,
-        // keep just the edges that actually belong to the dragged node (plus
-        // explicitly selected edges). The full cached edge graph is restored
-        // once on drag stop. This changes presentation only; semantic edges are
-        // never removed from the editor model.
-        if (isDraggingNode) {
-            nextVisibleEdges = nextVisibleEdges
-                .filter((edge) => {
-                    if (edge.selected) return true;
-
-                    const connectedNodeIds = new Set([
-                        ...getTransitionEdgeNodeIds(edge),
-                        ...getSlotEdgeNodeIds(edge),
-                    ]);
-                    return [...connectedNodeIds].some((nodeId) =>
-                        edgeFocusNodeIds.has(nodeId)
-                    );
-                })
-                .map((edge) =>
-                    edge.animated ? { ...edge, animated: false } : edge
-                );
-        }
+        // Do not filter out disconnected edges during dragging. Their endpoints
+        // need not move for their obstacle-avoiding path to become invalid: a
+        // different node can move into or out of the route. Unmounting these
+        // edges loses their smart-routing registrations, so the final obstacle
+        // snapshot cannot reliably refresh every affected path after drop.
+        // Focus/opacity during the gesture is handled by the existing CSS;
+        // geometry-only changes are still deferred until release.
 
         if (hiddenNodeIds.size > 0) {
             nextVisibleEdges = nextVisibleEdges.filter(

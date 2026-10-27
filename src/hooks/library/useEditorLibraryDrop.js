@@ -21,6 +21,7 @@ import { isEditorModalOpen } from "../interaction/useGlobalEditorShortcuts.js";
 import { isEditorCloneNode } from "../../utils/editorClones";
 import { appendLibraryNodeWithInitial, ensureUniqueLibraryNodeId } from "../../utils/libraryInitialState.js";
 import { insertNodeWithParallelBoundarySync } from "../../utils/libraryParallelInsertion.js";
+import { findParallelLaneSkillConflicts, describeParallelLaneSkillConflict } from "../../utils/parallelLaneSkillValidation.js";
 
 export function useEditorLibraryDrop({
     activeMode,
@@ -174,6 +175,20 @@ export function useEditorLibraryDrop({
                 ? nodes.find((candidate) => candidate.parentId === targetLane.id && isAutoParallelLaneCompound(candidate)) || null
                 : null;
             const insertionCompound = targetCompound || targetLaneCompound;
+
+            // Reject insertion before changing any editor/Rust state. This also
+            // covers compounds nested inside lanes and automatic lane wrappers.
+            const insertionParentId = insertionCompound?.id || targetLane?.id;
+            if (insertionParentId && newNode.type === "custom") {
+                const conflict = findParallelLaneSkillConflicts(
+                    [...nodes, { ...newNode, parentId: insertionParentId }],
+                    { focusNodeIds: new Set([newNode.id]) }
+                )[0];
+                if (conflict) {
+                    throw new Error(describeParallelLaneSkillConflict(conflict));
+                }
+            }
+
 
             const finishInsertion = (laneId = null) => {
                 const reportSyncError = (error) => {
@@ -556,7 +571,9 @@ export function useEditorLibraryDrop({
                 action: "insert",
                 title: `Could not add an item to ${origin?.title || "workflow"}`,
                 message: String(error?.message || error || "The library item could not be loaded."),
-                guidance: "Check the backend connection or behavior file, then add or drag the item again.",
+                guidance: String(error?.message || "").includes("Skills in different lanes")
+                    ? "Use a different skill type in this lane, or place another instance in the lane that already uses it."
+                    : "Check the backend connection or behavior file, then add or drag the item again.",
             });
             return false;
         }

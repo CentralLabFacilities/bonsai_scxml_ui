@@ -123,18 +123,22 @@ impl<'a> ExportIndex<'a> {
         false
     }
 
-    /// Resolve the single semantic owner for an editor transition.
+    /// Resolve the single SCXML owner for an editor transition.
     ///
-    /// A transition that leaves nested containers belongs to the outermost
-    /// Compound/Parallel boundary it exits.  Older exporter code inspected
-    /// every container independently, which meant the same editor edge could
-    /// be emitted once for each exited ancestor and therefore reuse the same
-    /// transition id multiple times.
+    /// Ordinary Compound exits stay on the outermost exited Compound. Exits
+    /// from a Parallel, however, belong to the *source lane state* (the lane's
+    /// auto-Compound when the visual lane is flattened). Declaring the exit on
+    /// <parallel> is not reliably handled by the Bonsai runtime. It also loses
+    /// the originating lane, which is needed to serialize the working SCXML.
+    ///
+    /// This preserves exactly one semantic transition, even though the editor
+    /// can project its exit port onto all Parallel lanes.
     pub(super) fn transition_owner_id(&self, source_id: &str, target_id: &str) -> Option<&'a str> {
         let source = self.nodes_by_id.get(source_id).copied()?;
         let mut owner = source.id.as_str();
         let mut parent_id = source.parent_id.as_deref();
         let mut visited = HashSet::new();
+        let mut exited_parallel_via_lane = HashSet::new();
 
         while let Some(id) = parent_id {
             if !visited.insert(id) {
@@ -142,16 +146,43 @@ impl<'a> ExportIndex<'a> {
             }
 
             let parent = self.nodes_by_id.get(id).copied()?;
-            if matches!(parent.node_type.as_str(), "compound" | "parallel")
-                && !self.is_inside_container(target_id, id)
-            {
-                owner = parent.id.as_str();
+            match parent.node_type.as_str() {
+                "compound" if !self.is_inside_container(target_id, id) => {
+                    owner = parent.id.as_str();
+                }
+                "parallelLane" => {
+                    // Only a transition leaving the entire Parallel should
+                    // be moved to the lane. Transitions internal to the
+                    // Parallel retain their existing owner semantics.
+                    if let Some(parallel_id) = parent.parent_id.as_deref() {
+                        if self.nodes_by_id.get(parallel_id)
+                            .is_some_and(|parallel| parallel.node_type == "parallel")
+                            && !self.is_inside_container(target_id, parallel_id)
+                        {
+                            let semantic_lane_id = self.semantic_state_id(&parent.id);
+                            owner = self.nodes_by_id
+                                .get(semantic_lane_id.as_str())?
+                                .id.as_str();
+                            exited_parallel_via_lane.insert(parallel_id);
+                        }
+                    }
+                }
+                "parallel" if !self.is_inside_container(target_id, id) => {
+                    if !exited_parallel_via_lane.contains(id) {
+                        // A transition originating directly on a Parallel
+                        // has no identifiable lane. Keep its original owner
+                        // rather than arbitrarily assigning a region.
+                        owner = parent.id.as_str();
+                    }
+                }
+                _ => {}
             }
             parent_id = parent.parent_id.as_deref();
         }
 
         Some(owner)
     }
+
 }
 
 #[cfg(test)]

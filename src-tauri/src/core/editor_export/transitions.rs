@@ -330,6 +330,35 @@ fn build_container_transitions(
             continue;
         }
         let (target_state_id, target_scxml_id) = target_details(&event.target, index);
+
+        // A previously imported <parallel><transition .../> may still exist
+        // in the Parallel's event list after the editor reconstructs its
+        // canonical skill-to-outside edge. When that edge now belongs to a
+        // lane, do not serialize a second transition on the old Parallel.
+        if node.node_type == "parallel" && request.edges.iter().any(|edge| {
+            if !index.is_strict_descendant(&edge.source, &node.id)
+                || index.transition_owner_id(&edge.source, &edge.target)
+                    == Some(node.id.as_str())
+            {
+                return false;
+            }
+            let (_, edge_target) = target_details(&edge.target, index);
+            if edge_target != target_scxml_id ||
+                edge.condition.trim() != event.condition.trim() {
+                return false;
+            }
+            let (source_id, handle) = semantic_edge_source(edge);
+            let edge_event = if !edge.imported_raw_event.trim().is_empty() {
+                edge.imported_raw_event.trim().to_string()
+            } else {
+                scxml_transition_event(handle, &index.nodes_by_id
+                    .get(source_id).map(|source| state_name(source)).unwrap_or_default())
+            };
+            edge_event == raw_event
+        }) {
+            continue;
+        }
+
         let transition = TransitionDto {
             id: format!("event-{}-{event_index}", node.id),
             source_state_id: node.id.clone(),
@@ -446,7 +475,7 @@ pub(super) fn build_transitions(
             continue;
         } else if node.is_behavior_exit && node.node_type != "parallelLane" {
             transitions.extend(build_behavior_exit_transition(node));
-        } else if matches!(node.node_type.as_str(), "compound" | "parallel") {
+        } else if matches!(node.node_type.as_str(), "compound" | "parallel" | "parallelLane") {
             transitions.extend(build_container_transitions(node, request, index));
         } else {
             transitions.extend(build_normal_transitions(node, request, index));

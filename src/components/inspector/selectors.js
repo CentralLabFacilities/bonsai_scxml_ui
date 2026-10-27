@@ -123,7 +123,7 @@ export function areDetailsPanelPropsEqual(previous, next) {
         "selectedNode", "hasInitialNode", "activeTab", "availableTargetNodes",
         "availableSlotPaths", "globalDataModel", "actionValueVariables", "slotDetails",
         "parameterFocusRequest", "slotFocusRequest", "transitionFocusRequest", "cloneSourceNode",
-        "cloneNodes", "containerOutgoingTransitions", "skillOutgoingTransitions", "parallelLanes",
+        "cloneNodes", "containerOutgoingTransitions", "skillOutgoingTransitions", "skillSharedExits", "parallelLanes",
     ];
     if (!stableDataProps.every((key) => previous[key] === next[key])) return false;
 

@@ -9,6 +9,7 @@ import {
     sanitizePersistentGraphClipboard,
     setPersistentGraphClipboard,
 } from "../../utils/editorClipboard";
+import { findParallelLaneSkillConflicts, describeParallelLaneSkillConflict } from "../../utils/parallelLaneSkillValidation.js";
 import {
     buildCopiedGraphPaste,
     buildPastedSlotAliases,
@@ -34,6 +35,7 @@ export const useEditorClipboard = ({
     screenToFlowPosition,
     syncPastedEditorSubgraphAfterCommit,
     syncStateEditorPositions,
+    onParallelSkillConflict,
 }) => {
     const graphClipboardRef = useRef(null);
     const [hasGraphClipboard, setHasGraphClipboard] = useState(() =>
@@ -336,6 +338,14 @@ export const useEditorClipboard = ({
                 slotNodes,
                 pasteTranslation,
             });
+
+            const conflict = findParallelLaneSkillConflicts(nextNodes, {
+                focusNodeIds: pastedIds,
+            })[0];
+            if (conflict) {
+                onParallelSkillConflict?.(describeParallelLaneSkillConflict(conflict));
+                return false;
+            }
 
             setNodes(nextNodes);
             setSlotNodes(nextSlotNodes);

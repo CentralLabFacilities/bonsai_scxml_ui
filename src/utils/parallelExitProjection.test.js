@@ -25,6 +25,14 @@ test('a single SCXML transition has rendered exit-to-target legs in both paralle
     assert.equal(copies[0].target,'out');
     assert.equal(copies[0].sourceHandle,graph.edges.find(e=>e.id==='semantic').sourceHandle);
     assert.equal(copies[0].data.projectionOfEdgeId,'semantic');
+    assert.equal(copies[0].data.implicitSharedExit,true);
+    assert.equal(copies[0].data.sharedExitOriginSourceId,'wait-a');
+    assert.equal(copies[0].data.sharedExitOriginSourceHandle,'success');
+    assert.equal(copies[0].data.sharedExitOriginName,'Wait#1');
+    const primaryHelper = helper.find(e=>e.source==='wait-a');
+    const sharedHelper = helper.find(e=>e.source==='wait-b');
+    assert.notEqual(primaryHelper.data?.implicitSharedExit,true,'the explicit origin remains solid');
+    assert.equal(sharedHelper.data?.implicitSharedExit,true,'only the mirrored inner leg is dashed');
     assert.equal(copies[0].selectable,true);
     assert.equal(copies[0].deletable,true);
     assert.equal(project(graph)[0].id,copies[0].id,'stable visual identity');

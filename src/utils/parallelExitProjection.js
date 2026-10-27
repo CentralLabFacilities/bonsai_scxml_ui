@@ -1,6 +1,7 @@
 /**
- * React Flow-only projections of a single SCXML transition declared on a
- * parallel. A semantic edge has exactly one SCXML owner but may have many
+ * React Flow-only projections of a single exit from a parallel container.
+ * The SCXML serializer places the semantic transition on its source lane's
+ * Compound, not on <parallel>. That ONE transition may still have many
  * visually active lane exit ports. Never pass these projections to document
  * state, history, transition sync or export.
  */
@@ -47,6 +48,20 @@ export function projectParallelLaneExitEdges(edges = [], nodeById = new Map()) {
                     ...edge.data,
                     editorVisualProjection: true,
                     projectionOfEdgeId: edge.id,
+                    implicitSharedExit: true,
+                    sharedExitOriginSourceId: edge.data?.boundaryOriginalSources?.[0]?.sourceId ||
+                        edge.data?.boundaryOriginalSource || edge.data?.parallelOriginalSource || "",
+                    sharedExitOriginSourceHandle: edge.data?.boundaryOriginalSources?.[0]?.sourceHandle ||
+                        edge.data?.boundaryOriginalSourceHandle || edge.data?.parallelOriginalSourceHandle || "",
+                    sharedExitOriginName: (() => {
+                        const originId = edge.data?.boundaryOriginalSources?.[0]?.sourceId ||
+                            edge.data?.boundaryOriginalSource || edge.data?.parallelOriginalSource;
+                        const origin = nodeById.get(originId);
+                        const fullName = String(origin?.data?.fullSkillName || "");
+                        return origin?.data?.editorInstanceId
+                            ? `${origin.data?.label || fullName.split(".").pop().split("#")[0] || originId}#${origin.data.editorInstanceId}`
+                            : fullName.split(".").pop() || origin?.data?.label || originId || "source skill";
+                    })(),
                     // Do not show a second condition/assignment badge.
                     cond: '',
                     assignments: [],

@@ -71,6 +71,23 @@ function TransitionAnnotationBadges({ data, x, y, hasLabel = false, selected = f
     );
 }
 
+/** One discreet label per projected outer leg, never per boundary helper. */
+function SharedExitIndicator({ data, x, y }) {
+    if (!data?.editorVisualProjection || !data?.implicitSharedExit) return null;
+    const origin = data.sharedExitOriginName || data.sharedExitOriginSourceId || "original skill";
+    const event = data.sharedExitOriginSourceHandle || "transition";
+    return (
+        <EdgeLabelRenderer>
+            <span
+                className="editor-shared-exit-indicator nodrag nopan"
+                style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${x}px, ${y - 16}px)`, pointerEvents: "all" }}
+                title={`Implicit shared exit from ${origin} (${event}). The transition belongs to the enclosing container.`}
+                aria-label={`Shared exit from ${origin}, ${event}`}
+            >↳ shared</span>
+        </EdgeLabelRenderer>
+    );
+}
+
 const CONTROL_POINT_SIZE = 14;
 const ADD_POINT_SIZE = 18;
 const EMPTY_ARRAY = Object.freeze([]);
@@ -688,6 +705,7 @@ function ManualEditableTransitionEdge(
             />
 
             <TransitionAnnotationBadges data={data} selected={selected} x={labelPoint.x} y={labelPoint.y} hasLabel={Boolean(label)} />
+            <SharedExitIndicator data={data} x={labelPoint.x} y={labelPoint.y} />
             <EdgeLabelRenderer>
                 {label && (
                     <div
@@ -998,6 +1016,7 @@ function AutoEditableTransitionEdge(props) {
             )}
 
             <TransitionAnnotationBadges data={data} selected={selected} x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2} hasLabel={Boolean(props.label)} />
+            <SharedExitIndicator data={data} x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2} />
             {selected && (
                 <EdgeLabelRenderer>
                     <button

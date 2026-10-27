@@ -86,8 +86,9 @@ mod tests {
     use super::build_workflow_from_editor;
     use crate::core::editor_export::types::{
         EditorBehaviorExitTransitionDto, EditorExportEdgeDto, EditorExportNodeDto,
-        EditorExportRequestDto, EditorTransitionSourceDto,
+        EditorExportRequestDto, EditorExportEventDto, EditorTransitionSourceDto,
     };
+    use crate::core::scxml::{parse_scxml, serialize_scxml};
 
     fn node(id: &str, node_type: &str, parent: Option<&str>) -> EditorExportNodeDto {
         EditorExportNodeDto {
@@ -169,6 +170,124 @@ mod tests {
         assert_eq!(workflow.transitions.len(), 1);
         assert_eq!(workflow.transitions[0].source_state_id, "outer");
         assert_eq!(workflow.transitions[0].id.as_str(), "edge-1");
+    }
+
+
+    // Regression: the Bonsai runtime does not reliably leave a Parallel when
+    // the exiting event handler is declared directly on <parallel>. It must be
+    // emitted on the lane's semantic Compound, not duplicated in every lane.
+    #[test]
+    fn parallel_exit_is_serialized_inside_its_source_lane_compound() {
+        let mut talk_lane = node("talk-lane", "parallelLane", Some("parallel"));
+        talk_lane.label = "TalkPart".into();
+        talk_lane.full_skill_name = "TalkPart".into();
+        let mut talk_wrapper = node("talk-wrap", "compound", Some("talk-lane"));
+        talk_wrapper.label = "TalkPart".into();
+        talk_wrapper.full_skill_name = "TalkPart".into();
+        let mut wait_lane = node("wait-lane", "parallelLane", Some("parallel"));
+        wait_lane.label = "Lane_2".into();
+        wait_lane.full_skill_name = "Lane_2".into();
+        let mut wait_wrapper = node("wait-wrap", "compound", Some("wait-lane"));
+        wait_wrapper.label = "Lane_2".into();
+        wait_wrapper.full_skill_name = "Lane_2".into();
+        let mut wait1 = node("wait-1", "custom", Some("wait-wrap"));
+        wait1.full_skill_name = "Wait#1".into();
+        let mut wait2 = node("wait-2", "custom", Some("talk-wrap"));
+        wait2.full_skill_name = "Wait#2".into();
+        let mut end = node("end", "custom", None);
+        end.full_skill_name = "End".into();
+        end.is_final = true;
+        let mut fatal = node("fatal", "custom", None);
+        fatal.full_skill_name = "Fatal".into();
+        fatal.is_final = true;
+        let request = EditorExportRequestDto {
+            nodes: vec![node("parallel", "parallel", None), talk_lane, talk_wrapper,
+                wait2, wait_lane, wait_wrapper, wait1, end, fatal],
+            edges: vec![
+                EditorExportEdgeDto { id: "exit-success".into(), source: "wait-1".into(),
+                    source_handle: "success".into(), target: "end".into(),
+                    logical_sources: vec![EditorTransitionSourceDto {
+                        state_id: "wait-1".into(), handle: "success".into(),
+                    }], ..Default::default() },
+                EditorExportEdgeDto { id: "exit-fatal".into(), source: "wait-1".into(),
+                    source_handle: "fatal".into(), target: "fatal".into(),
+                    ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let workflow = build_workflow_from_editor(&request).unwrap();
+        assert_eq!(workflow.transitions.len(), 2);
+        assert!(workflow.transitions.iter().all(|tr| tr.source_state_id == "wait-wrap"));
+        assert_eq!(workflow.transitions[0].event, "Wait.success");
+        assert_eq!(workflow.transitions[1].event, "Wait.fatal");
+        let xml = serialize_scxml(&workflow).unwrap();
+        let parallel_body = xml.split("<parallel id=\"parallel\"").nth(1).unwrap();
+        let talk_body = parallel_body.split("<state id=\"TalkPart\"").nth(1).unwrap();
+        let wait_body = talk_body.split("<state id=\"Lane_2\"").nth(1).unwrap();
+        assert!(!parallel_body.split("<state id=").next().unwrap().contains("<transition"));
+        assert!(!talk_body.split("<state id=").next().unwrap().contains("<transition"));
+        assert!(wait_body.contains("<transition event=\"Wait.success\" target=\"End\""));
+        assert!(wait_body.contains("<transition event=\"Wait.fatal\" target=\"Fatal\""));
+        let reopened = parse_scxml(&xml).unwrap();
+        let lane = reopened.states.iter().find(|s| s.scxml_id == "Lane_2").unwrap();
+        assert!(reopened.transitions.iter().all(|tr| tr.source_state_id == lane.id));
+    }
+
+    #[test]
+    fn parallel_lane_exit_without_editor_wrapper_is_kept_on_lane() {
+        let request = EditorExportRequestDto {
+            nodes: vec![node("p", "parallel", None),
+                node("lane", "parallelLane", Some("p")),
+                node("wait", "custom", Some("lane")),
+                node("out", "custom", None)],
+            edges: vec![EditorExportEdgeDto {
+                id: "e".into(), source: "wait".into(), source_handle: "success".into(),
+                target: "out".into(), ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let workflow = build_workflow_from_editor(&request).unwrap();
+        assert_eq!(workflow.transitions.len(), 1);
+        assert_eq!(workflow.transitions[0].source_state_id, "lane");
+    }
+
+    #[test]
+    fn imported_parallel_event_is_not_duplicated_after_lane_ownership_repair() {
+        let mut parallel = node("p", "parallel", None);
+        parallel.events.push(EditorExportEventDto {
+            id: "Wait.success".into(), raw_event: "Wait.success".into(),
+            target: "out".into(), ..Default::default()
+        });
+        let request = EditorExportRequestDto {
+            nodes: vec![parallel, node("lane", "parallelLane", Some("p")),
+                node("wait", "custom", Some("lane")), node("out", "custom", None)],
+            edges: vec![EditorExportEdgeDto {
+                id: "original".into(), source: "wait".into(), source_handle: "success".into(),
+                target: "out".into(), imported_raw_event: "Wait.success".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let workflow = build_workflow_from_editor(&request).unwrap();
+        assert_eq!(workflow.transitions.len(), 1);
+        assert_eq!(workflow.transitions[0].source_state_id, "lane");
+    }
+
+    #[test]
+    fn ordinary_compound_exit_still_uses_outermost_compound() {
+        let request = EditorExportRequestDto {
+            nodes: vec![node("outer", "compound", None),
+                node("inner", "compound", Some("outer")),
+                node("wait", "custom", Some("inner")),
+                node("out", "custom", None)],
+            edges: vec![EditorExportEdgeDto {
+                id: "e".into(), source: "wait".into(), source_handle: "success".into(),
+                target: "out".into(), ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let workflow = build_workflow_from_editor(&request).unwrap();
+        assert_eq!(workflow.transitions[0].source_state_id, "outer");
     }
 
     #[test]

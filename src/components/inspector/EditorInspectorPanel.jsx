@@ -165,6 +165,7 @@ export default function EditorInspectorPanel({
                             cloneNodes={selection.cloneNodes}
                             containerOutgoingTransitions={selection.containerOutgoingTransitions}
                             skillOutgoingTransitions={selection.skillOutgoingTransitions}
+                            skillSharedExits={selection.skillSharedExits}
                             parallelLanes={selection.parallelLanes}
                             hasInitialNode={selection.hasInitialNode}
                             activeTab={details.activeTab}

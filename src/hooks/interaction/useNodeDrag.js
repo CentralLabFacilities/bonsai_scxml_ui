@@ -3,6 +3,7 @@ import { resolveCollisionScope } from "../../utils/nodeCollisions";
 import { cleanEventsForDeletedStates } from "../../utils/transitionDeletion";
 import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
 import { createEditorNodeIndex } from "../../utils/editorGraph";
+import { findParallelLaneSkillConflicts, describeParallelLaneSkillConflict } from "../../utils/parallelLaneSkillValidation.js";
 import {
     NODE_COLLISION_OPTIONS,
     fitCompoundAndAncestorCompounds,
@@ -80,6 +81,7 @@ export function useNodeDrag({
     syncStatePosition,
     syncStateEditorPositions,
     syncRemovedStates,
+    onParallelSkillConflict,
 }) {
     const [parallelDropTargetId, setParallelDropTargetId] = useState(null);
     const [compoundDropTargetId, setCompoundDropTargetId] = useState(null);
@@ -106,6 +108,7 @@ export function useNodeDrag({
     });
     const dragTrashBoundsRef = useRef(null);
     const dragOriginParentIdRef = useRef(null);
+    const dragOriginNodeRef = useRef(null);
 
     const buildDragContainerIndex = useCallback((currentNodes) => {
         const graphIndex = createEditorNodeIndex(currentNodes);
@@ -198,6 +201,13 @@ export function useNodeDrag({
             : null;
 
         dragOriginParentIdRef.current = node.parentId || null;
+        dragOriginNodeRef.current = {
+            id: node.id,
+            parentId: node.parentId,
+            position: { ...node.position },
+            extent: node.extent,
+            expandParent: node.expandParent,
+        };
         setDraggingNodeId(node.id);
         setIsDraggingNode(true);
         setHoveredEditorEdgeId(null);
@@ -324,6 +334,7 @@ export function useNodeDrag({
         }
         pendingNodeDragRef.current = null;
         const dragOriginParentId = dragOriginParentIdRef.current;
+        const dragOriginNode = dragOriginNodeRef.current;
         dragContainerIndexRef.current = {
             lanes: [],
             compounds: [],
@@ -333,6 +344,7 @@ export function useNodeDrag({
         };
         dragTrashBoundsRef.current = null;
         dragOriginParentIdRef.current = null;
+        dragOriginNodeRef.current = null;
 
         const element = document.elementFromPoint(
             event.clientX,
@@ -563,6 +575,40 @@ export function useNodeDrag({
                 return null;
             }
 
+            // Evaluate only once at drop, never during pointer movement.
+            // Reject moves of an entire compound/parallel subtree as well as
+            // individual skills into another region of the same parallel.
+            const movedSkillIds = new Set([draggedNode.id]);
+            currentNodes.forEach((candidate) => {
+                if (graphIndex.getAncestorIds(candidate).has(draggedNode.id)) {
+                    movedSkillIds.add(candidate.id);
+                }
+            });
+            const finishReparent = (nextNodes, nextEdges) => {
+                const conflict = findParallelLaneSkillConflicts(nextNodes, {
+                    focusNodeIds: movedSkillIds,
+                })[0];
+                if (!conflict) return { nodes: nextNodes, edges: nextEdges };
+                onParallelSkillConflict?.(describeParallelLaneSkillConflict(conflict));
+                // React Flow has already rendered the pointer-position update.
+                // Restore the exact original hierarchy and position, and do not
+                // disconnect transitions or send an invalid lane move to Rust.
+                return {
+                    nodes: currentNodes.map((candidate) =>
+                        candidate.id === dragOriginNode?.id
+                            ? {
+                                ...candidate,
+                                parentId: dragOriginNode.parentId,
+                                position: dragOriginNode.position,
+                                extent: dragOriginNode.extent,
+                                expandParent: dragOriginNode.expandParent,
+                            }
+                            : candidate
+                    ),
+                    edges: currentEdges,
+                };
+            };
+
             const draggedParent = draggedNode.parentId
                 ? graphIndex.byId.get(draggedNode.parentId)
                 : null;
@@ -723,7 +769,7 @@ export function useNodeDrag({
                     orderNodesParentsFirst(next),
                     nextEdges
                 );
-                return { nodes: rebuilt.nodes, edges: rebuilt.edges };
+                return finishReparent(rebuilt.nodes, rebuilt.edges);
             }
 
             const sourceLane = graphIndex.findAncestor(
@@ -904,7 +950,7 @@ export function useNodeDrag({
                 orderNodesParentsFirst(nextNodes),
                 nextEdges
             );
-            return { nodes: rebuilt.nodes, edges: rebuilt.edges };
+            return finishReparent(rebuilt.nodes, rebuilt.edges);
         });
 
         // Slot nodes live in a separate state array, but in Slot/Overview mode
@@ -970,6 +1016,7 @@ export function useNodeDrag({
         syncStatePosition,
         syncStateEditorPositions,
         syncRemovedStates,
+        onParallelSkillConflict,
         setSelectedNodeId,
         ]);
 

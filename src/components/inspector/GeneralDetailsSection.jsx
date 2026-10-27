@@ -59,11 +59,12 @@ const ExitTokenRow = memo(function ExitTokenRow({
     onHoverTransitionEdge,
     onOpenTransitionPanel,
     outgoingTransitions = [],
+    sharedExits = [],
 }) {
     // The graph edges, not the individual duplicated SCXML event entries,
     // determine the targets shown here. Keep each edge separate: two conditions
     // can lead from the same exit token to the same skill.
-    const targets = outgoingTransitions.length > 0
+    const explicitTargets = outgoingTransitions.length > 0
         ? outgoingTransitions.map((transition) => ({
             id: transition.targetNodeId,
             transition,
@@ -80,6 +81,20 @@ const ExitTokenRow = memo(function ExitTokenRow({
                 targetNodeIndex.byId.has(item.id) &&
                 items.findIndex((other) => other.id === item.id) === itemIndex
             );
+    // A shared exit is visible here but never becomes an editable transition
+    // belonging to this skill. Its only editable edge is the original one.
+    const targets = [
+        ...explicitTargets,
+        ...sharedExits.map((shared) => ({
+            id: shared.target,
+            transition: {
+                ...shared,
+                targetNodeId: shared.target,
+                shared: true,
+            },
+            key: `shared-${shared.edgeId}`,
+        })),
+    ];
 
     return (
         <div className={`slot-text-field compact-slot-card exit-token-card exit-token-${getExitTokenType(event.id)}`}>
@@ -104,7 +119,7 @@ const ExitTokenRow = memo(function ExitTokenRow({
                 <div className="exit-token-node-references">
                     {targets.map(({ id, transition, key }, targetIndex) => (
                         <div
-                            className="slot-text-field compact-slot-card slot-access-skill-card exit-token-node-reference exit-token-target-row"
+                            className={`slot-text-field compact-slot-card slot-access-skill-card exit-token-node-reference exit-token-target-row ${transition?.shared ? "exit-token-target-shared" : ""}`}
                             key={`${event.id}-${key}-${targetIndex}`}
                         >
                             <div className="compact-slot-header exit-token-node-reference-header">
@@ -125,12 +140,30 @@ const ExitTokenRow = memo(function ExitTokenRow({
                                         transitions={[transition]}
                                         onHover={onHoverTransitionEdge}
                                         onOpen={(item, section) => onOpenTransitionPanel?.(
-                                            nodeId, event.id, item.targetNodeId,
+                                            item.shared ? item.originSourceId : nodeId,
+                                            item.shared ? item.originSourceHandle : event.id,
+                                            item.targetNodeId,
                                             { edgeId: item.edgeId, focusSection: section }
                                         )}
                                     />
                                 )}
                                 <div className="exit-token-target-suffix">
+                                    {transition?.shared && (
+                                        <button type="button" className="exit-token-shared-indicator"
+                                            title={`Implicit exit from ${transition.originSourceName} (${transition.originSourceHandle}) via ${transition.scopeLabel}. Open the original transition.`}
+                                            aria-label={`Open original shared transition from ${transition.originSourceName}`}
+                                            onClick={(pointerEvent) => {
+                                                pointerEvent.stopPropagation();
+                                                onOpenTransitionPanel?.(
+                                                    transition.originSourceId,
+                                                    transition.originSourceHandle,
+                                                    transition.targetNodeId,
+                                                    { edgeId: transition.edgeId }
+                                                );
+                                            }}>
+                                            ↳ Shared
+                                        </button>
+                                    )}
                                     <span className="slot-access-badge exit-token-node-reference-badge">Target</span>
                                     <FiExternalLink className="slot-access-open-icon" aria-hidden="true" />
                                 </div>
@@ -154,6 +187,7 @@ function GeneralDetailsSection({
     editableExitTokens = [],
     availableTargetNodes = [],
     skillOutgoingTransitions = [],
+    skillSharedExits = [],
     containerOutgoingTransitions = [],
     parallelLanes = [],
     onSetInitial,
@@ -525,6 +559,7 @@ function GeneralDetailsSection({
                                 outgoingTransitions={skillOutgoingTransitions.filter((transition) =>
                                     transition.eventId === event.id
                                 )}
+                                sharedExits={skillSharedExits.filter((shared) => shared.event === event.id)}
                             />
                         ))}
                     </div>

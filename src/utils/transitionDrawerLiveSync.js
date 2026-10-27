@@ -37,8 +37,19 @@ export const getSharedContainerExitsForSkill = (sourceId, nodes, edges) => {
             event: String(matching.sourceHandle || edge?.sourceHandle || "success"),
             target: edge.target,
             targetLabel: target?.data?.label || target?.data?.fullSkillName || edge.target,
+            scopeId: scope.id,
             scopeLabel: scope.label,
             scopeType: scope.nodeType,
+            originSourceId: sources[0].sourceId,
+            originSourceHandle: sources[0].sourceHandle,
+            originSourceName: (() => {
+                const origin = byId.get(sources[0].sourceId);
+                const fullName = String(origin?.data?.fullSkillName || "");
+                return fullName.split(".").pop() ||
+                    origin?.data?.label || sources[0].sourceId;
+            })(),
+            assignments: Array.isArray(edge.data?.assignments)
+                ? edge.data.assignments : edge.data?.assign?.location ? [edge.data.assign] : [],
             cond: String(edge.data?.cond || ''),
         }];
     });

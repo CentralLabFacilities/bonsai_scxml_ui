@@ -8176,17 +8176,17 @@ dialog.skill-paste-choice-overlay {
  * .editor-edge-focus-active, while the canvas class dims all other mounted
  * transition SVG groups directly in CSS.
  */
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-transition-edge:not(.editor-edge-focus-active):not(.editor-canvas-fast-edge-focus-active):not(.editor-edge-selection-related):not(.selected),
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-slot-edge:not(.editor-edge-focus-active):not(.editor-canvas-fast-edge-focus-active):not(.editor-edge-selection-related):not(.selected) {
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-transition-edge:not(.editor-edge-focus-active):not(.editor-canvas-fast-edge-focus-active):not(.editor-edge-selection-related):not(.selected),
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-slot-edge:not(.editor-edge-focus-active):not(.editor-canvas-fast-edge-focus-active):not(.editor-edge-selection-related):not(.selected) {
     opacity: 0.22;
 }
 
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-transition-edge:is(.editor-edge-focus-active, .editor-canvas-fast-edge-focus-active),
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-transition-edge.editor-edge-selection-related,
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-transition-edge.selected,
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-slot-edge:is(.editor-edge-focus-active, .editor-canvas-fast-edge-focus-active),
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-slot-edge.editor-edge-selection-related,
-.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode) .react-flow__edge.editor-slot-edge.selected {
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-transition-edge:is(.editor-edge-focus-active, .editor-canvas-fast-edge-focus-active),
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-transition-edge.editor-edge-selection-related,
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-transition-edge.selected,
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-slot-edge:is(.editor-edge-focus-active, .editor-canvas-fast-edge-focus-active),
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-slot-edge.editor-edge-selection-related,
+.react-flow:is(.editor-edge-focus-mode, .editor-canvas-fast-edge-focus-mode, .editor-node-dragging) .react-flow__edge.editor-slot-edge.selected {
     opacity: 1;
 }
 
@@ -8196,14 +8196,16 @@ dialog.skill-paste-choice-overlay {
  * handful of context nodes; CSS dims the rest. This avoids mapping and cloning
  * every node whenever the pointer moves across a large state machine.
  */
-.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode) .react-flow__node:not(.editor-node-context-visible):not(.editor-canvas-fast-node-context-visible):not(.selected) {
+.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode, .editor-node-dragging) .react-flow__node:not(.editor-node-context-visible):not(.editor-canvas-fast-node-context-visible):not(.selected):not(.dragging) {
+    /* Keep context dimming, but avoid WebKitGTK's costly per-node grayscale
+       filters and transition frames on every fast-hover change. */
     opacity: 0.42;
-    filter: grayscale(0.72);
-    transition: opacity 120ms ease, filter 120ms ease;
+    filter: none;
+    transition: none;
 }
 
-.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode) .react-flow__node:is(.editor-node-context-visible, .editor-canvas-fast-node-context-visible),
-.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode) .react-flow__node.selected {
+.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode, .editor-node-dragging) .react-flow__node:is(.editor-node-context-visible, .editor-canvas-fast-node-context-visible, .dragging),
+.react-flow:is(.editor-node-focus-mode, .editor-canvas-fast-node-focus-mode, .editor-node-dragging) .react-flow__node.selected {
     opacity: 1;
     filter: none;
 }
@@ -11122,3 +11124,74 @@ dialog.skill-paste-choice-overlay {
     background: var(--ui-surface, #fff); color: inherit; cursor: pointer;
 }
 .runtime-commander-connection-help button:disabled { opacity: .5; cursor: default; }
+
+/* Implicit Parallel/Compound shared exits: presentation only. The primary
+   canonical transition stays solid. Apply the dash after the global idle-edge
+   rule, including on selected/focused paths, without altering React edge state. */
+.react-flow__edge.editor-implicit-shared-edge .react-flow__edge-path {
+    stroke-dasharray: 6 4 !important;
+}
+.react-flow__edge.editor-implicit-shared-edge:not(.selected):not(.editor-edge-focus-active):not(.editor-canvas-fast-edge-focus-active):not(.editor-edge-selection-related) .react-flow__edge-path {
+    stroke: #9a8bc5;
+}
+.react-flow.editor-transitions-context-only .editor-shared-exit-indicator {
+    display: none;
+}
+.editor-shared-exit-indicator {
+    display: inline-flex;
+    align-items: center;
+    border: 1px dashed #aa98cc;
+    border-radius: 5px;
+    background: #f2edf9;
+    color: #56437c;
+    padding: 2px 5px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: help;
+}
+.exit-token-target-row.exit-token-target-shared {
+    border-left: 2px dashed #a78bfa;
+    background: rgba(139, 92, 246, 0.07);
+}
+.exit-token-shared-indicator {
+    border: 1px dashed #a78bfa;
+    border-radius: 4px;
+    color: #c4b5fd;
+    background: rgba(139, 92, 246, 0.13);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 5px;
+    cursor: pointer;
+}
+.exit-token-shared-indicator:hover,
+.exit-token-shared-indicator:focus-visible {
+    background: rgba(139, 92, 246, 0.25);
+    border-color: #c4b5fd;
+    outline-offset: 2px;
+}
+.transition-order-card.transition-shared-exit-card {
+    border-left: 2px dashed #a78bfa;
+}
+/* Run is a light floating panel. Do not inherit the dark editor surface here:
+   it made the parallel section charcoal/black with dark text. */
+.runtime-commander-dialog .runtime-parallel-overview {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+    color: #0f172a;
+}
+.runtime-commander-dialog .runtime-parallel-overview .runtime-parallel-heading,
+.runtime-commander-dialog .runtime-parallel-overview .runtime-parallel-group > strong,
+.runtime-commander-dialog .runtime-parallel-overview .runtime-parallel-lane,
+.runtime-commander-dialog .runtime-parallel-overview .runtime-parallel-submachines {
+    color: #0f172a;
+}
+.runtime-commander-dialog .runtime-parallel-overview :is(.runtime-parallel-heading span, .runtime-parallel-lane small, .runtime-parallel-submachines small) {
+    color: #475569;
+    opacity: 1;
+}
+.runtime-commander-dialog .runtime-parallel-submachines > button {
+    color: #0f172a;
+    border-color: #cbd5e1;
+}

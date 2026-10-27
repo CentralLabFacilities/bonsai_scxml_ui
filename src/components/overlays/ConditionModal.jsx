@@ -154,6 +154,31 @@ function getTargetDisplayName(targetId, availableTargets) {
     return target?.displayName || target?.label || targetId;
 }
 
+/** A mirrored path is informational, never a second editable SCXML edge. */
+function SharedContainerExitCard({ exit }) {
+    return (
+        <div className="transition-order-card transition-shared-exit-card"
+             key={`${exit.edgeId}:${exit.event}`}
+             style={{
+                 "--transition-accent": getTransitionHighlightColor(exit.event),
+                 "--transition-accent-colorblind": getTransitionHighlightColor(exit.event, true),
+             }}
+             title={`Implicit shared exit from ${exit.originSourceName || "original skill"} (${exit.originSourceHandle || exit.event}). Edit the original transition.`}>
+            <div className="transition-order-main">
+                <div className="transition-order-title-row">
+                    <span className="transition-event-name">{exit.event}</span>
+                    <span className="transition-scope-type">↳ Shared</span>
+                </div>
+                <div className="transition-order-summary">
+                    <span>{exit.cond || "No condition"}</span>
+                    <FiArrowRight />
+                    <span>{exit.targetLabel}</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function ConditionModal({
                             isOpen,
                             onClose,
@@ -219,6 +244,23 @@ function ConditionModal({
         [scopeGroups]
     );
     const showHierarchy = hasTransitionScopeHierarchy(scopeGroups);
+    // Keep shared exits out of transitionsState: they have a different SCXML
+    // owner and must not enter ordering, editing or commit operations.
+    const sharedExitsByScope = useMemo(() => {
+        const result = new Map();
+        sharedContainerExits.forEach((exit) => {
+            const scopeId = String(exit.scopeId || exit.scopeLabel);
+            if (!result.has(scopeId)) result.set(scopeId, []);
+            result.get(scopeId).push(exit);
+        });
+        return result;
+    }, [sharedContainerExits]);
+    const sharedOnlyScopes = useMemo(() => {
+        const editableScopes = new Set(scopeGroups.map((scope) => String(scope.id)));
+        return [...sharedExitsByScope.entries()]
+            .filter(([id]) => !editableScopes.has(id))
+            .map(([id, exits]) => ({ id, exits, label: exits[0].scopeLabel }));
+    }, [scopeGroups, sharedExitsByScope]);
     const shadowedTransitions = useMemo(
         () => getShadowedTransitions(scopeGroups),
         [scopeGroups]
@@ -1220,7 +1262,7 @@ function ConditionModal({
                                                 <div className="transition-scope-heading">
                                                     <div className="transition-scope-title">
                                                         <span className="transition-scope-name">{scope?.label || sourceNodeName}</span>
-                                                        {showHierarchy && <span className="transition-scope-type">
+                                                        {(showHierarchy || scope?.depth > 0) && <span className="transition-scope-type">
                                                             {scope?.depth === 0 ? "Local transitions" : "Parent scope"}
                                                         </span>}
                                                     </div>
@@ -1382,46 +1424,30 @@ function ConditionModal({
                                                     </button>
                                                 </div>
                                             </div>
+                                            {!targetOnlyMode && !nextInScope &&
+                                                (sharedExitsByScope.get(String(transition.scopeId || "unscoped")) || [])
+                                                    .map((exit) => <SharedContainerExitCard key={`${exit.edgeId}:${exit.event}`} exit={exit} />)}
                                             </Fragment>
                                         );
                                     })
-                                ) : (
-                                    <div className="transition-empty-state">
-                                        {sharedContainerExits.length ? "No direct transitions." : "No transitions yet."}
-                                    </div>
-                                )}
+                                ) : !sharedContainerExits.length ? (
+                                    <div className="transition-empty-state">No transitions yet.</div>
+                                ) : null}
                             </div>
 
-                            {!targetOnlyMode && sharedContainerExits.length > 0 && (
-                                <div className="transition-order-list" aria-label="Shared container transitions">
+                            {!targetOnlyMode && sharedOnlyScopes.map((scope) => (
+                                <div className="transition-order-list" key={scope.id} aria-label={`${scope.label} parent scope`}>
                                     <div className="transition-scope-heading">
                                         <div className="transition-scope-title">
-                                            <span className="transition-scope-name">Shared container exits</span>
+                                            <span className="transition-scope-name">{scope.label}</span>
+                                            <span className="transition-scope-type">Parent scope</span>
                                         </div>
-                                        <span className="transition-scope-order">Caught by the enclosing container</span>
                                     </div>
-                                    {sharedContainerExits.map(exit => (
-                                        <div key={`${exit.edgeId}:${exit.event}`} className="transition-order-card"
-                                             style={{
-                                                 "--transition-accent": getTransitionHighlightColor(exit.event),
-                                                 "--transition-accent-colorblind": getTransitionHighlightColor(exit.event, true),
-                                             }}
-                                             title="Shared transition defined at the container boundary; edit it from its original source">
-                                            <div className="transition-order-main">
-                                                <div className="transition-order-title-row">
-                                                    <span className="transition-event-name">{exit.event}</span>
-                                                    <span className="transition-scope-type">{exit.scopeLabel}</span>
-                                                </div>
-                                                <div className="transition-order-summary">
-                                                    <span>{exit.cond || "No condition"}</span>
-                                                    <FiArrowRight />
-                                                    <span>{exit.targetLabel}</span>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    ))}
+                                    {scope.exits.map((exit) =>
+                                        <SharedContainerExitCard key={`${exit.edgeId}:${exit.event}`} exit={exit} />
+                                    )}
                                 </div>
-                            )}
+                            ))}
 
                             <div className="transition-add-row">
                                 <input

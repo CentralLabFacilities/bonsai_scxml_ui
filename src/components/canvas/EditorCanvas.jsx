@@ -1,4 +1,4 @@
-import { memo, Profiler, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, Profiler, useCallback, useEffect, useMemo, useRef } from "react";
 import { FiTrash2 } from "react-icons/fi";
 import {
     Background,
@@ -19,9 +19,6 @@ import CanvasContextMenu from "./CanvasContextMenu.jsx";
 import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
 import { boundaryTransitionKeys, buildBoundaryHelperIndex } from "../../utils/transitionBoundaryHighlight.js";
 import { traceResizeSnapshot } from "../../utils/resizeDiagnostics.js";
-import {
-    splitDragPreviewChanges, withDragPreviewPositions, finishedDragPositions,
-} from "../../utils/dragPositionBatch.js";
 import {
     beginDragTrace, endDragTrace, traceDragCanvasGraph,
     traceDragEvent, traceDragMovement, traceDragReactCommit,
@@ -169,50 +166,6 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
-
-    // Position updates stay local to the React Flow canvas while dragging.
-    // Publishing every pointer movement into App's semantic document forces
-    // all node/edge projections to run, even for unrelated skills. The ref
-    // ensures the final positions are available synchronously at drag-stop;
-    // React state updates only the visual nodes inside this component.
-    const dragPreviewRef = useRef(null);
-    const [dragPreview, setDragPreview] = useState(null);
-    const flowNodes = useMemo(
-        () => withDragPreviewPositions(visibleNodes, dragPreview),
-        [visibleNodes, dragPreview]
-    );
-    useEffect(() => {
-        dragPreviewRef.current = null;
-        setDragPreview(null);
-    }, [documentKey]);
-
-    const handleCanvasNodesChange = useCallback((changes) => {
-        const { moving, other } = splitDragPreviewChanges(changes, dragPreviewRef.current);
-        if (moving.length) {
-            const next = new Map(dragPreviewRef.current);
-            moving.forEach((change) => next.set(change.id, change));
-            dragPreviewRef.current = next;
-            setDragPreview(next);
-        }
-        // Measurements, selections and structural changes are never deferred.
-        const edits = runtimeExpansionActive
-            ? other.filter((change) => change.type !== "dimensions")
-            : other;
-        if (edits.length) handleNodesChange(edits);
-    }, [handleNodesChange, runtimeExpansionActive]);
-
-    const handleCanvasDragStop = useCallback((event, node, draggedNodes) => {
-        const preview = dragPreviewRef.current;
-        dragPreviewRef.current = null;
-        if (preview) {
-            // Commit before the existing drag-stop handler reads the document
-            // to fit containers, reparent children and synchronize with Rust.
-            const changes = finishedDragPositions(preview, [node, ...(draggedNodes || [])]);
-            if (changes.length) handleNodesChange(changes);
-            setDragPreview(null);
-        }
-        handleNodeDragStop(event, node, draggedNodes);
-    }, [handleNodesChange, handleNodeDragStop]);
     useEffect(() => {
         traceDragEvent('canvas:mount');
         return () => traceDragEvent('canvas:unmount');
@@ -231,6 +184,9 @@ export default function EditorCanvas({
     // pointer crossed a node or edge. Keep the semantic graph unchanged and
     // paint hover directly onto the already-mounted React Flow elements.
     const hoverDomMutationsRef = useRef([]);
+    // A drag is one continuous focus gesture. While held, pointerleave and
+    // React Flow's DOM/edge updates must not reset the dimmed context.
+    const dragHoverLockedRef = useRef(false);
     const fastHoverOwnerRef = useRef(null);
     const fastHoverObserverRef = useRef(null);
     const incompatibleSlotHintRef = useRef(null);
@@ -350,6 +306,7 @@ export default function EditorCanvas({
     }, []);
 
     const clearFastHover = useCallback(() => {
+        if (dragHoverLockedRef.current) return;
         fastHoverObserverRef.current?.disconnect();
         fastHoverObserverRef.current = null;
         fastHoverOwnerRef.current = null;
@@ -422,6 +379,7 @@ export default function EditorCanvas({
     }, [getFlowEdgeElement, recordHoverClass, recordHoverStyle]);
 
     const applyFastNodeHover = useCallback((event, node) => {
+        if (dragHoverLockedRef.current) return;
         clearFastHover();
         const flowElement = getFlowElement(event);
         if (!flowElement || !node?.id) return;
@@ -473,6 +431,7 @@ export default function EditorCanvas({
     ]);
 
     const applyFastEdgeHover = useCallback((event, edge) => {
+        if (dragHoverLockedRef.current) return;
         clearFastHover();
         const flowElement = getFlowElement(event);
         if (!flowElement || !edge?.id) return;
@@ -504,10 +463,40 @@ export default function EditorCanvas({
         watchFastHoverOwner,
     ]);
 
+    // Release the drag focus on pointer release. React Flow may still be
+    // committing the final node position, so restore ordinary hover on the
+    // next frame, using whichever node/edge is *actually* under the pointer.
+    const releaseDragHover = useCallback((event) => {
+        if (!dragHoverLockedRef.current) return;
+        dragHoverLockedRef.current = false;
+        clearFastHover();
+        const x = event?.clientX;
+        const y = event?.clientY;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+        requestAnimationFrame(() => {
+            if (dragHoverLockedRef.current) return;
+            const hovered = document.elementFromPoint(x, y);
+            const nodeElement = hovered?.closest?.(".react-flow__node");
+            if (nodeElement) {
+                const node = visibleNodes.find((item) => item.id === nodeElement.getAttribute("data-id"));
+                if (node) applyFastNodeHover({ target: nodeElement }, node);
+                return;
+            }
+            const edgeElement = hovered?.closest?.(".react-flow__edge");
+            if (edgeElement) {
+                const edge = hoverEdgeIndex.edgeById.get(edgeElement.getAttribute("data-id"));
+                if (edge) applyFastEdgeHover({ target: edgeElement }, edge);
+            }
+        });
+    }, [applyFastEdgeHover, applyFastNodeHover, clearFastHover, hoverEdgeIndex, visibleNodes]);
+
     // React Flow can remove a hovered edge during a document/viewport update
     // without sending onEdgeMouseLeave. Clear any imperative hover on graph
     // changes, pane movement, window blur and mouse departure from the canvas.
-    useEffect(() => clearFastHover, [clearFastHover]);
+    useEffect(() => () => {
+        dragHoverLockedRef.current = false;
+        clearFastHover();
+    }, [clearFastHover]);
     useEffect(() => { clearFastHover(); }, [documentKey, activeMode, showTransitionEdges, showSlotEdges, colorblindMode, clearFastHover]);
     useEffect(() => {
         // Missing mouseleave (for instance when React Flow replaces an edge
@@ -533,8 +522,16 @@ export default function EditorCanvas({
         };
     }, [clearFastHover]);
     useEffect(() => {
-        window.addEventListener("blur", clearFastHover);
-        return () => window.removeEventListener("blur", clearFastHover);
+        const cancelDragHover = () => {
+            dragHoverLockedRef.current = false;
+            clearFastHover();
+        };
+        window.addEventListener("blur", cancelDragHover);
+        document.addEventListener("pointercancel", cancelDragHover, true);
+        return () => {
+            window.removeEventListener("blur", cancelDragHover);
+            document.removeEventListener("pointercancel", cancelDragHover, true);
+        };
     }, [clearFastHover]);
 
     // Only update a paint-only class when zoom crosses the badge visibility
@@ -655,14 +652,21 @@ export default function EditorCanvas({
                             .filter(Boolean)
                             .join(" ") || undefined
                     }
-                    nodes={flowNodes}
+                    nodes={visibleNodes}
                     edges={visibleEdges}
                     // Keep the complete graph loaded/cached, but only mount
                     // React Flow elements that are actually inside the viewport.
                     // This significantly reduces DOM/SVG work on large state
                     // machines without changing the semantic graph in memory.
                     onlyRenderVisibleElements={useViewportCulling}
-                    onNodesChange={handleCanvasNodesChange}
+                    onNodesChange={(changes) => {
+                        // Synthetic React Flow measurements of an expanded live
+                        // presentation must never leak into the saved graph.
+                        const edits = runtimeExpansionActive
+                            ? changes.filter((change) => change.type !== "dimensions")
+                            : changes;
+                        if (edits.length) handleNodesChange(edits);
+                    }}
                     onEdgesChange={handleVisibleEdgesChange}
                     onSelectionChange={onSelectionChange}
                     onConnect={onConnect}
@@ -708,7 +712,12 @@ export default function EditorCanvas({
                     minZoom={0.08}
                     onNodeDoubleClick={handleNodeDoubleClick}
                     onNodeDragStart={(event, node, draggedNodes) => {
-                        dragPreviewRef.current = new Map();
+                        // Capture the picked node's context once, then hold it
+                        // steady even when the cursor crosses empty canvas.
+                        applyFastNodeHover(event, node);
+                        dragHoverLockedRef.current = true;
+                        fastHoverObserverRef.current?.disconnect();
+                        fastHoverObserverRef.current = null;
                         beginDragTrace(event, node, { documentKey, nodes: visibleNodes.length, edges: visibleEdges.length });
                         traceDragComputation('handler:onNodeDragStart', () =>
                             handleNodeDragStart(event, node, draggedNodes));
@@ -722,9 +731,10 @@ export default function EditorCanvas({
                         traceDragEvent('drag:stop-handler:start');
                         try {
                             traceDragComputation('handler:onNodeDragStop', () =>
-                                handleCanvasDragStop(event, node, draggedNodes));
+                                handleNodeDragStop(event, node, draggedNodes));
                         }
                         finally {
+                            releaseDragHover(event);
                             traceDragEvent('drag:stop-handler:return');
                             endDragTrace(node);
                         }

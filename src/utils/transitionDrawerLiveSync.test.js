@@ -20,6 +20,11 @@ test('second Wait shows the shared compound exit without creating a duplicate se
     assert.deepEqual(shared.map(exit => ({ edge: exit.edgeId, event: exit.event, target: exit.target, scope: exit.scopeType })), [
         { edge: 'exit', event: 'success', target: 'outside', scope: 'compound' },
     ]);
+    assert.equal(shared[0].scopeLabel,'Container');
+    assert.equal(shared[0].scopeId,'container');
+    assert.equal(shared[0].originSourceId,'wait1');
+    assert.equal(shared[0].originSourceHandle,'success');
+    assert.equal(shared[0].originSourceName,'Wait#1');
     assert.deepEqual(getSharedContainerExitsForSkill('wait1', graph.nodes, graph.edges), []);
     assert.deepEqual(getSharedContainerExitsForSkill('other', graph.nodes, graph.edges), []);
 });
@@ -48,4 +53,17 @@ test('published transition is not appended twice when already locally represente
         { transitionId: 'b', edgeId: 'b', event: 'success' },
     ], new Set(), new Set(['b']));
     assert.equal(output, draft);
+});
+
+test('shared condition and assignments refer to the original edge without a second owner', () => {
+    const assignments = [{ location: 'counter', expr: 'counter + 1' }];
+    const graph = rebuildBoundaryTransitions(skills, [{
+        id: 'exit', source: 'wait1', sourceHandle: 'success', target: 'outside',
+        data: { cond: 'counter gt 2', assignments },
+    }]);
+    const shared = getSharedContainerExitsForSkill('wait2', graph.nodes, graph.edges);
+    assert.equal(shared.length, 1);
+    assert.equal(shared[0].cond, 'counter gt 2');
+    assert.deepEqual(shared[0].assignments, assignments);
+    assert.equal(graph.edges.filter(e => !e.data?.boundaryInternalEdge).length, 1);
 });

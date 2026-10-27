@@ -26,6 +26,7 @@ import {
 import { getParallelLaneSummaries } from "./utils/containerState.js";
 import { collectDescendantGlobals, getStoredTransitionAssignments } from "./utils/editorScxml";
 import { getLogicalEdgeSourceHandle, getLogicalEdgeSourceId } from "./utils/transitionSemantics";
+import { getSharedContainerExitsForSkill } from "./utils/transitionDrawerLiveSync.js";
 import { useEditorHistory } from "./hooks/document/useEditorHistory";
 import { useNodeInteraction } from "./hooks/interaction/useNodeInteraction";
 import { useSlotGraph } from "./hooks/graph/useSlotGraph";
@@ -536,6 +537,7 @@ function AppContent() {
             rustWorkflowDocument.syncPastedEditorSubgraphAfterCommit,
         syncStateEditorPositions:
             rustWorkflowDocument.syncStateEditorPositions,
+        onParallelSkillConflict: (message) => notify({ tone: "danger", title: "Parallel lane skill conflict", message }),
     });
     useRestoreCanvasViewportOnModeChange({ activeMode, fitView, getNodes });
 
@@ -563,6 +565,7 @@ function AppContent() {
         syncStateEditorPositions:
             rustWorkflowDocument.syncStateEditorPositions,
         syncRemovedStates: rustWorkflowDocument.syncRemovedStates,
+        onParallelSkillConflict: (message) => notify({ tone: "danger", title: "Parallel lane skill conflict", message }),
     });
 
     const semanticNodes = useEditorGraphMaintenance({
@@ -1518,6 +1521,14 @@ function AppContent() {
         });
     }, [edges, selectedNode]);
 
+    // These are shared exits owned by a surrounding container, not additional
+    // outgoing transitions of the selected skill. Keep them separate from the
+    // mutable transition list and compute only when graph semantics change.
+    const selectedSkillSharedExits = useMemo(() => {
+        if (!selectedNode || !["custom", "submachine"].includes(selectedNode.type)) return [];
+        return getSharedContainerExitsForSkill(selectedNode.id, semanticNodes, edges);
+    }, [selectedNode?.id, selectedNode?.type, semanticNodes, edges]);
+
     const selectedContainerTransitionDetails = useMemo(() => {
         if (!selectedContainerOutgoingTransitions.length) return selectedContainerOutgoingTransitions;
         const edgeById = new Map(edges.map((edge) => [edge.id, edge]));
@@ -1887,6 +1898,7 @@ function AppContent() {
                             cloneNodes: selectedNodeClones,
                             containerOutgoingTransitions: selectedContainerTransitionDetails,
                             skillOutgoingTransitions: selectedSkillOutgoingTransitions,
+                            skillSharedExits: selectedSkillSharedExits,
                             parallelLanes: selectedParallelLanes,
                             hasInitialNode,
                             actionDataModel: selectedActionDataModel,
