@@ -1,4 +1,4 @@
-import { memo, Profiler, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, Profiler, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FiTrash2 } from "react-icons/fi";
 import {
     Background,
@@ -19,6 +19,9 @@ import CanvasContextMenu from "./CanvasContextMenu.jsx";
 import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
 import { boundaryTransitionKeys, buildBoundaryHelperIndex } from "../../utils/transitionBoundaryHighlight.js";
 import { traceResizeSnapshot } from "../../utils/resizeDiagnostics.js";
+import {
+    splitDragPreviewChanges, withDragPreviewPositions, finishedDragPositions,
+} from "../../utils/dragPositionBatch.js";
 import {
     beginDragTrace, endDragTrace, traceDragCanvasGraph,
     traceDragEvent, traceDragMovement, traceDragReactCommit,
@@ -166,6 +169,50 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
+
+    // Position updates stay local to the React Flow canvas while dragging.
+    // Publishing every pointer movement into App's semantic document forces
+    // all node/edge projections to run, even for unrelated skills. The ref
+    // ensures the final positions are available synchronously at drag-stop;
+    // React state updates only the visual nodes inside this component.
+    const dragPreviewRef = useRef(null);
+    const [dragPreview, setDragPreview] = useState(null);
+    const flowNodes = useMemo(
+        () => withDragPreviewPositions(visibleNodes, dragPreview),
+        [visibleNodes, dragPreview]
+    );
+    useEffect(() => {
+        dragPreviewRef.current = null;
+        setDragPreview(null);
+    }, [documentKey]);
+
+    const handleCanvasNodesChange = useCallback((changes) => {
+        const { moving, other } = splitDragPreviewChanges(changes, dragPreviewRef.current);
+        if (moving.length) {
+            const next = new Map(dragPreviewRef.current);
+            moving.forEach((change) => next.set(change.id, change));
+            dragPreviewRef.current = next;
+            setDragPreview(next);
+        }
+        // Measurements, selections and structural changes are never deferred.
+        const edits = runtimeExpansionActive
+            ? other.filter((change) => change.type !== "dimensions")
+            : other;
+        if (edits.length) handleNodesChange(edits);
+    }, [handleNodesChange, runtimeExpansionActive]);
+
+    const handleCanvasDragStop = useCallback((event, node, draggedNodes) => {
+        const preview = dragPreviewRef.current;
+        dragPreviewRef.current = null;
+        if (preview) {
+            // Commit before the existing drag-stop handler reads the document
+            // to fit containers, reparent children and synchronize with Rust.
+            const changes = finishedDragPositions(preview, [node, ...(draggedNodes || [])]);
+            if (changes.length) handleNodesChange(changes);
+            setDragPreview(null);
+        }
+        handleNodeDragStop(event, node, draggedNodes);
+    }, [handleNodesChange, handleNodeDragStop]);
     useEffect(() => {
         traceDragEvent('canvas:mount');
         return () => traceDragEvent('canvas:unmount');
@@ -608,21 +655,14 @@ export default function EditorCanvas({
                             .filter(Boolean)
                             .join(" ") || undefined
                     }
-                    nodes={visibleNodes}
+                    nodes={flowNodes}
                     edges={visibleEdges}
                     // Keep the complete graph loaded/cached, but only mount
                     // React Flow elements that are actually inside the viewport.
                     // This significantly reduces DOM/SVG work on large state
                     // machines without changing the semantic graph in memory.
                     onlyRenderVisibleElements={useViewportCulling}
-                    onNodesChange={(changes) => {
-                        // Synthetic React Flow measurements of an expanded live
-                        // presentation must never leak into the saved graph.
-                        const edits = runtimeExpansionActive
-                            ? changes.filter((change) => change.type !== "dimensions")
-                            : changes;
-                        if (edits.length) handleNodesChange(edits);
-                    }}
+                    onNodesChange={handleCanvasNodesChange}
                     onEdgesChange={handleVisibleEdgesChange}
                     onSelectionChange={onSelectionChange}
                     onConnect={onConnect}
@@ -668,6 +708,7 @@ export default function EditorCanvas({
                     minZoom={0.08}
                     onNodeDoubleClick={handleNodeDoubleClick}
                     onNodeDragStart={(event, node, draggedNodes) => {
+                        dragPreviewRef.current = new Map();
                         beginDragTrace(event, node, { documentKey, nodes: visibleNodes.length, edges: visibleEdges.length });
                         traceDragComputation('handler:onNodeDragStart', () =>
                             handleNodeDragStart(event, node, draggedNodes));
@@ -681,7 +722,7 @@ export default function EditorCanvas({
                         traceDragEvent('drag:stop-handler:start');
                         try {
                             traceDragComputation('handler:onNodeDragStop', () =>
-                                handleNodeDragStop(event, node, draggedNodes));
+                                handleCanvasDragStop(event, node, draggedNodes));
                         }
                         finally {
                             traceDragEvent('drag:stop-handler:return');

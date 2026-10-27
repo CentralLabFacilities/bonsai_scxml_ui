@@ -11,7 +11,7 @@ import Header, { EditorNotice, EditorPanel, EditorPanelLedge, EditorPanelResizer
 import SkillLibrary from "./components/library/SkillLibrary";
 import BehaviorLibrary from "./components/library/BehaviorLibrary";
 import EditorCanvas from "./components/canvas/EditorCanvas";
-import RunLogPanel from "./components/ui_logs/RunLogPanel.jsx";
+import RunLogPanel from "./components/ui_log/RunLogPanel.jsx";
 import EditorUtilityBar from "./components/EditorUtilityBar.jsx";
 import EditorOverlays from "./components/overlays/EditorOverlays.jsx";
 import WorkflowTabBar from "./components/WorkflowTabBar";
@@ -51,7 +51,10 @@ import { useProblemNavigation } from "./hooks/interaction/useProblemNavigation";
 import { useEditorSelectionController } from "./hooks/interaction/useEditorSelectionController";
 import { useEditorContextMenu } from "./hooks/interaction/useEditorContextMenu";
 import { useRuntimeReplay } from "./hooks/editor/useRuntimeReplay";
-import { useLiveExecution } from "./hooks/editor/useLiveExecution.js";
+import { useRuntimeMemorySlots } from "./hooks/editor/useRuntimeMemorySlots.js";
+import { configuredSkillSlots, skillForRuntimeState, historicalSlotValue, normalizeMemoryPath, observationForRuntimeFrame } from "./utils/runtimeMemorySlots.js";
+import { traceSlot, summarizeSlot } from "./utils/slotReplayTrace.js";
+import { useLiveExecution, resolveRuntimeSkill } from "./hooks/editor/useLiveExecution.js";
 import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
 import RuntimeAssignmentsDrawer, { RuntimeAssignmentsLedge } from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
 import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
@@ -85,6 +88,10 @@ function AppContent() {
     const [runLogSession, setRunLogSession] = useState(0);
     const handleRunLogLoad = useCallback(() => setRunLogSession((session) => session + 1), []);
     const [runtimeAssignmentsOpen, setRuntimeAssignmentsOpen] = useState(false);
+    // Run Assignments has its own width; resizing it never changes Inspector preferences.
+    const [runAssignmentsWidth, setRunAssignmentsWidth] = useState(null);
+    const runAssignmentsResizeRef = useRef(null);
+    const [runtimeManualSkillSelection, setRuntimeManualSkillSelection] = useState(false);
     const [liveExecution, setLiveExecution] = useState(null);
     const [runtimeExpandedContainers, setRuntimeExpandedContainers] = useState({});
     // Container resizing updates frame geometry continuously but defers
@@ -93,18 +100,121 @@ function AppContent() {
     const onContainerResizeStart = useCallback((id) => setResizingContainerId(id), []);
     const onContainerResizeEnd = useCallback(() => setResizingContainerId(null), []);
     const liveRunRef = useRef(null);
+    const openRootRef = useRef(null);
     const liveOptionsRef = useRef({ followCamera: true });
     const { timeline: runtimeEventTimeline, frame: selectedRuntimeFrame,
         ingest: ingestRuntimeEvent, reset: resetRuntimeEvents,
         seek: seekRuntimeEvent, goLive: goLiveRuntimeEvent, markGap: markRuntimeGap,
-        seedBaseline: seedRuntimeBaseline } = useRuntimeEventTimeline();
+        seedBaseline: seedRuntimeBaseline, confirmResume: confirmRuntimeResume } = useRuntimeEventTimeline();
     // Fast automatic transitions may enter the next state before React paints.
     // Keep the transition's canvas highlight briefly without delaying events.
+    const runtimeMemory = useRuntimeMemorySlots({ enabled: isRuntimeCommanderOpen ||
+        runtimeEventTimeline.frames.length > 0 || ["RUNNING", "PAUSED"].includes(runtimeEventTimeline.status) });
+    const runtimeMemoryRef = useRef(runtimeMemory);
+    const runtimeTabsRef = useRef([]);
+    const runtimeSkillEntriesRef = useRef(new Map());
+    runtimeMemoryRef.current = runtimeMemory;
     const [recentRuntimeTransition, setRecentRuntimeTransition] = useState(null);
     const runtimeTransitionTimerRef = useRef(null);
     const handleRuntimeEvent = useCallback((message) => {
-        ingestRuntimeEvent(message);
+        if (message.type === "started") {
+            resetRuntimeEvents();
+            runtimeMemoryRef.current.reset();
+            runtimeSkillEntriesRef.current.clear();
+        }
+        // Only actual skill exits are selectable skill snapshots. SCXML also
+        // emits exits for terminal/container states, which are still consumed
+        // for active-state tracking but must not clutter this timeline.
+        let exitedSkill = null;
+        if (message.type === "state_exited") {
+            const state = String(message.details?.state || message.data?.state || "");
+            const root = liveRunRef.current?.workflow;
+            const tabsAtLoad = liveRunRef.current?.tabsSnapshot || [];
+            const knownTabs = [...new Map([...tabsAtLoad, ...runtimeTabsRef.current]
+                .map((tab) => [tab.id, tab])).values()];
+            exitedSkill = (root && resolveRuntimeSkill(root, knownTabs, state))
+                || skillForRuntimeState(knownTabs, state);
+        }
+        if (message.type === "state_entered") {
+            const state = String(message.details?.state || message.data?.state || "");
+            const root = liveRunRef.current?.workflow;
+            const tabsAtLoad = liveRunRef.current?.tabsSnapshot || [];
+            const knownTabs = [...new Map([...tabsAtLoad, ...runtimeTabsRef.current]
+                .map((tab) => [tab.id, tab])).values()];
+            const match = (root && resolveRuntimeSkill(root, knownTabs, state))
+                || skillForRuntimeState(knownTabs, state);
+            // A missing editor mapping must not silently drop a skill entry.
+            // Ignore known terminal states; unmatched skills can still be shown.
+            const structural = knownTabs.some((tab) => (tab.nodes || []).some((node) =>
+                !["custom", "submachine"].includes(node.type) &&
+                [node.data?.scxmlStateId, node.data?.fullSkillName, node.data?.label]
+                    .some((name) => name === state)));
+            const isSkill = Boolean(match) || (state !== "End" && state !== "Fatal" && !structural);
+            if (isSkill) {
+                const stack = runtimeSkillEntriesRef.current.get(state) || [];
+                // Bind the configured slot paths to this particular skill entry.
+                // A qualified editor ID may differ from the short runtime ID,
+                // and resolving the skill again on exit must not be required
+                // to preserve this execution's historical slot observation.
+                const mappedSlots = match ? configuredSkillSlots(match.node) : null;
+                runtimeSkillEntriesRef.current.set(state, [...stack, {
+                    sequence: message.sequence,
+                    timestamp: message.timestamp,
+                    slots: mappedSlots,
+                }]);
+                traceSlot("skill.enter", { state, sequence: message.sequence,
+                    editorMatch: match?.node?.id || null,
+                    slotPaths: mappedSlots?.map((slot) => slot.path) ?? null });
+            }
+            ingestRuntimeEvent({ ...message, skillSnapshot: isSkill });
+        } else {
+            ingestRuntimeEvent(message.type === "state_exited"
+                ? { ...message, skillSnapshot: Boolean(exitedSkill) } : message);
+        }
+        if (message.type === "started" || message.type === "state_exited") {
+            void runtimeMemoryRef.current.refresh();
+        }
+        if (message.type === "state_exited") {
+            const state = String(message.details?.state || message.data?.state || "");
+            const stack = runtimeSkillEntriesRef.current.get(state) || [];
+            const entry = stack[stack.length - 1] ?? null;
+            const entrySequence = typeof entry === "number" ? entry : entry?.sequence ?? null;
+            runtimeSkillEntriesRef.current.set(state, stack.slice(0, -1));
+            const mappedSlots = entry?.slots ?? (exitedSkill ? configuredSkillSlots(exitedSkill.node) : null);
+            // Every observed skill entry needs a linked exit capture, even if
+            // the editor could not resolve its slot mappings. The Memory hook
+            // retains an independent path cache for such cases.
+            traceSlot("skill.exit", { state, sequence: message.sequence,
+                entrySequence, hasEntry: Boolean(entry), editorMatch: exitedSkill?.node?.id || null,
+                mappedPaths: mappedSlots?.map((slot) => slot.path) ?? null,
+                captureRequested: Boolean(entry || exitedSkill) });
+            if (entry || exitedSkill) {
+                runtimeMemoryRef.current.noteSkillExit({ state, entrySequence,
+                    exitSequence: message.sequence, enteredAt: entry?.timestamp,
+                    exitedAt: message.timestamp, slots: mappedSlots || [] });
+                void runtimeMemoryRef.current.capture(state,
+                    mappedSlots || [], message.sequence, "skill-exit", entrySequence);
+            }
+        }
         if (message.type === "transition") {
+            // Transition snapshots refer to their source skill's configured
+            // slots. Never attribute a write to that skill: GET only observes
+            // the values available after the transition.
+            const source = String(message.details?.source || message.data?.source || "");
+            const root = liveRunRef.current?.workflow;
+            const tabsAtLoad = liveRunRef.current?.tabsSnapshot || [];
+            const knownTabs = [...new Map([...tabsAtLoad, ...runtimeTabsRef.current]
+                .map((tab) => [tab.id, tab])).values()];
+            const match = (root && resolveRuntimeSkill(root, knownTabs, source))
+                || skillForRuntimeState(knownTabs, source);
+            // All transition rows have a Memory observation. A missing editor
+            // mapping must not silently drop the run-wide slot cache.
+            const transitionSlots = match ? configuredSkillSlots(match.node) : [];
+            traceSlot("transition.capture", { source, sequence: message.sequence,
+                editorMatch: match?.node?.id || null,
+                mappedPaths: transitionSlots.map((slot) => slot.path) });
+            void runtimeMemoryRef.current.capture(source,
+                transitionSlots, message.sequence, "transition");
             const data = message.data || message.details || {};
             clearTimeout(runtimeTransitionTimerRef.current);
             setRecentRuntimeTransition({
@@ -113,7 +223,7 @@ function AppContent() {
             });
             runtimeTransitionTimerRef.current = setTimeout(() => setRecentRuntimeTransition(null), 650);
         }
-    }, [ingestRuntimeEvent]);
+    }, [ingestRuntimeEvent, resetRuntimeEvents]);
     useEffect(() => () => clearTimeout(runtimeTransitionTimerRef.current), []);
 
     const flowStore = useStoreApi();
@@ -142,6 +252,10 @@ function AppContent() {
         setColorblindMode,
     } = useEditorPreferences();
     const basePanels = useEditorPanelLayout();
+    // Runtime Load can finish after panel-mode changes. Keep the latest panel
+    // controller without recreating the long-lived runtime callback.
+    const collapseLibraryRef = useRef(() => {});
+    collapseLibraryRef.current = () => basePanels.closePanel("library");
     // Both right-side panels act as tabs: opening either closes the other.
     // Library visibility and inspector width preferences remain independent.
     const switchRightPanel = useCallback((action) => {
@@ -168,6 +282,39 @@ function AppContent() {
     const panels = { ...basePanels, showPanel, togglePanel };
     const toggleRuntimeAssignments = useCallback(() => switchRightPanel("toggle-assignments"), [switchRightPanel]);
     const showRuntimeAssignments = useCallback(() => switchRightPanel("open-assignments"), [switchRightPanel]);
+    const assignmentsVisible = runtimeAssignmentsOpen && (isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0);
+    const maxAssignmentsWidth = Math.max(0, panels.inspectorMaxWidth - (panels.isDocked ? 6 : 0));
+    const minAssignmentsWidth = Math.min(190, maxAssignmentsWidth);
+    const constrainAssignmentsWidth = (value) => Math.max(minAssignmentsWidth, Math.min(maxAssignmentsWidth, value));
+    const effectiveAssignmentsWidth = constrainAssignmentsWidth(runAssignmentsWidth ?? panels.preferences.inspectorWidth);
+    const startAssignmentsResize = (event) => {
+        if (!panels.isDocked || event.button !== 0) return;
+        event.preventDefault();
+        event.currentTarget.focus();
+        runAssignmentsResizeRef.current = { pointerId: event.pointerId, x: event.clientX,
+            width: effectiveAssignmentsWidth };
+        event.currentTarget.setPointerCapture?.(event.pointerId);
+    };
+    const moveAssignmentsResize = (event) => {
+        const gesture = runAssignmentsResizeRef.current;
+        if (!gesture || gesture.pointerId !== event.pointerId) return;
+        setRunAssignmentsWidth(constrainAssignmentsWidth(gesture.width - (event.clientX - gesture.x)));
+    };
+    const finishAssignmentsResize = (event) => {
+        const gesture = runAssignmentsResizeRef.current;
+        if (!gesture || gesture.pointerId !== event.pointerId) return;
+        runAssignmentsResizeRef.current = null;
+        if (event.currentTarget.hasPointerCapture?.(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
+    };
+    const keyAssignmentsResize = (event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setRunAssignmentsWidth(event.key === "Home" ? minAssignmentsWidth :
+            event.key === "End" ? maxAssignmentsWidth :
+                constrainAssignmentsWidth(effectiveAssignmentsWidth + (event.key === "ArrowLeft" ? 16 : -16)));
+    };
 
     //---- TAB / GRAPH MANAGEMENT ----
     const {
@@ -567,6 +714,7 @@ function AppContent() {
         cancelFlowConnection,
         isDraggingNode,
     });
+    runtimeTabsRef.current = tabs;
 
     // A replaced/reloaded workflow may reuse edge ids; never retain a hover
     // originating from the previous canvas or its now-unmounted details panel.
@@ -645,7 +793,10 @@ function AppContent() {
         fetchSkillData,
         setContextMenu,
         checkSlotConnection,
-        onStateMachineLoadStart: beginStateMachineLoad,
+        onStateMachineLoadStart: () => {
+            collapseLibraryRef.current();
+            beginStateMachineLoad();
+        },
         onStateMachineLoadEnd: endStateMachineLoad,
     });
 
@@ -655,6 +806,7 @@ function AppContent() {
         createNode,
     } = useEditorLibraryItems({
         nodes,
+        getDocumentSnapshot,
         behaviorDirectories,
         fetchSkillData,
         hydrateSubMachineInheritedSlots,
@@ -810,9 +962,8 @@ function AppContent() {
         validationRevision: rustWorkflowDocument.validationRevision,
     });
 
-    // Switching the selected skill also switches an already-open Transitions
-    // panel. Edge clicks that open another source do not change selection and
-    // must not be immediately overridden by this effect.
+    // Keep the open transition inspector in sync with the selected skill.
+    // Edge-driven opening can change the drawer without changing the selection.
     const previousTransitionSelectionRef = useRef(selectedNodeId);
     useEffect(() => {
         const previous = previousTransitionSelectionRef.current;
@@ -820,7 +971,7 @@ function AppContent() {
         if (!drawerData.isOpen || !selectedNodeId || previous === selectedNodeId ||
             drawerData.sourceNodeId === selectedNodeId) return;
         const node = nodes.find(item => item.id === selectedNodeId);
-        if (!node || !['custom', 'submachine'].includes(node.type) ||
+        if (!node || !["custom", "submachine"].includes(node.type) ||
             node.data?.isSkillClone || node.data?.isStateClone) return;
         openConditionDrawer(selectedNodeId);
     }, [selectedNodeId, drawerData.isOpen, drawerData.sourceNodeId, nodes, openConditionDrawer]);
@@ -1021,6 +1172,7 @@ function AppContent() {
     const handleExecutionUpdate = useCallback((update) => {
         if (update.action === "load") setRuntimeExpandedContainers({});
         if (update.action === "load" && update.workflow) {
+            collapseLibraryRef.current();
             liveRunRef.current = { workflow: update.workflow, tabsSnapshot: update.tabsSnapshot || [update.workflow] };
         }
         if (update.followCamera !== undefined) {
@@ -1034,6 +1186,7 @@ function AppContent() {
                 ? { ...previous, ...liveOptionsRef.current } : previous);
         }
         if (update.action === "start" || update.action === "resume") {
+            if (update.action === "resume") confirmRuntimeResume();
             handleClearRuntimeLog();
             setActiveMode("overview");
         }
@@ -1049,21 +1202,44 @@ function AppContent() {
         }
         // The selected event snapshot (including manual timeline scrubbing) owns the
         // live canvas projection; control calls no longer overwrite it with polling.
-    }, [handleClearRuntimeLog, setActiveMode]);
+    }, [handleClearRuntimeLog, setActiveMode, confirmRuntimeResume]);
 
-    const handleRuntimeGap = useCallback((baseline) => {
+    const handleRuntimeGap = useCallback(() => { markRuntimeGap(); }, [markRuntimeGap]);
+    const handleRuntimeReset = useCallback(() => {
         resetRuntimeEvents();
-        markRuntimeGap();
-        seedRuntimeBaseline(baseline);
-        if (baseline && liveRunRef.current) {
-            setLiveExecution({ ...liveRunRef.current, following: true,
-                snapshot: baseline, ...liveOptionsRef.current });
+        runtimeMemoryRef.current.reset();
+        runtimeSkillEntriesRef.current.clear();
+        setLiveExecution(null);
+        setRecentRuntimeTransition(null);
+    }, [resetRuntimeEvents]);
+
+    // Only changing top-level documents resets runtime data. Switching into a
+    // sub-SM tab leaves its parent execution and historical inspection intact.
+    const openRoot = (() => {
+        const byId = new Map((tabs || []).map((tab) => [tab.id, tab]));
+        let current = byId.get(activeTabId);
+        const visited = new Set();
+        while (current?.parentTabId && byId.has(current.parentTabId) && !visited.has(current.id)) {
+            visited.add(current.id);
+            current = byId.get(current.parentTabId);
         }
-    }, [resetRuntimeEvents, markRuntimeGap, seedRuntimeBaseline]);
+        return current?.id || null;
+    })();
+    useEffect(() => {
+        if (!openRoot) return;
+        if (openRootRef.current !== null && openRootRef.current !== openRoot) {
+            handleRuntimeReset();
+            liveRunRef.current = null;
+        }
+        openRootRef.current = openRoot;
+    }, [openRoot, handleRuntimeReset]);
 
     useEffect(() => {
         const loaded = liveRunRef.current;
-        if (!loaded || !selectedRuntimeFrame) return;
+        if (!loaded || !selectedRuntimeFrame) {
+            setLiveExecution(null);
+            return;
+        }
         const transition = runtimeEventTimeline.watching
             ? recentRuntimeTransition || selectedRuntimeFrame.transition : selectedRuntimeFrame.transition;
         // The selected snapshot owns the *entire* active configuration, even
@@ -1074,7 +1250,8 @@ function AppContent() {
                 ? [selectedRuntimeFrame.transition] : [];
         setLiveExecution({ ...loaded, following: true, followCamera: true,
             ...liveOptionsRef.current, snapshot: {
-                status: "RUNNING", currentStates, transition, transitions,
+                status: runtimeEventTimeline.watching ? runtimeEventTimeline.status : "RUNNING",
+                currentStates, transition, transitions,
                 enteredStates: selectedRuntimeFrame.enteredStates || [],
                 exitedStates: selectedRuntimeFrame.exitedStates || [],
                 exitingStates: selectedRuntimeFrame.exitingStates || [],
@@ -1083,7 +1260,8 @@ function AppContent() {
                 stateEntryHistory: selectedRuntimeFrame.stateEntryHistory || [],
                 checkedAt: Date.now(), stateIds: [],
             }, action: "event_snapshot", focusRequest: selectedRuntimeFrame.id });
-    }, [selectedRuntimeFrame, runtimeEventTimeline.index, runtimeEventTimeline.watching, recentRuntimeTransition]);
+    }, [selectedRuntimeFrame, runtimeEventTimeline.index, runtimeEventTimeline.watching,
+        runtimeEventTimeline.status, recentRuntimeTransition]);
 
     const {
         handleNodesChange,
@@ -1212,7 +1390,10 @@ function AppContent() {
         fetchSkillData,
         hydrateSubMachineInheritedSlots,
         checkSlotConnection,
-        onStateMachineLoadStart: beginStateMachineLoad,
+        onStateMachineLoadStart: () => {
+            collapseLibraryRef.current();
+            beginStateMachineLoad();
+        },
         onStateMachineLoadEnd: endStateMachineLoad,
     });
 
@@ -1235,6 +1416,8 @@ function AppContent() {
         visibleNodes: playbackVisibleNodes,
         visibleEdges: playbackVisibleEdges,
         fitView,
+        getViewport,
+        setViewport,
         switchTab,
         getActiveDocumentIdentity,
         suspendFollow: isDraggingNode || drawerData.isOpen || activeMode === "code" || isHintPageOpen
@@ -1394,11 +1577,76 @@ function AppContent() {
         onNavigateAncestorSlot: handleNavigateAncestorSlot,
     });
 
-    const canvasRuntimeNodes = useMemo(() =>
-        !runtimeLog && isRuntimeCommanderOpen && liveActive
-            ? decorateLiveRuntimeNodes(liveVisibleNodes, selectedRuntimeFrame)
-            : liveVisibleNodes,
-    [runtimeLog, isRuntimeCommanderOpen, liveActive, liveVisibleNodes, selectedRuntimeFrame]);
+    const runtimeTimelineSkill = useMemo(() => {
+        if (!selectedRuntimeFrame || !liveRunRef.current?.workflow) return null;
+        const state = selectedRuntimeFrame.state || selectedRuntimeFrame.transition?.source || "";
+        const tabsForRun = [...new Map([...(liveRunRef.current.tabsSnapshot || []), ...tabs]
+            .map((tab) => [tab.id, tab])).values()];
+        const match = resolveRuntimeSkill(liveRunRef.current.workflow, tabsForRun, state);
+        return match ? { ...match, state } : null;
+    }, [selectedRuntimeFrame?.id, activeTabId, tabs]);
+
+    const runtimeConfiguredSlots = useMemo(() => {
+        const all = [...nodes, ...tabs.flatMap((tab) => tab.nodes || [])];
+        const seen = new Map();
+        for (const node of all) {
+            for (const slot of configuredSkillSlots(node)) {
+                if (slot.path && !seen.has(slot.path)) seen.set(slot.path, slot);
+            }
+        }
+        for (const slot of slotNodes || []) {
+            const path = normalizeMemoryPath(slot.data?.path || slot.data?.label);
+            if (path && !seen.has(path)) seen.set(path, {
+                path, key: slot.data?.label || path, access: "read/write", type: "",
+            });
+        }
+        return [...seen.values()];
+    }, [nodes, tabs, slotNodes]);
+
+    const canvasRuntimeNodes = useMemo(() => {
+        if (runtimeLog || !selectedRuntimeFrame) return liveVisibleNodes;
+        const slots = {};
+        for (const node of liveVisibleNodes) {
+            if (node.type !== "slot") continue;
+            const path = normalizeMemoryPath(node.data?.path || node.data?.label);
+            if (!path) continue;
+            const item = runtimeEventTimeline.watching ? runtimeMemory.live[path]
+                : historicalSlotValue(runtimeMemory.observations, selectedRuntimeFrame, path, runtimeMemory.writes, runtimeMemory.skillExecutions);
+            if (item?.status === "available") slots[path] = {
+                value: item.value, timestamp: item.observedAt || (item.stale ? "Stale" : "live"),
+                dataType: item.type, stale: Boolean(item.stale),
+            };
+        }
+        return decorateLiveRuntimeNodes(liveVisibleNodes, { ...selectedRuntimeFrame, slots });
+    }, [runtimeLog, liveActive, liveVisibleNodes, selectedRuntimeFrame,
+        runtimeEventTimeline.watching, runtimeMemory.live, runtimeMemory.observations, runtimeMemory.writes, runtimeMemory.skillExecutions]);
+
+    // Diagnostic only: prove whether replay resolved the value and whether the
+    // decorated React Flow slot node actually received runtimeSlotValueMeta.
+    useEffect(() => {
+        if (!selectedRuntimeFrame || runtimeEventTimeline.watching) return;
+        const linked = observationForRuntimeFrame(runtimeMemory.observations, selectedRuntimeFrame);
+        const nodesToCheck = liveVisibleNodes.filter((node) => node.type === "slot");
+        const checks = nodesToCheck.map((node) => {
+            const path = normalizeMemoryPath(node.data?.path || node.data?.label);
+            const chosen = historicalSlotValue(runtimeMemory.observations, selectedRuntimeFrame, path, runtimeMemory.writes, runtimeMemory.skillExecutions);
+            const decorated = canvasRuntimeNodes.find((item) => item.id === node.id);
+            return { nodeId: node.id, rawPath: node.data?.path || node.data?.label || "",
+                normalizedPath: path, selected: summarizeSlot(chosen),
+                nodeRuntimeValue: decorated?.data?.runtimeSlotValueMeta || null,
+                linkedPaths: linked ? [...(linked.slots || []), ...(linked.cache || [])].map((item) => item.path) : null };
+        });
+        const signature = JSON.stringify({ frame: selectedRuntimeFrame.id, count: runtimeMemory.observations.length,
+            checks, linkedSequence: linked?.sequence });
+        traceSlot("replay.canvas", { frameId: selectedRuntimeFrame.id,
+            frameType: selectedRuntimeFrame.type, frameState: selectedRuntimeFrame.state,
+            frameSequence: selectedRuntimeFrame.sequence, framePerf: selectedRuntimeFrame.receivedAtPerf,
+            captureMatched: Boolean(linked), captureState: linked?.state || null,
+            captureEntrySequence: linked?.entrySequence ?? null,
+            capturedPaths: linked?.cache?.map(summarizeSlot) ?? null,
+            observations: runtimeMemory.observations.length, checks }, signature);
+    }, [selectedRuntimeFrame, runtimeEventTimeline.watching, runtimeMemory.observations, runtimeMemory.writes, runtimeMemory.skillExecutions,
+        liveVisibleNodes, canvasRuntimeNodes]);
 
     return (
         <div className="container">
@@ -1439,11 +1687,11 @@ function AppContent() {
                     "--library-drawer-width": `${Math.min(panels.preferences.libraryWidth, panels.libraryMaxWidth)}px`,
                     "--inspector-drawer-width": `${Math.min(panels.preferences.inspectorWidth, panels.inspectorMaxWidth)}px`,
                     "--library-resize-width": panels.isDocked && panels.libraryOpen ? "6px" : "0px",
-                    "--inspector-resize-width": panels.isDocked && panels.inspectorOpen ? "6px" : "0px",
+                    "--inspector-resize-width": panels.isDocked && (panels.inspectorOpen || assignmentsVisible) ? "6px" : "0px",
                     // Inspector and Run Assignments share one right-hand dock width.
                     // No collapsed track is reserved merely to hold the ledges.
-                    "--right-dock-width": runtimeAssignmentsOpen && isRuntimeCommanderOpen
-                        ? `${Math.min(panels.preferences.inspectorWidth, Math.max(0, panels.inspectorMaxWidth - (panels.isDocked ? 6 : 0)))}px`
+                    "--right-dock-width": runtimeAssignmentsOpen && (isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0)
+                        ? `${effectiveAssignmentsWidth}px`
                         : panels.isDocked && panels.inspectorOpen ? `${panels.inspectorWidth}px` : "0px",
                 }}>
                 <EditorPanel side="library" panels={panels}>
@@ -1583,7 +1831,7 @@ function AppContent() {
                             isValidConnection={isValidConnection}
                             handleEdgeClick={handleEdgeClick}
                             handleEdgeDoubleClick={handleEditorEdgeDoubleClick}
-                            handleNodeClick={handleNodeClick}
+                            handleNodeClick={(...args) => { setRuntimeManualSkillSelection(true); handleNodeClick(...args); }}
                             handleNodeDoubleClick={handleNodeDoubleClick}
                             handlePaneClick={handlePaneClick}
                             handleNodeMouseEnter={handleNodeMouseEnter}
@@ -1616,7 +1864,19 @@ function AppContent() {
                         onRefresh={refreshEditorNodes} canRefresh={activeMode !== 'code'} />
                 </main>
 
-                <EditorPanelResizer side="inspector" panels={panels} />
+                {assignmentsVisible ? <div role="separator" aria-orientation="vertical"
+                    aria-label="Resize run assignments" aria-controls="runtime-assignments-panel"
+                    aria-valuemin={Math.round(minAssignmentsWidth)} aria-valuemax={Math.round(maxAssignmentsWidth)}
+                    aria-valuenow={Math.round(effectiveAssignmentsWidth)}
+                    tabIndex={panels.isDocked ? 0 : -1} aria-hidden={!panels.isDocked}
+                    className="editor-panel-resize editor-panel-resize-assignments"
+                    data-open={String(panels.isDocked)}
+                    onPointerDown={startAssignmentsResize} onPointerMove={moveAssignmentsResize}
+                    onPointerUp={finishAssignmentsResize} onPointerCancel={finishAssignmentsResize}
+                    onLostPointerCapture={finishAssignmentsResize} onKeyDown={keyAssignmentsResize}
+                    onDoubleClick={() => setRunAssignmentsWidth(null)}
+                    title="Drag or use arrow keys to resize Run assignments; double-click to reset" />
+                    : <EditorPanelResizer side="inspector" panels={panels} />}
                 <EditorPanel side="inspector" panels={panels}>
                     <EditorInspectorPanel
                         rightPanelTab={rightPanelTab}
@@ -1669,12 +1929,17 @@ function AppContent() {
                 <EditorPanelLedge side="library" panels={panels} />
                 <div className="right-panel-ledges" aria-label="Right sidebar tabs">
                     <EditorPanelLedge side="inspector" panels={panels} />
-                    {isRuntimeCommanderOpen && <RuntimeAssignmentsLedge open={runtimeAssignmentsOpen}
+                    {(isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0) && <RuntimeAssignmentsLedge open={runtimeAssignmentsOpen}
                         onToggle={toggleRuntimeAssignments} />}
                 </div>
-                {isRuntimeCommanderOpen && <RuntimeAssignmentsDrawer timeline={runtimeEventTimeline} frame={selectedRuntimeFrame}
+                {(isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0) && <RuntimeAssignmentsDrawer timeline={runtimeEventTimeline} frame={selectedRuntimeFrame}
+                    memory={runtimeMemory}
+                    configuredSlots={runtimeConfiguredSlots}
+                    selectedSkill={runtimeManualSkillSelection ? selectedNode : runtimeTimelineSkill?.node || selectedNode}
+                    selectedSkillState={runtimeManualSkillSelection ? null : runtimeTimelineSkill?.state}
                     declaredVariables={[...(inheritedGlobalDataModel || []), ...(globalDataModel || [])]}
-                    open={runtimeAssignmentsOpen} />}
+                    onSeek={(index) => { setRuntimeManualSkillSelection(false); seekRuntimeEvent(index); }}
+                    onLive={goLiveRuntimeEvent} open={runtimeAssignmentsOpen} />}
                 {!panels.isDocked && panels.drawer && !panels.libraryDragging && (
                     <button type="button" className="editor-panel-backdrop" tabIndex={-1}
                         aria-label="Close side panel" onClick={() => panels.closePanel(panels.drawer)} />
@@ -1696,13 +1961,14 @@ function AppContent() {
                     getActiveDocumentIdentity,
                     onExecutionUpdate: handleExecutionUpdate,
                     onRuntimeEvent: handleRuntimeEvent,
-                    onRuntimeReset: resetRuntimeEvents,
+                    onRuntimeReset: handleRuntimeReset,
                     onLogLoadRequested: handleRunLogLoad,
                     onRuntimeGap: handleRuntimeGap,
+                    onRuntimeBackendRestart: handleRuntimeReset,
                     onRuntimeBaseline: seedRuntimeBaseline,
                     runtimeTimeline: runtimeEventTimeline,
                     selectedRuntimeFrame,
-                    onRuntimeSeek: seekRuntimeEvent,
+                    onRuntimeSeek: (index) => { setRuntimeManualSkillSelection(false); seekRuntimeEvent(index); },
                     onRuntimeLive: goLiveRuntimeEvent,
                     unresolvedStates,
                     runtimeParallelViews,
@@ -1732,11 +1998,11 @@ function AppContent() {
                 tabPathTooltip={tabPathTooltip}
                 condition={{
                     drawer: drawerData,
+                    liveCandidateTransitions: liveDrawerData?.candidateTransitions,
+                    sharedContainerExits: liveDrawerData?.sharedContainerExits || drawerData.sharedContainerExits || [],
                     variables: availableDataModelParameters,
                     onAddParameter: addGlobalParameter,
                     graphEdges: edges,
-                    liveCandidateTransitions: liveDrawerData?.candidateTransitions,
-                    sharedContainerExits: liveDrawerData?.sharedContainerExits || drawerData.sharedContainerExits || [],
                     onConfirm: (...args) => {
                         hoverTransitionEdge(null);
                         return handleConfirmDrawer(...args);

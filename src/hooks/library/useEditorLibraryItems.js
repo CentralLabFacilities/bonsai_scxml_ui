@@ -9,6 +9,7 @@ import {
     normalizeSharedScxmlStateIdentity,
 } from "../../utils/editorScxml";
 import { isEditorCloneNode } from "../../utils/editorClones";
+import { availableLibrarySkillName } from "../../utils/libraryInitialState.js";
 import {
     inspectWorkflowForEditorSource,
     loadWorkflowForEditor,
@@ -18,6 +19,7 @@ import {
 
 export function useEditorLibraryItems({
     nodes,
+    getDocumentSnapshot,
     behaviorDirectories,
     fetchSkillData,
     hydrateSubMachineInheritedSlots,
@@ -197,20 +199,18 @@ export function useEditorLibraryItems({
                 selectedSkill.split(".").pop() !== "End" &&
                 selectedSkill.split(".").pop() !== "Fatal";
 
-            const createNameForSkill = (fullSkillName) => {
-                const label = fullSkillName.split(".").pop();
-                const count = nodes.filter(
-                    (node) =>
-                        !isEditorCloneNode(node) && node.data?.label === label
-                ).length;
-                return `${fullSkillName}#${count + 1}`;
-            };
+            // A second skill inspection may finish after the first insertion
+            // has committed, while `nodes` still belongs to the render that
+            // started both requests. Read the synchronous document reference.
+            // The final append additionally checks its *transaction* snapshot.
+            const liveNodes = getDocumentSnapshot?.()?.nodes || nodes;
+            const createNameForSkill = (fullSkillName) => availableLibrarySkillName(liveNodes, fullSkillName);
 
             let sharedEditorInstanceId;
             if (isFinalSkill) {
                 const sharedStateId = selectedSkill.split("#")[0];
                 const usedIds = new Set(
-                    nodes
+                    liveNodes
                         .filter((node) => {
                             const candidate = normalizeSharedScxmlStateIdentity(node);
                             return (
@@ -312,7 +312,7 @@ export function useEditorLibraryItems({
                 },
             };
         },
-        [fetchSkillData, nodes]
+        [fetchSkillData, nodes, getDocumentSnapshot]
     );
 
     return {

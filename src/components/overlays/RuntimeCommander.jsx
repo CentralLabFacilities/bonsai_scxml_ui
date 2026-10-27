@@ -10,6 +10,8 @@ import { runtimePayload } from "../../utils/runtimeEventFrames.js";
 import { matchesLoadedInitial, initialWorkflowStateIds } from "../../utils/runtimeWorkflowIdentity.js";
 import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
+import { runtimeConnectionNeedsStatusRefresh, shouldReplaceControlStatusBaseline, shouldRetryControlStatusSnapshot } from "../../utils/runtimeControlRecovery.js";
+import { runtimeControlAvailability } from "../../utils/runtimeControlAvailability.js";
 
 const STATUS_LABELS = {
     UNKNOWN: "Not initialized",
@@ -71,6 +73,10 @@ export default function RuntimeCommander({
     const [runtimeNotice, setRuntimeNotice] = useState("");
     const [busyAction, setBusyAction] = useState("");
     const [isRefreshing, setIsRefreshing] = useState(false);
+    // A WebSocket reconnect does not imply that the HTTP control server is ready.
+    // Retry only while recovering; never poll a healthy running state machine.
+    const [statusRecoveryPending, setStatusRecoveryPending] = useState(false);
+    const previousEventConnectionRef = useRef(null);
     const [isBrowsing, setIsBrowsing] = useState(false);
     const [previouslyOpen, setPreviouslyOpen] = useState(isOpen);
     const configurationRef = useRef(null);
@@ -141,11 +147,15 @@ export default function RuntimeCommander({
         try {
             const next = await getWebCommanderSnapshot(request.controller.signal);
             if (ownerRef.current !== owner || readRef.current !== request) return;
-            if (eventVersionRef.current === startedAtVersion) {
-                setSnapshot(next);
-                // Control status is not a replayable event/variable baseline.
-            }
+            setSnapshot((current) => {
+                // Preserve newer live-event state, but never retain an obsolete
+                // or missing control baseline just because events arrived during
+                // the HTTP request (common immediately after reconnecting).
+                if (!shouldReplaceControlStatusBaseline(startedAtVersion, eventVersionRef.current, current)) return current;
+                return { ...next, statusStale: false };
+            });
             setStatusError("");
+            setStatusRecoveryPending(shouldRetryControlStatusSnapshot(next));
             if (followingRef.current && ["RUNNING", "PAUSED"].includes(next.status)) observedRunningRef.current = true;
             else if (followingRef.current && observedRunningRef.current) {
                 followingRef.current = false;
@@ -168,11 +178,13 @@ export default function RuntimeCommander({
             onExecutionUpdate?.({ workflow: loadedWorkflowRef.current, snapshot: null, following: false,
                 followCamera: followCameraRef.current, ...displayOptionsRef.current });
             if (status) {
-                setSnapshot({ status, currentStates: [], stateIds: [], transitions: [], checkedAt: Date.now(), detailsUnavailable: true });
+                setSnapshot({ status, currentStates: [], stateIds: [], transitions: [], checkedAt: Date.now(), detailsUnavailable: true, statusStale: false });
                 setStatusError(`Engine status is available, but state/transition details could not be read. ${String(reason?.message || reason)}`);
+                setStatusRecoveryPending(true);
             } else {
                 setSnapshot((previous) => previous ? { ...previous, statusStale: true } : null);
                 setStatusError(`Could not get engine status. ${String(reason?.message || reason)} Check that WebCommander is running on localhost:8080.`);
+                setStatusRecoveryPending(true);
             }
         } finally {
             if (readRef.current === request) {
@@ -189,8 +201,20 @@ export default function RuntimeCommander({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [shouldObserve]);
 
+    // The HTTP API may recover after the WebSocket handshake. A missed first
+    // status request must not leave Load/Start disabled until manual refresh.
+    useEffect(() => {
+        if (!shouldObserve || !statusRecoveryPending) return undefined;
+        const timer = setInterval(() => {
+            if (!readRef.current && !operationRef.current) void refreshStatus();
+        }, 2000);
+        return () => clearInterval(timer);
+    // The interval must not restart on each status update or runtime event.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [shouldObserve, statusRecoveryPending]);
+
     const { connection: eventConnection, address: eventSocketAddress,
-        diagnostic: eventSocketDiagnostic, hasConnected: eventSocketEverConnected } = useBonsaiRuntimeSocket({
+        diagnostic: eventSocketDiagnostic, hasConnected: eventSocketEverConnected, reconnectNow } = useBonsaiRuntimeSocket({
         // Listen even when the floating Run panel is closed: external runs
         // must still reach the timeline and follow-focus projection.
         enabled: true,
@@ -231,14 +255,16 @@ export default function RuntimeCommander({
                 followingRef.current = true;
                 setIsFollowing(true);
                 onRuntimeStarted?.();
-                setSnapshot((current) => ({ ...current, status: "RUNNING", currentStates: [],
+                setSnapshot((current) => ({ ...current, status: "RUNNING", statusStale: false, currentStates: [],
                     transitions: [], checkedAt: Date.now() }));
             }
             if (message.type === "status") {
                 if (acceptedRunRef.current && ["RUNNING", "PAUSED"].includes(payload.value))
                     observedRunningRef.current = true;
-                setSnapshot((current) => ({ ...current, status: String(payload.value || "UNKNOWN"),
+                const reportedStatus = String(payload.value || "UNKNOWN");
+                setSnapshot((current) => ({ ...current, status: reportedStatus, statusStale: false,
                     currentStates: current?.currentStates || [], checkedAt: Date.now() }));
+                setStatusRecoveryPending(reportedStatus === "LOADING");
             } else if (acceptedRunRef.current && (message.type === "state_entered" || message.type === "state_exited")) {
                 setSnapshot((current) => {
                     const states = new Set(current?.currentStates || []);
@@ -271,8 +297,10 @@ export default function RuntimeCommander({
                 setSnapshot((current) => ({ ...current, currentStates: [], statusStale: true }));
             }
             setStatusError(reason);
+            setStatusRecoveryPending(true);
         },
         onConnectionLost: () => {
+            setStatusRecoveryPending(true);
             if (acceptedRunRef.current) {
                 onRuntimeGap?.();
                 setSnapshot((current) => ({ ...current, currentStates: [], statusStale: true }));
@@ -285,6 +313,7 @@ export default function RuntimeCommander({
             loadedWorkflowRef.current = null;
             setLoadedWorkflow(null);
             setSnapshot(null);
+            setStatusRecoveryPending(true);
             setRuntimeNotice("Backend restarted; waiting for the next matching run.");
             onRuntimeBackendRestart?.();
         },
@@ -292,8 +321,19 @@ export default function RuntimeCommander({
     });
 
     useEffect(() => {
-        if (eventConnection === "connected") setStatusError("");
-    }, [eventConnection]);
+        const previousConnection = previousEventConnectionRef.current;
+        previousEventConnectionRef.current = eventConnection;
+        if (eventConnection !== "connected") return;
+        setStatusError("");
+        if (runtimeConnectionNeedsStatusRefresh(previousConnection, eventConnection)) {
+            // The WebSocket can reconnect without changing shouldObserve, so
+            // the initial-only status effect above would otherwise never run.
+            setStatusRecoveryPending(true);
+            if (shouldObserve) void refreshStatus();
+        }
+    // Reconnect resynchronizes control status, not the historical event stream.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [eventConnection, shouldObserve]);
 
     // Loading a different top-level workflow in the editor invalidates the
     // previously loaded runtime graph; visiting a nested tab does not.
@@ -367,7 +407,7 @@ export default function RuntimeCommander({
                 const includeMapping = Object.fromEntries(behaviorDirectories
                     .filter((directory) => directory.key?.trim() && directory.path?.trim())
                     .map((directory) => [directory.key.trim(), (directory.resolvedPath || directory.path).trim()]));
-                // Connect before loading so configuration/startup ui_logs are captured.
+                // Connect before loading so configuration/startup logs are captured.
                 // Repeated Load calls reset the log panel even for the same workflow.
                 onLogLoadRequested?.();
                 sent = true;
@@ -505,8 +545,19 @@ export default function RuntimeCommander({
     const loadedCurrent = loadedWorkflow && workflowTab?.id === loadedWorkflow.id
         && workflowTab.documentGeneration === loadedWorkflow.generation
         && workflowFingerprint === loadedWorkflow.fingerprint;
-    const canLoad = !busy && !isBrowsing && Boolean(configuration.trim())
-        && !["RUNNING", "PAUSED", "LOADING"].includes(snapshot?.status);
+    const availability = runtimeControlAvailability({
+        status: snapshot?.status ?? null, statusStale: Boolean(snapshot?.statusStale),
+        loadedCurrent: Boolean(loadedCurrent), configuration, busy, browsing: isBrowsing,
+        eventConnection, refreshing: isRefreshing,
+    });
+    const canLoad = availability.canLoad;
+    const canStart = availability.canStart;
+    const reconnectControls = () => {
+        setRuntimeNotice("");
+        setStatusRecoveryPending(true);
+        reconnectNow();
+        if (shouldObserve) void refreshStatus();
+    };
     const diagnostics = classifyWebCommanderMessages(loadMessages);
     const totalIssues = diagnostics.warnings.length + diagnostics.errors.length + diagnostics.diagnostics.length;
     const statusLabel = snapshot ? STATUS_LABELS[snapshot.status] || snapshot.status : isRefreshing ? "Checking..." : "Disconnected";
@@ -722,11 +773,11 @@ export default function RuntimeCommander({
                     <div className="runtime-log-controls runtime-commander-toolbar" aria-label="Execution controls">
                         <div className="runtime-commander-primary-actions">
                             <button type="button" onClick={() => void execute("load")}
-                                disabled={!canLoad} title="Load configuration and current state machine">
+                                disabled={!canLoad} title={availability.loadReason || "Load configuration and current state machine"}>
                                 <FiFolder /><span>Load</span></button>
                             <button type="button" className="runtime-log-play-button" onClick={() => void execute("start")}
-                                disabled={!canControl || !loadedCurrent || !["INITIALIZED", "INITIALIZED_BUT_WARNINGS"].includes(snapshot?.status)}
-                                title="Start"><FiPlay /><span>Start</span></button>
+                                disabled={!canStart}
+                                title={availability.startReason || "Start"}><FiPlay /><span>Start</span></button>
                         </div>
                         <button type="button" onClick={() => void execute("pause")}
                             disabled={!canControl || snapshot?.status !== "RUNNING"} title="Pause"><FiPause /><span>Pause</span></button>
@@ -740,6 +791,21 @@ export default function RuntimeCommander({
                             <FiRadio /><span>Auto events</span><span className="runtime-commander-auto-state">{automaticEnabled ? "On" : "Off"}</span>
                         </button>
                     </div>
+                    {(eventConnection !== "connected" || availability.loadReason || availability.startReason) &&
+                        <div className="runtime-commander-connection-help" role="status" aria-live="polite">
+                            <div className="runtime-commander-connection-message">
+                                {eventConnection !== "connected" &&
+                                    <span>Runtime WebSocket {eventConnection === "connecting" ? "connecting" : "disconnected"}; automatic retry active.</span>}
+                                {availability.loadReason && <span>Load: {availability.loadReason}</span>}
+                                {availability.startReason && <span>Start: {availability.startReason}</span>}
+                                {statusError && <span title={statusError}>Status check failed; verify the HTTP server on port 8080.</span>}
+                            </div>
+                            {(eventConnection !== "connected" || snapshot?.statusStale || statusError) &&
+                                <button type="button" onClick={reconnectControls} disabled={busy || isRefreshing}
+                                    title="Reconnect runtime WebSocket and refresh engine status">
+                                    <FiRefreshCw aria-hidden="true" /> Reconnect
+                                </button>}
+                        </div>}
                     <form className="runtime-commander-manual-event" aria-label="Send a transition event"
                         onSubmit={(event) => { event.preventDefault(); if (canControl && selectedEventName) void execute("fire_event"); }}>
                         <label htmlFor={`${id}-manual-event`}>Send event</label>

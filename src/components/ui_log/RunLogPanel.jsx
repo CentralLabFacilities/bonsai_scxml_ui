@@ -167,10 +167,10 @@ const RunLogPanel = memo(function RunLogPanel({ session }) {
                             )}
                         </div>)}
                     </div>
-                    {!totalRows && <div className="run-log-empty">{session ? 'Waiting for log messages…' : 'Load a state machine to receive ui_logs.'}</div>}
+                    {!totalRows && <div className="run-log-empty">{session ? 'Waiting for log messages…' : 'Load a state machine to receive logs.'}</div>}
                 </div>
                 <footer className="run-log-footer">
-                    <span>{pausedThrough !== null ? `Display paused · ${unseen} newer` : status === 'connected' ? 'Receiving ui_logs' : status}</span>
+                    <span>{pausedThrough !== null ? `Display paused · ${unseen} newer` : status === 'connected' ? 'Receiving logs' : status}</span>
                     <span>{filtered.length.toLocaleString()} matching · buffer limit 5,000</span>
                 </footer>
             </>}

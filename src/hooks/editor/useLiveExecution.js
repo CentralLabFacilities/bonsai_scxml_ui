@@ -1,6 +1,7 @@
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { getExportFullSkillName, getSharedScxmlStateKey } from "../../utils/editorScxml.js";
 import { isEditorCloneNode } from "../../utils/editorClones.js";
+import { sameRuntimeDocumentIgnoringPositions } from "../../utils/runtimeDocumentCompatibility.js";
 import { findRuntimeTransitionEdgeIds } from "../../utils/runtimeTransitionMatching.js";
 import { useDerivedGraphSnapshot } from "../graph/useEditorGraphMaintenance.js";
 import { getActiveParallelViews, getExitedParallelKeys, parallelOf, firstActiveSubMachine } from "../../utils/runtimeParallelContexts.js";
@@ -135,21 +136,15 @@ function compileContexts(workflow, tabsSnapshot) {
 }
 
 
-/**
- * Resolve an executable SCXML state to the uniquely matching editor skill.
- * Reuse the same invocation-aware model as live execution so that nested
- * sub-state machines are matched by their runtime suffix, not just their
- * unqualified skill name. Ambiguous or unknown states remain unresolved.
- */
-export function resolveRuntimeSkill(workflow, tabsSnapshot, state) {
-    const id = runnerId(state);
-    if (!id) return null;
-    const model = compileContexts(workflow, tabsSnapshot);
-    const matches = model?.states.get(id) || EMPTY;
+/** Resolve a runtime skill ID against the same proven invocation contexts
+ * used by active-state highlighting. A child state can have an instance suffix. */
+export function resolveRuntimeSkill(workflow, tabsSnapshot, stateId) {
+    const model = compileContexts(workflow, tabsSnapshot || []);
+    const matches = model?.states.get(String(stateId || "")) || [];
     if (matches.length !== 1) return null;
     const { context, group } = matches[0];
     const node = context.document.byId.get(group.id);
-    return node ? { node, tab: context.document.tab } : null;
+    return node ? { tab: context.document.tab, node } : null;
 }
 
 function projectEntry(entry, tabId, validTabs, visibleById) {
@@ -274,7 +269,7 @@ export function useLiveExecution({
             if (current && current.filePath === tab.filePath && current.parentTabId === tab.parentTabId
                 && text(current.sourcePath) === text(tab.sourcePath)
                 && tab.documentGeneration != null && generation === tab.documentGeneration &&
-                typeof tab.fingerprint === "string" && currentFingerprint === tab.fingerprint) result.add(tab.id);
+                sameRuntimeDocumentIgnoringPositions(tab.fingerprint, currentFingerprint)) result.add(tab.id);
         });
         return result;
     }, [model, tabs, activeTabId, activeDocumentGeneration, activeFingerprint]);

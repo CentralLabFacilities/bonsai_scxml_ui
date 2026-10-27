@@ -12,3 +12,43 @@ export const isMovingPositionBatch = (changes = []) =>
 export const collectDraggedPositions = (pending, changes) => {
     changes.forEach((change) => pending.set(change.id, change));
 };
+
+
+// During a gesture, let the canvas own position-only changes. In particular,
+// don't publish them into the semantic document (and invalidate all graph
+// projections) until the drag finishes. Other changes retain their order.
+export const splitDragPreviewChanges = (changes, preview) => {
+    const moving = [];
+    const other = [];
+    for (const change of changes) {
+        if (preview && change.type === 'position' &&
+            (change.dragging === true || preview.has(change.id))) {
+            moving.push(change);
+        } else {
+            other.push(change);
+        }
+    }
+    return { moving, other };
+};
+
+export const withDragPreviewPositions = (nodes, preview) => {
+    if (!preview?.size) return nodes;
+    return nodes.map((node) => {
+        const position = preview.get(node.id)?.position;
+        if (!position || (node.position?.x === position.x && node.position?.y === position.y)) {
+            return node;
+        }
+        return { ...node, position };
+    });
+};
+
+export const finishedDragPositions = (preview, draggedNodes = []) => {
+    const finalChanges = new Map(preview || []);
+    for (const node of draggedNodes) {
+        if (!node?.id || !node.position) continue;
+        finalChanges.set(node.id, { id: node.id, type: 'position', position: node.position });
+    }
+    return [...finalChanges.values()]
+        .filter((change) => Boolean(change.position))
+        .map((change) => ({ ...change, dragging: false }));
+};

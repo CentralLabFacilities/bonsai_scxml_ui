@@ -19,7 +19,7 @@ import { getOverviewLayoutNodeSize } from "../../utils/layoutUtils";
 import { getSlotPathFromNode, isKnownSlotType, normalizeSlotPath, normalizeSlotType } from "../../utils/editorGraph";
 import { isEditorModalOpen } from "../interaction/useGlobalEditorShortcuts.js";
 import { isEditorCloneNode } from "../../utils/editorClones";
-import { appendLibraryNodeWithInitial } from "../../utils/libraryInitialState.js";
+import { appendLibraryNodeWithInitial, ensureUniqueLibraryNodeId } from "../../utils/libraryInitialState.js";
 import { insertNodeWithParallelBoundarySync } from "../../utils/libraryParallelInsertion.js";
 
 export function useEditorLibraryDrop({
@@ -166,6 +166,7 @@ export function useEditorLibraryDrop({
                 activeModeRef.current === "code" || isEditorModalOpen()
             ) return false;
             const nodes = current.nodes;
+            newNode = ensureUniqueLibraryNodeId(nodes, newNode, getNodeId);
             const targetContainer = atRoot ? null : findDropContainerAtPoint(mousePosition, nodes);
             const targetCompound = targetContainer?.type === "compound" ? targetContainer : null;
             const targetLane = targetContainer?.type === "parallelLane" ? targetContainer : null;

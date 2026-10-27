@@ -6,15 +6,58 @@ import { isEditorCloneNode } from "./editorClones.js";
 const SEMANTIC_STATE_TYPES = new Set(["custom", "submachine", "compound", "parallel"]);
 const INITIAL_CHILD_OWNERS = new Set(["compound", "parallelLane"]);
 
+/** Reserve the first unused SCXML skill id against the current document. */
+export function availableLibrarySkillName(nodes, requestedName) {
+    const base = String(requestedName || "").replace(/#\d+$/, "");
+    const used = new Set((nodes || [])
+        .filter((node) => node.type === "custom" && !isEditorCloneNode(node))
+        .map((node) => String(node.data?.fullSkillName || "")));
+    let index = 1;
+    while (used.has(`${base}#${index}`)) index += 1;
+    return `${base}#${index}`;
+}
+
+// Skill inspection can finish after another drop has committed. Names assigned
+// before awaiting the API may therefore collide even if initials do not.
+// Resolve the identity in the same synchronous document transaction as append.
+const resolveIncomingSkillIdentity = (currentNodes, incomingNode) => {
+    if (incomingNode.type !== "custom" || !incomingNode.data) return incomingNode;
+    const data = incomingNode.data;
+    const fullName = String(data.fullSkillName || "").trim();
+    if (!fullName) return incomingNode;
+
+    if (data.isFinal) {
+        const sharedId = String(data.scxmlStateId || fullName);
+        const usedInstances = new Set(currentNodes
+            .filter((node) => node.type === "custom" && !isEditorCloneNode(node) &&
+                String(node.data?.scxmlStateId || node.data?.fullSkillName || "") === sharedId)
+            .map((node) => String(node.data?.editorInstanceId || "").trim()));
+        const requested = String(data.editorInstanceId || "").trim();
+        if (requested && !usedInstances.has(requested)) return incomingNode;
+        let index = 1;
+        while (usedInstances.has(String(index))) index += 1;
+        return { ...incomingNode, data: { ...data, editorInstanceId: String(index) } };
+    }
+
+    const usedNames = new Set(currentNodes
+        .filter((node) => node.type === "custom" && !isEditorCloneNode(node))
+        .map((node) => String(node.data?.fullSkillName || "")));
+    if (!usedNames.has(fullName)) return incomingNode;
+    return { ...incomingNode, data: {
+        ...data, fullSkillName: availableLibrarySkillName(currentNodes, fullName),
+    } };
+};
+
 export function appendLibraryNodeWithInitial(currentNodes, incomingNode) {
-    const parentId = incomingNode.parentId || null;
+    const resolvedNode = resolveIncomingSkillIdentity(currentNodes, incomingNode);
+    const parentId = resolvedNode.parentId || null;
     const siblings = currentNodes.filter((node) =>
         (node.parentId || null) === parentId &&
         SEMANTIC_STATE_TYPES.has(node.type) &&
         !isEditorCloneNode(node)
     );
-    if (!SEMANTIC_STATE_TYPES.has(incomingNode.type) || isEditorCloneNode(incomingNode)) {
-        return [...currentNodes, incomingNode];
+    if (!SEMANTIC_STATE_TYPES.has(resolvedNode.type) || isEditorCloneNode(resolvedNode)) {
+        return [...currentNodes, resolvedNode];
     }
 
     const parent = parentId ? currentNodes.find((node) => node.id === parentId) : null;
@@ -22,7 +65,7 @@ export function appendLibraryNodeWithInitial(currentNodes, incomingNode) {
     // same scope, and prefer an existing sibling over the incoming library node.
     const preferredId = siblings.some((node) => node.id === parent?.data?.initialChildId)
         ? parent.data.initialChildId
-        : (siblings.find((node) => node.data?.isInitial) || siblings[0])?.id || incomingNode.id;
+        : (siblings.find((node) => node.data?.isInitial) || siblings[0])?.id || resolvedNode.id;
 
     const normalized = currentNodes.map((node) => {
         if (node.id === parentId && INITIAL_CHILD_OWNERS.has(node.type) &&
@@ -35,7 +78,90 @@ export function appendLibraryNodeWithInitial(currentNodes, incomingNode) {
         return { ...node, data: { ...node.data, isInitial: node.id === preferredId } };
     });
     return [...normalized, {
-        ...incomingNode,
-        data: { ...incomingNode.data, isInitial: incomingNode.id === preferredId },
+        ...resolvedNode,
+        data: { ...resolvedNode.data, isInitial: resolvedNode.id === preferredId },
     }];
+}
+
+
+/**
+ * A Rust insertion result is a *partial* state patch. If it marks the newly
+ * inserted state as initial without also patching its siblings, blindly
+ * merging that result would leave two initials in the same scope. Keep the
+ * selection already visible in the editor; explicit Set Initial commands use
+ * a different reconciliation policy and are never processed here.
+ *
+ * Treat a root, each compound and each parallel lane as separate scopes.
+ */
+export function preserveInitialsAfterInsertion(beforeNodes, patchedNodes, insertedIds = []) {
+    const inserted = new Set((insertedIds || []).map(String));
+    if (!inserted.size) return patchedNodes;
+
+    const activeScopes = new Set();
+    for (const node of patchedNodes) {
+        if (inserted.has(String(node.id)) && SEMANTIC_STATE_TYPES.has(node.type) &&
+            !isEditorCloneNode(node)) {
+            activeScopes.add(node.parentId || null);
+        }
+    }
+    if (!activeScopes.size) return patchedNodes;
+
+    const previousById = new Map(beforeNodes.map((node) => [node.id, node]));
+    const patchedById = new Map(patchedNodes.map((node) => [node.id, node]));
+    const corrections = new Map();
+
+    for (const parentId of activeScopes) {
+        const siblings = patchedNodes.filter((node) =>
+            (node.parentId || null) === parentId &&
+            SEMANTIC_STATE_TYPES.has(node.type) && !isEditorCloneNode(node));
+        if (!siblings.length) continue;
+
+        const siblingIds = new Set(siblings.map((node) => node.id));
+        const previousParent = previousById.get(parentId);
+        const patchedParent = patchedById.get(parentId);
+        const previousSiblings = beforeNodes.filter((node) =>
+            siblingIds.has(node.id) && (node.parentId || null) === parentId &&
+            SEMANTIC_STATE_TYPES.has(node.type) && !isEditorCloneNode(node));
+
+        const chosen = (
+            (siblingIds.has(previousParent?.data?.initialChildId)
+                ? previousParent.data.initialChildId : null) ||
+            previousSiblings.find((node) => node.data?.isInitial)?.id ||
+            previousSiblings[0]?.id ||
+            (siblingIds.has(patchedParent?.data?.initialChildId)
+                ? patchedParent.data.initialChildId : null) ||
+            siblings.find((node) => node.data?.isInitial)?.id ||
+            siblings[0].id
+        );
+
+        for (const sibling of siblings) {
+            const shouldBeInitial = sibling.id === chosen;
+            if (Boolean(sibling.data?.isInitial) !== shouldBeInitial) {
+                corrections.set(sibling.id, {
+                    ...sibling,
+                    data: { ...sibling.data, isInitial: shouldBeInitial },
+                });
+            }
+        }
+        if (INITIAL_CHILD_OWNERS.has(patchedParent?.type) &&
+            patchedParent.data?.initialChildId !== chosen) {
+            corrections.set(parentId, {
+                ...patchedParent,
+                data: { ...patchedParent.data, initialChildId: chosen },
+            });
+        }
+    }
+
+    return corrections.size
+        ? patchedNodes.map((node) => corrections.get(node.id) || node)
+        : patchedNodes;
+}
+
+/** Prevent duplicate React Flow ids at insertion time, not after Rust sync. */
+export function ensureUniqueLibraryNodeId(nodes, incomingNode, newId) {
+    const ids = new Set((nodes || []).map((node) => String(node.id)));
+    if (!ids.has(String(incomingNode.id))) return incomingNode;
+    let candidate;
+    do { candidate = String(newId()); } while (ids.has(candidate));
+    return { ...incomingNode, id: candidate };
 }

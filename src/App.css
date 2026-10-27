@@ -8908,44 +8908,41 @@ dialog.skill-paste-choice-overlay {
     accent-color: #2563eb;
 }
 
-/* Runtime slot snapshots deliberately sit outside the slot card so the value
-   remains readable while inspecting the graph at a playback step. */
+/* Keep observed slot values inside the slot card so they are visible even
+   when React Flow clips overlays or the node is near a viewport edge. */
 .slot-node-runtime-value {
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 8px);
-    z-index: 8;
-    display: inline-flex;
-    align-items: center;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
     gap: 6px;
-    max-width: 260px;
-    transform: translateX(-50%);
+    min-width: 0;
+    margin: 5px 0;
     padding: 4px 7px;
-    border: 1px solid rgba(96, 165, 250, 0.62);
-    border-radius: 7px;
-    background: rgba(15, 23, 42, 0.96);
-    box-shadow: 0 4px 12px rgba(2, 6, 23, 0.32);
-    color: #e2e8f0;
+    border: 1px solid rgba(96, 165, 250, 0.45);
+    border-radius: 5px;
+    background: rgba(96, 165, 250, 0.08);
+    color: inherit;
     pointer-events: none;
-    white-space: nowrap;
 }
 
 .slot-node-runtime-value-label {
-    color: #93c5fd;
+    color: var(--ui-text-muted, #64748b);
     font-size: 8px;
-    font-weight: 850;
+    font-weight: 750;
     letter-spacing: 0.06em;
     text-transform: uppercase;
 }
 
 .slot-node-runtime-value code {
     min-width: 0;
-    max-width: 205px;
+    flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
-    color: #f8fafc;
+    white-space: nowrap;
+    text-align: right;
+    color: inherit;
     font-size: 11px;
-    font-weight: 750;
+    font-weight: 700;
 }
 
 .react-flow__node.runtime-log-slot-value-node {
@@ -10196,7 +10193,13 @@ dialog.skill-paste-choice-overlay {
 }
 
 /* WebSocket runtime timeline and assignment inspection */
-.runtime-event-timeline { display: grid; gap: 5px; padding: 8px 12px 5px; border-bottom: 1px solid #e2e8f0; }
+.runtime-event-timeline { display: grid; gap: 5px; padding: 6px 12px; border-bottom: 1px solid #e2e8f0; }
+.runtime-event-timeline-toggle { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: transparent; padding: 2px 0; cursor: pointer; text-align: left; color: #334155; font-size: 11px; }
+.runtime-event-timeline-toggle svg { flex: 0 0 auto; }
+.runtime-event-timeline-toggle strong { color: #0f172a; font-size: 12px; }
+.runtime-event-timeline-toggle span { margin-left: auto; color: #64748b; }
+.runtime-event-timeline-toggle:focus-visible { outline: 2px solid #0284c7; outline-offset: 2px; border-radius: 4px; }
+.runtime-event-timeline-content { display: grid; gap: 5px; min-width: 0; }
 .runtime-event-timeline-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 11px; color: #475569; }
 .runtime-event-timeline-header strong { color: #0f172a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .runtime-event-timeline input[type="range"] { width: 100%; accent-color: #d4a500; cursor: pointer; }
@@ -11001,9 +11004,98 @@ dialog.skill-paste-choice-overlay {
     z-index: 2000 !important;
 }
 
-/* The React Flow lane wrapper IS the node-drop rectangle. Draw its outline
-   there (not on a nested visual layer), without adding border thickness to
-   its measured dimensions. Stay visible in Event, Slot and Overview modes. */
+/* Live MemorySlot observations are informational, never editable. */
+.runtime-memory-slots .runtime-memory-slot-row { padding: 7px 9px; border-bottom: 1px solid var(--border-color, rgba(125,125,125,.16)); display: grid; gap: 3px; min-width: 0; }
+.runtime-memory-slot-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; justify-content: space-between; }
+.runtime-memory-slot-heading small, .runtime-memory-slot-source { font-size: 10px; opacity: .7; overflow-wrap: anywhere; }
+.runtime-memory-slot-row > code { overflow-wrap: anywhere; font-size: 12px; }
+.runtime-stale-value { opacity: .7; text-decoration: underline dotted; text-underline-offset: 3px; }
+
+/* Visible event-stream diagnostics and compact, selectable history. */
+.runtime-event-stream-state {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+    padding: 8px 12px; border-bottom: 1px solid var(--secondary-color, #cbd5e1);
+    font-size: 11px;
+}
+.runtime-event-stream-state strong { font-size: 12px; }
+.runtime-event-stream-state small { color: var(--ui-text-secondary, #64748b); }
+.runtime-event-stream-warning { width: 100%; margin: 0; font-size: 11px; color: #d97706; overflow-wrap: anywhere; }
+.runtime-drawer-timeline-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.runtime-drawer-timeline-heading h4 { flex: 1; }
+.runtime-drawer-timeline-heading button {
+    background: transparent; color: inherit; border: 1px solid var(--secondary-color);
+    border-radius: 5px; padding: 3px 9px; cursor: pointer;
+}
+.runtime-drawer-timeline-heading button[aria-pressed="true"] { border-color: #eab308; background: #eab30824; }
+.runtime-drawer-timeline input[type="range"] { display: block; width: 100%; accent-color: #eab308; margin-bottom: 8px; }
+.runtime-drawer-event-list { display: grid; gap: 2px; overflow-y: auto; max-height: 220px; min-height: 0; }
+.runtime-drawer-event { display: flex; align-items: baseline; gap: 10px; width: 100%; min-width: 0;
+    padding: 5px 8px; border: 1px solid transparent; border-radius: 4px;
+    color: inherit; background: transparent; text-align: left; font-size: 11px; cursor: pointer; }
+.runtime-drawer-event:hover { background: #94a3b824; }
+.runtime-drawer-event.selected { border-color: #eab308; background: #eab30820; }
+.runtime-drawer-event-sequence { flex: 0 0 34px; color: var(--ui-text-secondary, #94a3b8); font-variant-numeric: tabular-nums; }
+.runtime-drawer-event-label { overflow-wrap: anywhere; min-width: 0; }
+
+/* Collapsible runtime sections; summary remains compact and keyboard-accessible. */
+.runtime-collapsible { min-width: 0; }
+.runtime-section-summary { display: flex; align-items: center; justify-content: space-between; gap: 7px;
+    cursor: pointer; font-size: 12px; font-weight: 600; list-style: revert; }
+.runtime-section-summary::marker { color: var(--ui-text-secondary, #94a3b8); }
+.runtime-section-summary .runtime-summary-title { flex: 1; }
+.runtime-section-summary .runtime-summary-title small { font-size: 10px; font-weight: 400;
+    color: var(--ui-text-secondary, #94a3b8); margin-left: 4px; }
+.runtime-section-content { padding-top: 10px; min-width: 0; }
+.runtime-section-actions { margin-left: auto; }
+.runtime-drawer-live-button { background: transparent; color: inherit; border: 1px solid var(--secondary-color);
+    border-radius: 5px; padding: 3px 9px; font-size: 11px; cursor: pointer; }
+.runtime-drawer-live-button[aria-pressed="true"] { border-color: #eab308; background: #eab30824; }
+.runtime-drawer-event-list { max-height: 212px; overflow-y: auto; align-content: start;
+    grid-auto-rows: minmax(30px, auto); overscroll-behavior: contain; }
+.runtime-drawer-event-sequence { flex-basis: 24px; }
+
+/* Run Assignments is resizable independently of the Inspector (down to 190px). */
+.editor-panel-resize-assignments { grid-column: 4; }
+.editor-panel-resize-assignments::after {
+    display: block;
+    inset: calc(50% - 22px) calc(50% - 1px);
+    background: #64748b;
+}
+.editor-panel-resize-assignments:hover::after,
+.editor-panel-resize-assignments:focus-visible::after { background: #38bdf8; }
+/* MemorySlots use the same compact name/type/value fields as runtime variables. */
+.runtime-memory-slots .datamodel-compact-id { white-space: normal; overflow-wrap: anywhere; }
+
+/* Chronological changes belonging to the selected skill or transition snapshot.
+   Compact layout also works when the Run Assignments dock is 190px wide. */
+.runtime-snapshot-change-list { display: grid; gap: 6px; min-width: 0; }
+.runtime-snapshot-change-row {
+    min-width: 0;
+    padding: 7px 8px;
+    border: 1px solid var(--secondary-color);
+    border-left: 3px solid var(--ui-border-strong, #64748b);
+    border-radius: 6px;
+    background: var(--sidebar-background);
+}
+.runtime-snapshot-change-row.slot { border-left-color: var(--editor-slot-write, #d946ef); }
+/* Local changes use the same value-type accents as local datamodel rows.
+   These rules must follow the change card's border shorthand above. */
+.runtime-snapshot-change-row.local.datamodel-type-accent-string { border-left-color: #38bdf8; }
+.runtime-snapshot-change-row.local.datamodel-type-accent-boolean { border-left-color: #a855f7; }
+.runtime-snapshot-change-row.local.datamodel-type-accent-integer { border-left-color: #14b8a6; }
+.runtime-snapshot-change-row.local.datamodel-type-accent-double { border-left-color: #f59e0b; }
+.runtime-snapshot-change-row.local.datamodel-type-accent-other { border-left-color: #64748b; }
+
+.runtime-snapshot-change-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 7px; align-items: center; margin-bottom: 4px; }
+.runtime-snapshot-change-kind { font-size: 10px; color: var(--ui-text-secondary, #94a3b8); }
+.runtime-snapshot-change-values { display: flex; align-items: baseline; gap: 4px 6px; flex-wrap: wrap; font-size: 12px; overflow-wrap: anywhere; min-width: 0; }
+.runtime-snapshot-change-values strong { overflow-wrap: anywhere; }
+.runtime-snapshot-change-values code { font-size: inherit; overflow-wrap: anywhere; white-space: pre-wrap; }
+.runtime-snapshot-change-arrow { color: var(--ui-text-secondary, #94a3b8); }
+.runtime-change-previous { color: var(--ui-text-secondary, #94a3b8); }
+.runtime-change-new { color: var(--ui-text-primary, #e2e8f0); }
+
+/* Parallel lane outline uses the actual React Flow drop rectangle in every mode. */
 .react-flow__node-parallelLane {
     box-sizing: border-box;
     border: 0 !important;
@@ -11011,10 +11103,22 @@ dialog.skill-paste-choice-overlay {
     background: rgba(2, 132, 199, 0.025);
     box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.28);
 }
-.react-flow__node-parallelLane:hover {
-    box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.48);
-}
+.react-flow__node-parallelLane:hover { box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.48); }
 .react-flow__node-parallelLane.selected,
 .react-flow__node-parallelLane:has(.parallel-lane-selected) {
     box-shadow: inset 0 0 0 1.5px rgba(2, 132, 199, 0.65);
 }
+/* Reconnection status is visible even when Run options are collapsed. */
+.runtime-commander-connection-help {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 10px; font-size: 11px; color: var(--ui-text-secondary, #64748b);
+    border-bottom: 1px solid var(--ui-border, #e2e8f0);
+}
+.runtime-commander-connection-message { display: grid; gap: 2px; min-width: 0; }
+.runtime-commander-connection-message span { overflow-wrap: anywhere; }
+.runtime-commander-connection-help button {
+    display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto;
+    padding: 5px 8px; border-radius: 5px; border: 1px solid var(--ui-border, #cbd5e1);
+    background: var(--ui-surface, #fff); color: inherit; cursor: pointer;
+}
+.runtime-commander-connection-help button:disabled { opacity: .5; cursor: default; }
