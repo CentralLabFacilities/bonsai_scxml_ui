@@ -32,12 +32,21 @@ test("both ledges stay attached to the right panel boundary without a collapsed 
 });
 
 test("Run Logs stays in the editor; narrow mode has no phantom Inspector-width track", () => {
-    assert.match(app, /<RunLogPanel key=\{runLogSession\}/);
+    assert.match(app, /<RunLogPanel session=\{runLogSession\}/);
     assert.match(cssRule('.app[data-panel-mode="drawers"]'), /var\(--right-dock-width/);
     assert.match(cssRule('.app[data-panel-mode="drawers"] .runtime-assignments-panel'), /grid-column:\s*2/);
     assert.match(cssRule('.app[data-panel-mode="drawers"] .editor-side-panel-inspector'), /right:\s*0/);
 });
 
+
+test("Loading Results is isolated from Run Logs and uses the HTTP load response", () => {
+    const commander = readFileSync(new URL("../components/overlays/RuntimeCommander.jsx", import.meta.url), "utf8");
+    const hook = readFileSync(new URL("../hooks/editor/useRunLogSocket.js", import.meta.url), "utf8");
+    assert.match(commander, /setLoadMessages\(result\.messages\)/);
+    assert.doesNotMatch(commander, /onRegisterLoadDiagnostic|captureLoadDiagnosticsRef/);
+    assert.doesNotMatch(app, /handleLoadDiagnosticLog|registerLoadDiagnosticHandler/);
+    assert.doesNotMatch(hook, /onLoadDiagnostic|extractMissingSlotDefinitions/);
+});
 
 test("Run Assignments can shrink independently of the Inspector", () => {
     assert.match(app, /minAssignmentsWidth = Math\.min\(190/);

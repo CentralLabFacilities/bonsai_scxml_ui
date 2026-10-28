@@ -510,6 +510,18 @@ export const findDropContainerAtPoint = (
         if (isCompound && !allowCompounds) return;
         if (!isLane && !isCompound) return;
 
+        // A collapsed container is not an editable drop area. Its hidden
+        // descendants (including Parallel lanes) must not claim positions in
+        // the old expanded rectangle either. The surrounding visible parent
+        // may still accept the drop.
+        if (node.data?.isCollapsed) return;
+        if (nodeIndex.getAncestorIds(node).size > 0 &&
+            [...nodeIndex.getAncestorIds(node)].some((id) => {
+                const ancestor = nodeIndex.byId.get(id);
+                return (ancestor?.type === "compound" || ancestor?.type === "parallel") &&
+                    ancestor.data?.isCollapsed;
+            })) return;
+
         // Never expose the editor-created lane wrapper as an independent drop
         // target. It occupies the full lane and otherwise masks that lane.
         if (isCompound && isAutoParallelLaneCompound(node)) return;

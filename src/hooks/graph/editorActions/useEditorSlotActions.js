@@ -205,14 +205,31 @@ export function useEditorSlotActions({
 
     const createManualSlot = useCallback(
         (slotData) => {
-            if (!slotData?.path) return null;
-
+            const cleanPath = normalizeSlotPath(slotData?.path);
+            const linked = slotData?.linkedSkillSlot;
+            const owner = nodes.find((node) => node.id === linked?.nodeId && node.type === "custom");
+            const requests = linked?.access === "read" ? owner?.data?.inSlots
+                : linked?.access === "write" ? owner?.data?.outSlots : null;
+            const slotIndex = Number(linked?.slotIndex);
+            const request = Number.isInteger(slotIndex) && slotIndex >= 0
+                ? requests?.[slotIndex] : null;
+            const key = String(request?.key || "").trim();
+            const state = String(owner?.data?.fullSkillName || owner?.data?.label || owner?.id || "").trim();
+            // Do not create a malformed manual <slot> when the dialog's
+            // selected skill/key is stale (e.g. edited or removed while open).
+            if (!cleanPath || !key || !state || !request || owner.data?.isSkillClone ||
+                String(request.type || "").trim() !== String(slotData?.type || "").trim() ||
+                (request.path && normalizeSlotPath(request.path) !== cleanPath)) return null;
+            const formattedPath = `/${cleanPath}`;
+            const inheritedState = String(slotData.inheritedFrom || request.inherited?.state || state).trim();
             const newSlot = {
                 id: `manual-${crypto.randomUUID()}`,
-                path: slotData.path,
-                type: slotData.type,
+                path: formattedPath,
+                type: request.type,
+                key,
+                state,
                 inherited: slotData.isInherited
-                    ? { state: slotData.inheritedFrom || "" }
+                    ? { state: inheritedState, xpath: formattedPath }
                     : null,
             };
 
@@ -223,17 +240,15 @@ export function useEditorSlotActions({
             if (slotData.linkedSkillSlot) {
                 const { nodeId, access, slotIndex } =
                     slotData.linkedSkillSlot;
-                const cleanPath = `/${normalizeSlotPath(slotData.path)}`;
-
                 updatedNodes = nodes.map((node) => {
                     if (node.id !== nodeId) return node;
 
                     return {
                         ...node,
                         data: updateSharedSlotBinding(node.data, access, slotIndex, {
-                            path: cleanPath,
+                            path: formattedPath,
                             inherited: slotData.isInherited
-                                ? { state: "", xpath: cleanPath }
+                                ? { state: inheritedState, xpath: formattedPath }
                                 : null,
                         }),
                     };

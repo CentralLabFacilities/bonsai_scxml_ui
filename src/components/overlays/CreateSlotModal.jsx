@@ -79,6 +79,8 @@ function CreateSlotForm({
         onCreate({
             path: cleanPath,
             type: linkedSkillSlot.type,
+            // Binding identity must accompany its path into the SCXML exporter.
+            key: linkedSkillSlot.key,
             isInherited,
             inheritedFrom: "",
             linkedSkillSlot: {

@@ -389,6 +389,7 @@ export function useRuntimeReplay({
         if (
             !runtimeLog ||
             runtimeStarted ||
+            runtimePlaying ||
             !runtimeTraceNeedsFit ||
             runtimeTraceNodeIds.size === 0
         ) {
@@ -416,6 +417,7 @@ export function useRuntimeReplay({
     }, [
         runtimeLog,
         runtimeStarted,
+        runtimePlaying,
         runtimeTraceNeedsFit,
         runtimeTraceNodeIds,
         visibleNodes,
@@ -424,6 +426,8 @@ export function useRuntimeReplay({
 
     useEffect(() => {
         if (!activeRuntimeStep) return undefined;
+        // Any playback/seek focus supersedes the pending whole-trace fit.
+        // Prevent the two RAF animations from running one after the other.
         if (runtimeFocusHandledRef.current === runtimeFocusRequest) {
             return undefined;
         }
@@ -456,11 +460,12 @@ export function useRuntimeReplay({
         if (followNodeIds.length === 0) return undefined;
 
         runtimeFocusHandledRef.current = runtimeFocusRequest;
+        setRuntimeTraceNeedsFit(false);
         const frame = window.requestAnimationFrame(() => {
             fitView({
                 nodes: followNodeIds.map((id) => ({ id })),
                 padding: 0.55,
-                duration: 320,
+                duration: 0,
                 maxZoom: 1.15,
             });
         });

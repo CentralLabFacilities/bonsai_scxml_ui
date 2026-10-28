@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { appendLibraryNodeWithInitial, ensureUniqueLibraryNodeId, availableLibrarySkillName } from "./libraryInitialState.js";
+import { appendLibraryNodeWithInitial, ensureUniqueLibraryNodeId, availableLibrarySkillName, preserveInitialsAfterInsertion } from "./libraryInitialState.js";
 
 const node = (id, parentId = null, isInitial = false, type = "custom") => ({
     id, parentId, type, data: { isInitial, label: id }, position: { x: 0, y: 0 },
@@ -110,4 +110,31 @@ test("asynchronous skill inspection allocates from the latest committed names", 
     assert.equal(availableLibrarySkillName([...existing, {
         ...node("b"), data: { fullSkillName: "example.Wait#2" },
     }], "example.Wait"), "example.Wait#3");
+});
+
+
+test("incremental Rust acknowledgement cannot restore a second root initial", () => {
+    const before = appendLibraryNodeWithInitial(
+        appendLibraryNodeWithInitial([], { ...node("first"), data: { fullSkillName: "example.Wait#1", isInitial: true } }),
+        { ...node("second"), data: { fullSkillName: "example.Wait#2", isInitial: true } }
+    );
+    // Rust may return a partial insertion patch with the new state initial,
+    // without clearing the previous root initial in the same patch.
+    const patched = before.map((n) => n.id === "second"
+        ? { ...n, data: { ...n.data, isInitial: true } } : n);
+    const normalized = preserveInitialsAfterInsertion(before, patched, ["second"]);
+    assert.deepEqual(initialIds(normalized), ["first"]);
+    assert.equal(normalized.find((n) => n.id === "second").data.fullSkillName, "example.Wait#2");
+});
+
+test("insertion acknowledgement keeps an explicit initial in a nested scope", () => {
+    const before = [node("compound", null, false, "compound"),
+        node("first", "compound", false), node("chosen", "compound", true),
+        node("inserted", "compound", false)];
+    before[0].data.initialChildId = "chosen";
+    const patched = before.map((n) => n.id === "inserted"
+        ? { ...n, data: { ...n.data, isInitial: true } } : n);
+    const normalized = preserveInitialsAfterInsertion(before, patched, ["inserted"]);
+    assert.deepEqual(initialIds(normalized, "compound"), ["chosen"]);
+    assert.equal(normalized[0].data.initialChildId, "chosen");
 });

@@ -1,4 +1,4 @@
-import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiChevronDown, FiChevronRight, FiChevronUp, FiCopy, FiPause, FiPlay, FiSearch, FiTrash2, FiX } from 'react-icons/fi';
 import { useRunLogSocket } from '../../hooks/editor/useRunLogSocket.js';
 import { filterRunLogs, flattenRunLogLines, RUN_LOG_ROW_HEIGHT } from '../../utils/runLogData.js';
@@ -24,6 +24,16 @@ const RunLogPanel = memo(function RunLogPanel({ session }) {
     const [expandedTraceIds, setExpandedTraceIds] = useState(() => new Set());
     const [scrollTop, setScrollTop] = useState(0);
     const [viewportHeight, setViewportHeight] = useState(180);
+    // The WebSocket stays connected, but new load attempts start a fresh log view.
+    useEffect(() => {
+        setExpanded(false);
+        setLevel('ALL');
+        setQuery('');
+        setPausedThrough(null);
+        setExpandedTraceIds(new Set());
+        setScrollTop(0);
+        setAutoScroll(true);
+    }, [session]);
     const listRef = useRef(null);
     const resizerRef = useRef(null);
     const resizeRef = useRef(null);

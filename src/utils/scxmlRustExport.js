@@ -272,7 +272,12 @@ const buildConnectedManualSlotDeclarations = (manualSlots = [], nodes = []) => {
         const state = String(slot?.inherited?.state || slot?.state || "");
         const xpath = String(slot?.inherited?.xpath || slot?.path || "");
         const path = xpath.trim().replace(/^\/+/, "");
-        if (!path) return [];
+        // Older right-click-created declarations lacked key/state. Do not
+        // serialize those malformed editor-generated entries; normal skill
+        // bindings are independently exported with their real identity.
+        // Leave imported path-only declarations untouched for round-trip.
+        if (!path || (String(slot?.id || "").startsWith("manual-") &&
+            (!key.trim() || !state.trim()))) return [];
 
         // Imported declarations can remain in manualSlots after an edge is
         // deleted. A path may still be used by *another* skill, so match the

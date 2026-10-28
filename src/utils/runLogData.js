@@ -1,5 +1,5 @@
 /** Log stream values are deliberately independent of SCXML runtime events. */
-export const RUN_LOG_URL = 'ws://127.0.0.1:8765/bonsai/ui_logs';
+export const RUN_LOG_URL = 'ws://127.0.0.1:8765/bonsai/logs';
 export const RUN_LOG_LIMIT = 5000;
 export const RUN_LOG_ROW_HEIGHT = 23;
 

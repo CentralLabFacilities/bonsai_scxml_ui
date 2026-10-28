@@ -9624,7 +9624,8 @@ dialog.skill-paste-choice-overlay {
    automatic events, visualization and load results live behind the options ledge.
    -------------------------------------------------------------------------- */
 .runtime-commander-dialog,
-.runtime-commander-popup {
+.runtime-commander-popup,
+.runtime-commander-drawer {
     /* The editor uses dark design-system tokens. These floating surfaces are
        light; isolate their text, inputs and buttons from the dark palette. */
     color-scheme: light;
@@ -9801,6 +9802,7 @@ dialog.skill-paste-choice-overlay {
     background: white;
     box-shadow: 0 8px 28px rgba(15, 23, 42, 0.25);
     overflow: hidden;
+    z-index: calc(var(--ui-z-popover, 5000) + 2);
 }
 .runtime-commander-drawer-header {
     display: flex;

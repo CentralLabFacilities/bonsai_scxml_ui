@@ -68,8 +68,7 @@ export const findParallelLaneSkillConflicts = (nodes = [], { focusNodeIds = null
     return conflicts;
 };
 
-export const describeParallelLaneSkillConflict = (conflict) =>
-    `${conflict.skillType} is already used in ${conflict.firstLaneName} and cannot also be used in ${conflict.secondLaneName} of ${conflict.parallelName}. Skills in different lanes of the same parallel must have different types because their exit events are shared.`;
+export const describeParallelLaneSkillConflict = () => "Skill already present in another Lane";
 
 export const collectParallelLaneSkillProblems = (nodes = []) =>
     findParallelLaneSkillConflicts(nodes).map((conflict) => ({

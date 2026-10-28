@@ -22,6 +22,7 @@ import {
     measureEditorTask,
 } from "../../utils/editorPerf";
 import { applyRustWorkflowDataModelPatch } from "../../utils/rustWorkflowPatch";
+import { preserveInitialsAfterInsertion } from "../../utils/libraryInitialState.js";
 import {
     slotDebug,
     summarizeRustSlotSnapshot,
@@ -228,6 +229,17 @@ export function useRustWorkflowDocument({
                     const nextGraph = reconcileRustBoundaryPatch(
                         liveNodes, liveEdges, patch, policy
                     );
+                    if (command?.type === "insertEditorStates") {
+                        // Incremental Rust insertion patches may mark the new
+                        // state initial without clearing the previous sibling.
+                        // Never re-introduce two INITIAL badges after a rapid
+                        // repeated library drop. Explicit Set Initial commands
+                        // use a separate patch policy and are unaffected.
+                        nextGraph.nodes = preserveInitialsAfterInsertion(
+                            liveNodes, nextGraph.nodes,
+                            (command.nodes || []).map((node) => node.id)
+                        );
+                    }
                     editorStateRef.current = {
                         ...(editorStateRef.current || {}),
                         nodes: nextGraph.nodes,

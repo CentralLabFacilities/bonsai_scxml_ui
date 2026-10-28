@@ -108,7 +108,10 @@ export async function loadWebCommander(payload, signal, workflow) {
         || messages.some((message) => typeof message !== "string")) {
         throw new Error("WebCommander load did not return a valid success/messages result.");
     }
-    return { ...result, messages };
+    // Some WebCommander versions return slot/configuration failures in an
+    // additional errors array instead of messages. Surface these in Load results.
+    const structuredErrors = Array.isArray(result.errors) ? result.errors.filter((item) => typeof item === "string") : [];
+    return { ...result, messages: [...new Set([...messages, ...structuredErrors.map((item) => `Error: ${item}`)])] };
 }
 
 export function classifyWebCommanderMessages(messages) {
@@ -120,7 +123,8 @@ export function classifyWebCommanderMessages(messages) {
             || /^State with id '.+' has only conditional transitions for event '.+'$/.test(text)
             || /^Skill .+ has ExitStatus .+ with and without ps$/.test(text)) {
             groups.warnings.push(message);
-        } else if (/^(?:err(?:or)?\s*[:\-]|\[err(?:or)?\])\s*/i.test(text)
+        } else if (/(?:\b(?:missing|undefined|unresolved|unknown|not found|not configured|not defined|does not exist)\b.{0,90}\bslot\b|\bslot\b.{0,90}\b(?:missing|undefined|unresolved|unknown|not found|not configured|not defined|does not exist)\b)/i.test(text)
+            || /^(?:err(?:or)?\s*[:\-]|\[err(?:or)?\])\s*/i.test(text)
             || /^State with id '.+' misses transition for event '.+'$/.test(text)
             || /^State with id '.+' sending event '.+' that is not captured in transitions$/.test(text)) {
             groups.errors.push(message);

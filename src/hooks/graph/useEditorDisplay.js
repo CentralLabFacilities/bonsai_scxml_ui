@@ -1542,7 +1542,7 @@ export function useEditorDisplay({
                         initialChild.type === "parallel"
                             ? "target"
                             : initialChild.type === "compound"
-                              ? "compound-entry"
+                              ? "target"
                               : "transition-target";
 
                     return {
@@ -1553,8 +1553,11 @@ export function useEditorDisplay({
                         targetHandle: initialTargetHandle,
                         label: "",
                         type: "straight",
-                        selectable: false,
-                        focusable: false,
+                        // Reconnect the arrowhead to choose another direct
+                        // initial child; still never delete this structural edge.
+                        reconnectable: "target",
+                        selectable: true,
+                        focusable: true,
                         deletable: false,
                         markerEnd: {
                             type: MarkerType.ArrowClosed,
@@ -1733,6 +1736,13 @@ export function useEditorDisplay({
                     transitionEdge,
                     "editor-edge-selection-related"
                 );
+            }
+            // The native reconnect handle needs a selected edge. The initial
+            // arrow has no persisted edge selection (it is derived from the
+            // parent's initialChildId), so selecting its container exposes it.
+            if (edge.data?.compoundInitialEdge &&
+                selectedVisualNodeIdSet.has(edge.source)) {
+                transitionEdge = { ...transitionEdge, selected: true };
             }
 
             return transitionEdge;

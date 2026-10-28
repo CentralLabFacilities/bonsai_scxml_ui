@@ -44,6 +44,7 @@ export function useEditorLibraryDrop({
     syncInsertedEditorStatesAfterCommit,
     syncInsertedParallelLaneStateAfterCommit,
     syncSlotsAfterCommit,
+    onParallelSkillConflict,
 }) {
     const activeModeRef = useRef(activeMode);
     const lifetimeRef = useRef(0);
@@ -520,7 +521,10 @@ export function useEditorLibraryDrop({
                 y: mousePosition.y - estimatedNodeHeight / 2,
             };
 
-            setNodes((currentNodes) =>
+            // Use the same atomic document transaction as compound/lane drops.
+            // setNodes alone can race the first Rust insertion acknowledgement:
+            // two rapid identical skill drops previously retained two initials.
+            commitInsertion((currentNodes) =>
                 resolveNodeCollisionsAndRefit(
                     appendLibraryNodeWithInitial(currentNodes, newNode), newNode.id
                 )
@@ -567,6 +571,11 @@ export function useEditorLibraryDrop({
             if (!mountedRef.current || lifetimeRef.current !== lifetime ||
                 getActiveDocumentIdentity() !== identity) return false;
             console.error("Could not insert library item:", error);
+            const message = String(error?.message || error || "");
+            if (message === "Skill already present in another Lane") {
+                onParallelSkillConflict?.(message);
+                return false;
+            }
             setLibraryDropError({
                 action: "insert",
                 title: `Could not add an item to ${origin?.title || "workflow"}`,
@@ -577,7 +586,7 @@ export function useEditorLibraryDrop({
             });
             return false;
         }
-    }, [getActiveDocumentIdentity, getTabSnapshot, insertLibraryItem, screenToFlowPosition]);
+    }, [getActiveDocumentIdentity, getTabSnapshot, insertLibraryItem, onParallelSkillConflict, screenToFlowPosition]);
 
     const handleAddLibrarySkill = useCallback((skill) => {
         const rect = flowContainerRef.current?.getBoundingClientRect();

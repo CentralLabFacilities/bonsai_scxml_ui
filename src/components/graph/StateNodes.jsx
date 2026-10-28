@@ -416,7 +416,15 @@ function StateCard({ id, data, selected, submachine = false }) {
             .map((event) => (submachine ? String(event?.id || "").trim() : event.id))
             .filter(Boolean);
         if (!submachine && !terminal) ids.push("fatal");
-        return [...new Set(ids)];
+        const priority = (event) => {
+            const token = String(event).toLowerCase();
+            if (token === "*" || token.endsWith(".*")) return 4;
+            if (/(^|\.)success(?:$|\.)/.test(token)) return 0;
+            if (/(^|\.)(?:error|failure|failed)(?:$|\.)/.test(token)) return 1;
+            if (/(^|\.)fatal(?:$|\.)/.test(token)) return 2;
+            return 3;
+        };
+        return [...new Set(ids)].sort((a, b) => priority(a) - priority(b));
     }, [data.events, submachine, terminal]);
     const summaryEntries = useMemo(
         () =>

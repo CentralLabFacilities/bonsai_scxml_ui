@@ -101,3 +101,21 @@ test("inheritance conflicts and inherited-only paths are not silently changed", 
     inheritedOnly.outSlots[0].inherited = { state: "B", xpath: "/other" };
     assert.equal(fillMissingSharedSlotBindings(inheritedOnly), inheritedOnly);
 });
+
+test('right-click slot bindings export key and state, while obsolete malformed manual entries are omitted', async () => {
+    const { buildRustSlotsSnapshot } = await import('./scxmlRustExport.js');
+    const skill = { id: 'skill', type: 'custom', data: {
+        fullSkillName: 'example.Writer#1', inSlots: [{ key: 'Entity', type: 'EntitySlot', path: '/entity' }],
+        outSlots: [],
+    }};
+    const result = buildRustSlotsSnapshot({ nodes: [skill], manualSlots: [
+        { id: 'manual-valid', key: 'Entity', state: 'example.Writer#1', path: '/entity' },
+        { id: 'manual-old', path: '/entity' },
+        { id: 'parsed-legacy', path: '/entity' },
+    ] });
+    assert.deepEqual(result.extraSlotDeclarations, [
+        { key: 'Entity', state: 'example.Writer#1', xpath: '/entity', inherited: false },
+        { key: '', state: '', xpath: '/entity', inherited: false },
+    ]);
+    assert.equal(result.states[0].inputSlots[0].key, 'Entity');
+});

@@ -16,7 +16,7 @@ test('parses the server log protocol with epoch milliseconds and nullable stack 
     assert.equal(entry.message, 'State machine started');
     assert.equal(entry.stackTrace, '');
     assert.match(formatRunLogTimestamp(entry.timestamp), /^\d\d:\d\d:\d\d\.\d{3}$/);
-    assert.equal(RUN_LOG_URL, 'ws://127.0.0.1:8765/bonsai/ui_logs');
+    assert.equal(RUN_LOG_URL, 'ws://127.0.0.1:8765/bonsai/logs');
 });
 
 test('malformed messages are ignored rather than crashing the stream', () => {
@@ -83,3 +83,5 @@ test('reconnect uses capped exponential backoff', () => {
     assert.equal(runLogRetryDelay(1), 800);
     assert.equal(runLogRetryDelay(100), 5000);
 });
+
+

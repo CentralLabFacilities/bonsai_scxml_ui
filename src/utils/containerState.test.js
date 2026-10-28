@@ -359,3 +359,36 @@ test('unrelated measurements and a collapsed parallel do not reflow lanes', asyn
     assert.equal(reconcileMeasuredParallelLanes(nodes, ['other']), nodes);
     assert.equal(reconcileMeasuredParallelLanes(nodes, ['wait']), nodes);
 });
+
+test('collapsed compound never claims drops in its old footprint or on the tiny collapsed header', () => {
+    const expanded = [
+        { id: 'container', type: 'compound', position: { x: 100, y: 100 },
+          width: 540, height: 330, style: { width: 540, height: 330 }, data: {} },
+        { id: 'nested', type: 'compound', parentId: 'container', position: { x: 270, y: 80 },
+          width: 230, height: 200, data: {} },
+    ];
+    assert.equal(findDropContainerAtPoint({ x: 430, y: 240 }, expanded)?.id, 'nested');
+    const collapsed = toggleContainerCollapse(expanded, 'container');
+    assert.equal(byId(collapsed, 'container').data.isCollapsed, true);
+    assert.equal(findDropContainerAtPoint({ x: 430, y: 240 }, collapsed), null);
+    assert.equal(findDropContainerAtPoint({ x: 120, y: 125 }, collapsed), null);
+    const restored = toggleContainerCollapse(collapsed, 'container');
+    assert.equal(findDropContainerAtPoint({ x: 430, y: 240 }, restored)?.id, 'nested');
+});
+
+test('collapsed parallel hides lanes as drop targets, but the outer expanded compound can accept drops', () => {
+    const nodes = [
+        { id: 'outer', type: 'compound', position: { x: 0, y: 0 },
+          width: 800, height: 480, data: {} },
+        { id: 'parallel', type: 'parallel', parentId: 'outer', position: { x: 100, y: 90 },
+          width: 210, height: 80, data: { isCollapsed: true, expandedContainerSize: { width: 620, height: 380 } } },
+        { id: 'lane', type: 'parallelLane', parentId: 'parallel', position: { x: 0, y: 64 },
+          width: 620, height: 240 },
+        { id: 'wrapped', type: 'compound', parentId: 'lane', position: { x: 0, y: 0 },
+          width: 620, height: 240, data: { autoParallelLaneCompound: true } },
+        { id: 'nested', type: 'compound', parentId: 'wrapped', position: { x: 80, y: 60 },
+          width: 200, height: 140, data: {} },
+    ];
+    assert.equal(findDropContainerAtPoint({ x: 220, y: 220 }, nodes)?.id, 'outer');
+    assert.equal(findDropContainerAtPoint({ x: 150, y: 120 }, nodes)?.id, 'outer');
+});

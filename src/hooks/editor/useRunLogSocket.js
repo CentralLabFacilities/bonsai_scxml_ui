@@ -25,13 +25,19 @@ export function useRunLogSocket(session) {
         setLogs([]);
     }, []);
 
+    // Keep the log socket established across Load calls. Previously each Load
+    // reconnected it, dropping early configuration errors emitted during startup.
     useEffect(() => {
-        if (!session) return;
+        clear();
+        sequenceRef.current = 0;
+    }, [session, clear]);
+
+    useEffect(() => {
         let cancelled = false;
         let socket = null;
         let reconnectTimer = null;
         let attempt = 0;
-        // The caller remounts this hook for every Load attempt, resetting all history.
+        // A single socket stays connected while Load resets only the displayed logs.
         function connect() {
             if (cancelled) return;
             setStatus(attempt ? 'reconnecting' : 'connecting');
@@ -81,7 +87,7 @@ export function useRunLogSocket(session) {
                 socket.close();
             }
         };
-    }, [session, flush]);
+    }, [flush]);
 
     return { logs, status, connectionIssue, clear };
 }

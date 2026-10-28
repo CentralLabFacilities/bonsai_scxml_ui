@@ -56,6 +56,7 @@ export function useTransitionGraph({
     flowContainerRef,
     cancelFlowConnection,
     onSlotConnectionError,
+    setNodeAsInitial,
 }) {
     const reconnectingEdgeRef = useRef(null);
     const drawerSessionRef = useRef(0);
@@ -258,6 +259,25 @@ export function useTransitionGraph({
                 return;
             }
 
+            // This edge is a presentation projection, not a semantic edge in
+            // `edges`. Retarget by updating the compound's initial child and
+            // syncing the existing Rust state-initial command.
+            if (oldEdge?.data?.compoundInitialEdge) {
+                const compound = nodes.find((node) => node.id === oldEdge.source);
+                const target = nodes.find((node) => node.id === connection.target);
+                if (compound?.type === "compound" &&
+                    connection.source === compound.id &&
+                    connection.sourceHandle === "compound-entry" &&
+                    target?.parentId === compound.id &&
+                    isCompoundInitialChildCandidate(target) &&
+                    ["target", "transition-target", "compound-entry"].includes(connection.targetHandle)) {
+                    if (target.id !== oldEdge.target) {
+                        setNodeAsInitial?.(target.id);
+                    }
+                }
+                return;
+            }
+
             const existingEdge = edges.find((edge) => edge.id === oldEdge?.id);
             if (
                 !existingEdge ||
@@ -386,6 +406,7 @@ export function useTransitionGraph({
             updateNodeInternals,
             syncTransitionsForSource,
             handleSlotReconnect,
+            setNodeAsInitial,
         ]
     );
 

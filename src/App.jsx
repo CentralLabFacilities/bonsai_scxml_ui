@@ -537,7 +537,7 @@ function AppContent() {
             rustWorkflowDocument.syncPastedEditorSubgraphAfterCommit,
         syncStateEditorPositions:
             rustWorkflowDocument.syncStateEditorPositions,
-        onParallelSkillConflict: (message) => notify({ tone: "danger", title: "Parallel lane skill conflict", message }),
+        onParallelSkillConflict: (message) => notify({ tone: "danger", message, id: "parallel-lane-duplicate", duration: 2300 }),
     });
     useRestoreCanvasViewportOnModeChange({ activeMode, fitView, getNodes });
 
@@ -565,7 +565,7 @@ function AppContent() {
         syncStateEditorPositions:
             rustWorkflowDocument.syncStateEditorPositions,
         syncRemovedStates: rustWorkflowDocument.syncRemovedStates,
-        onParallelSkillConflict: (message) => notify({ tone: "danger", title: "Parallel lane skill conflict", message }),
+        onParallelSkillConflict: (message) => notify({ tone: "danger", message, id: "parallel-lane-duplicate", duration: 2300 }),
     });
 
     const semanticNodes = useEditorGraphMaintenance({
@@ -623,6 +623,7 @@ function AppContent() {
         flowContainerRef,
         cancelFlowConnection,
         onSlotConnectionError: (message) => notify({ tone: "danger", title: "Slot connection", message }),
+        setNodeAsInitial,
     });
 
     const {
@@ -1458,6 +1459,7 @@ function AppContent() {
         syncInsertedParallelLaneStateAfterCommit:
             rustWorkflowDocument.syncInsertedParallelLaneStateAfterCommit,
         syncSlotsAfterCommit: rustWorkflowDocument.syncSlotsAfterCommit,
+        onParallelSkillConflict: (message) => notify({ tone: "danger", message, id: "parallel-lane-duplicate", duration: 2300 }),
     });
 
     // Library insertion selects the new node but never opens the inspector.
@@ -1869,7 +1871,7 @@ function AppContent() {
                         />
 
                     </div>
-                    <RunLogPanel key={runLogSession} session={runLogSession} />
+                    <RunLogPanel session={runLogSession} />
                     <EditorUtilityBar onQuickGuide={() => setIsHintPageOpen(true)}
                         shortcuts={{ isOpen: isShortcutHelpOpen, setIsOpen: setIsShortcutHelpOpen }}
                         onRefresh={refreshEditorNodes} canRefresh={activeMode !== 'code'} />

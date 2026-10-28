@@ -149,6 +149,10 @@ const SkillDescriptionTooltip = React.memo(
                 <div className="skill-tooltip-name">
                     {tooltip.skill.split(".").pop()}
                 </div>
+                <div className="skill-tooltip-package">
+                    <span className="skill-tooltip-package-label">Package: </span>
+                    {tooltip.skill.includes(".") ? tooltip.skill.slice(0, tooltip.skill.lastIndexOf(".")) : "(root)"}
+                </div>
                 <div className="skill-tooltip-text">
                     {tooltip.loading
                         ? "Loading description..."

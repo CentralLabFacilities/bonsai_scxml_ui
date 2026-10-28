@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FiAlertCircle, FiAlertTriangle, FiChevronDown, FiChevronLeft, FiChevronRight, FiFolder, FiPause, FiPlay, FiRefreshCw, FiSettings, FiSquare, FiX, FiSkipBack, FiSkipForward, FiRadio } from "react-icons/fi";
 import { isTauri, openFile } from "../../tauri-client.js";
@@ -12,18 +12,6 @@ import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
 import { runtimeConnectionNeedsStatusRefresh, shouldReplaceControlStatusBaseline, shouldRetryControlStatusSnapshot } from "../../utils/runtimeControlRecovery.js";
 import { runtimeControlAvailability } from "../../utils/runtimeControlAvailability.js";
-
-const STATUS_LABELS = {
-    UNKNOWN: "Not initialized",
-    LOADING: "Loading",
-    INITIALIZED: "Ready",
-    INITIALIZED_BUT_WARNINGS: "Ready with warnings",
-    RUNNING: "Running",
-    PAUSED: "Paused",
-    STOPPED: "Stopped",
-    COMPLETED: "Completed",
-    FAILED: "Failed",
-};
 
 export default function RuntimeCommander({
     isOpen,
@@ -407,8 +395,6 @@ export default function RuntimeCommander({
                 const includeMapping = Object.fromEntries(behaviorDirectories
                     .filter((directory) => directory.key?.trim() && directory.path?.trim())
                     .map((directory) => [directory.key.trim(), (directory.resolvedPath || directory.path).trim()]));
-                // Connect before loading so configuration/startup logs are captured.
-                // Repeated Load calls reset the log panel even for the same workflow.
                 onLogLoadRequested?.();
                 sent = true;
                 followingRef.current = false;
@@ -444,6 +430,7 @@ export default function RuntimeCommander({
                 setLoadedWorkflow(loaded);
                 onExecutionUpdate?.({ workflow: loaded, tabsSnapshot, snapshot: null, following: false,
                     followCamera: followCameraRef.current, ...displayOptionsRef.current, action: "load" });
+                // Loading Results are sourced exclusively from the HTTP load response.
                 setLoadMessages(result.messages);
                 setLoadSucceeded(result.success);
                 const severity = classifyWebCommanderMessages(result.messages);
@@ -560,8 +547,10 @@ export default function RuntimeCommander({
     };
     const diagnostics = classifyWebCommanderMessages(loadMessages);
     const totalIssues = diagnostics.warnings.length + diagnostics.errors.length + diagnostics.diagnostics.length;
-    const statusLabel = snapshot ? STATUS_LABELS[snapshot.status] || snapshot.status : isRefreshing ? "Checking..." : "Disconnected";
-    const statusTone = snapshot?.statusStale || statusError ? "warning" :
+    const statusLabel = !String(configuration || "").trim() ? "No config selected"
+        : eventConnection !== "connected" || snapshot?.statusStale || Boolean(statusError) ? "No connection"
+        : loadedCurrent && loadSucceeded === true ? "Loaded" : "Nothing loaded";
+    const statusTone = eventConnection !== "connected" || snapshot?.statusStale || statusError ? "warning" :
         snapshot?.status === "RUNNING" ? "running" : snapshot?.status === "PAUSED" ? "paused" :
             snapshot?.status === "INITIALIZED_BUT_WARNINGS" ? "warning" : "neutral";
 
@@ -577,7 +566,11 @@ export default function RuntimeCommander({
                         else close();
                     }
                 }}>
-                {optionsOpen && <div className="runtime-commander-drawer" id={`${id}-options`}>
+                {optionsOpen && createPortal(<div className="runtime-commander-drawer nodrag nopan" id={`${id}-options`}
+                    data-editor-shortcut-scope onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Escape") setOptionsOpen(false);
+                    }}>
                     <div className="runtime-commander-drawer-header">
                         <strong><FiSettings aria-hidden="true" /> Run options</strong>
                         <button type="button" className="runtime-commander-icon-button" onClick={() => setOptionsOpen(false)}
@@ -599,12 +592,6 @@ export default function RuntimeCommander({
                                         disabled={busy || isBrowsing}>Browse</Button>}
                                 </div>
                             </label>
-                            <div className="runtime-commander-field">
-                                <span>Open state machine</span>
-                                <strong className="runtime-commander-truncate" title={workflowTab?.filePath || ""}>
-                                    {workflowTab?.fileName || workflowTab?.title || "No workflow open"}
-                                </strong>
-                            </div>
                             <label className="runtime-commander-switch">
                                 <input type="checkbox" checked={forceConfigure} disabled={busy}
                                     onChange={(event) => setForceConfigure(event.target.checked)} />
@@ -614,8 +601,6 @@ export default function RuntimeCommander({
                                 <InlineFeedback tone="warning">The open workflow has changed. Load the current version before Start.</InlineFeedback>}
                             {!["RUNNING", "PAUSED"].includes(snapshot?.status) ? null :
                                 <p className="runtime-commander-note">Stop execution before loading another workflow.</p>}
-                            <p className="runtime-commander-note">Loading uses the current editor snapshot, including unsaved changes.</p>
-                            {behaviorDirectories.length > 0 && <p className="runtime-commander-note">Symbolic Sub-SM paths require an include mapping in WebCommander.</p>}
                         </section>
                         <section className="runtime-commander-section">
                             <h4>Live visualization</h4>
@@ -643,7 +628,6 @@ export default function RuntimeCommander({
                                     <span>Expand parallels</span><span className="runtime-commander-toggle-indicator">{autoExpandParallels ? "On" : "Off"}</span>
                                 </button>
                             </div>
-                            <p className="runtime-commander-note">Container expansion is visual only and does not modify the saved state machine. Automatic sub-machine navigation requires Follow focus.</p>
                         </section>
                         <section className="runtime-commander-section">
                             <h4>Loading results</h4>
@@ -661,26 +645,8 @@ export default function RuntimeCommander({
                                 {totalIssues > 0 && <Button size="sm" onClick={() => setDiagnosticsPopupOpen(true)}>View in popup</Button>}
                             </div>}
                         </section>
-                        <section className="runtime-commander-section">
-                            <div className="runtime-commander-status-heading">
-                                <h4>Engine details</h4>
-                                <button type="button" className="runtime-commander-icon-button" title="Refresh engine status"
-                                    aria-label="Refresh engine status" disabled={busy || isRefreshing}
-                                    onClick={() => void refreshStatus()}><FiRefreshCw /></button>
-                            </div>
-                            <dl className="runtime-commander-status">
-                                <dt>Active states</dt>
-                                <dd>{snapshot?.detailsUnavailable ? "Unavailable" : snapshot?.currentStates.length ?
-                                    snapshot.currentStates.map((state) => <code key={state}>{state}</code>) : "None reported"}</dd>
-                                <dt>States</dt><dd>{snapshot?.detailsUnavailable ? "Unavailable" : snapshot?.stateIds.length ?? "Unknown"}</dd>
-                                <dt>Last update</dt><dd>{snapshot ? new Date(snapshot.checkedAt).toLocaleTimeString() : "Not yet"}</dd>
-                            </dl>
-                            {isFollowing && unresolvedStates.length > 0 && <InlineFeedback tone="warning">Unmatched active states: {unresolvedStates.join(", ")}</InlineFeedback>}
-                            {statusError && <InlineFeedback tone="warning">{statusError}</InlineFeedback>}
-                            <p className="runtime-commander-note">Event stream: {eventConnection}</p>
-                        </section>
                     </div>
-                </div>}
+                </div>, document.body)}
                 <div className="runtime-commander-main">
                     <div className="runtime-commander-main-header">
                         <div className="runtime-log-file-info">
@@ -699,38 +665,6 @@ export default function RuntimeCommander({
                         <button type="button" className="runtime-commander-icon-button" aria-label="Close run panel"
                             title="Close run panel" disabled={busy} onClick={close}><FiX /></button>
                     </div>
-                    {(runtimeParallelViews.length > 0 || runtimeActiveSubMachines.length > 1) &&
-                        <details open className="runtime-parallel-overview" aria-label="Parallel execution">
-                            {/* Show the lane visualization immediately during active parallel
-                                execution, while retaining the newer compact/collapsible layout. */}
-                            <summary className="runtime-parallel-heading">
-                                <strong>Parallel execution</strong>
-                                <span>{runtimeParallelViews.filter((item) => !item.exiting).length} active</span>
-                                {runtimeActiveSubMachines.length > 1 && <span>{runtimeActiveSubMachines.length} sub-SMs</span>}
-                            </summary>
-                            <div className="runtime-parallel-overview-body">
-                            {runtimeParallelViews.map((parallel) => <div key={parallel.key} className="runtime-parallel-group">
-                                <strong>{parallel.node.data?.label || "Parallel"}</strong>
-                                {parallel.lanes.map((lane) => <div key={lane.id} className="runtime-parallel-lane">
-                                    <span className={`runtime-parallel-running-dot ${lane.status}`} />
-                                    <span>{lane.name}</span>
-                                    <small title={[...lane.states, ...lane.previouslyActive].join(", ")}>
-                                        {lane.status === "active" ? lane.states.join(", ")
-                                            : lane.status === "completed" ? "Completed"
-                                            : lane.status === "exited" ? "Exited early" : "Waiting"}
-                                    </small>
-                                </div>)}
-                            </div>)}
-                            {runtimeActiveSubMachines.length > 1 && <div className="runtime-parallel-submachines">
-                                <span>Active sub-state machines</span>
-                                {runtimeActiveSubMachines.map((item) => <button key={item.key} type="button"
-                                    title={`Show ${item.name}${item.lane ? ` (${item.lane})` : ""}`}
-                                    onClick={() => onOpenRuntimeSubMachine?.(item.src, item.identity, { runtimeNavigation: false })}>
-                                    <span>{item.name}</span><small>{item.lane || item.parallelName || "Sub-SM"}</small>
-                                </button>)}
-                            </div>}
-                            </div>
-                        </details>}
                     {(runtimeNotice || (eventConnection !== "connected" && eventSocketDiagnostic)) &&
                         <div className="runtime-event-stream-state" role="status">
                             {runtimeNotice && <p className="runtime-event-stream-warning">{runtimeNotice}</p>}

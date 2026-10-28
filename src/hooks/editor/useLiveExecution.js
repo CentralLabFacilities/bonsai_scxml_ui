@@ -522,24 +522,12 @@ export function useLiveExecution({
                 follow.pending = null;
                 const ids = focusedParallel ? [focusedParallel.node.id]
                     : activeTransition?.cameraIds.length ? activeTransition.cameraIds : projection.cameraIds;
-                // Fit first, then lift the focused nodes above the floating run
-                // controller. Offset uses its measured height; no offset when
-                // the run overlay is closed or while an older focus is cancelled.
-                const panel = document.getElementById("workflow-tab-panel");
-                const overlay = panel?.querySelector(".runtime-commander-dialog");
-                const overlayHeight = overlay?.getBoundingClientRect().height || 0;
-                const panelHeight = panel?.getBoundingClientRect().height || 0;
-                const lift = Math.min(panelHeight * 0.2, overlayHeight * 0.5);
-                const fitted = fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55,
+                // One camera operation per focus request. A second viewport
+                // adjustment after fitView caused replay to jump upward twice.
+                // The editor/run overlay layout, rather than a delayed second
+                // pan, is responsible for keeping controls accessible.
+                fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55,
                     duration: 300, maxZoom: 1.15 });
-                if (lift > 0 && getViewport && setViewport) {
-                    void Promise.resolve(fitted).then((didFit) => {
-                        if (didFit === false || cancelled ||
-                            (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity)) return;
-                        const viewport = getViewport();
-                        setViewport({ ...viewport, y: viewport.y - lift }, { duration: 120 });
-                    });
-                }
             };
             // Tab restoration owns two frames; fit after its viewport restore.
             schedule(() => arrived ? schedule(fit) : fit());
