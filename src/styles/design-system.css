@@ -528,6 +528,14 @@ body {
     pointer-events: none;
 }
 
+/* Only the duplicate-skill lane warning is centered. Other toasts remain bottom-docked. */
+.ui-toast-viewport--center {
+    top: 50%;
+    bottom: auto;
+    width: min(360px, calc(100vw - 32px));
+    transform: translate(-50%, -50%);
+}
+
 .ui-toast {
     display: flex;
     align-items: flex-start;

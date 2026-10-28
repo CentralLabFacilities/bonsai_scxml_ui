@@ -94,52 +94,60 @@ export function InlineFeedback({
 function ToastViewport({ notifications, onDismiss }) {
     if (typeof document === "undefined" || notifications.length === 0) return null;
 
-    return createPortal(
-        <div className="ui-toast-viewport" aria-label="Editor notifications">
-            {notifications.map((notification) => {
-                const tone = normalizeTone(notification.tone);
-                return (
-                    <article
-                        key={notification.id}
-                        className={classNames("ui-toast", `ui-toast--${tone}`)}
-                        role={tone === "danger" ? "alert" : "status"}
-                        aria-atomic="true"
-                    >
-                        <FeedbackIcon tone={tone} />
-                        <div className="ui-toast__content">
-                            {notification.title && (
-                                <strong className="ui-toast__title">{notification.title}</strong>
-                            )}
-                            {notification.message && (
-                                <div className="ui-toast__message">{notification.message}</div>
-                            )}
-                            {notification.actionLabel && notification.onAction && (
-                                <Button
-                                    size="sm"
-                                    className="ui-toast__action"
-                                    onClick={() => {
-                                        notification.onAction();
-                                        onDismiss(notification.id);
-                                    }}
-                                >
-                                    {notification.actionLabel}
-                                </Button>
-                            )}
-                        </div>
-                        <IconButton
+    const regular = notifications.filter((item) => item.id !== "parallel-lane-duplicate");
+    const centered = notifications.filter((item) => item.id === "parallel-lane-duplicate");
+    const renderToasts = (items) => items.map((notification) => {
+        const tone = normalizeTone(notification.tone);
+        return (
+            <article
+                key={notification.id}
+                className={classNames("ui-toast", `ui-toast--${tone}`)}
+                role={tone === "danger" ? "alert" : "status"}
+                aria-atomic="true"
+            >
+                <FeedbackIcon tone={tone} />
+                <div className="ui-toast__content">
+                    {notification.title && (
+                        <strong className="ui-toast__title">{notification.title}</strong>
+                    )}
+                    {notification.message && (
+                        <div className="ui-toast__message">{notification.message}</div>
+                    )}
+                    {notification.actionLabel && notification.onAction && (
+                        <Button
                             size="sm"
-                            variant="ghost"
-                            className="ui-toast__dismiss"
-                            aria-label="Dismiss notification"
-                            title="Dismiss"
-                            onClick={() => onDismiss(notification.id)}
+                            className="ui-toast__action"
+                            onClick={() => {
+                                notification.onAction();
+                                onDismiss(notification.id);
+                            }}
                         >
-                            <FiX aria-hidden="true" />
-                        </IconButton>
-                    </article>
-                );
-            })}
-        </div>,
+                            {notification.actionLabel}
+                        </Button>
+                    )}
+                </div>
+                <IconButton
+                    size="sm"
+                    variant="ghost"
+                    className="ui-toast__dismiss"
+                    aria-label="Dismiss notification"
+                    title="Dismiss"
+                    onClick={() => onDismiss(notification.id)}
+                >
+                    <FiX aria-hidden="true" />
+                </IconButton>
+            </article>
+        );
+    });
+    return createPortal(
+        <>
+            {regular.length > 0 && <div className="ui-toast-viewport" aria-label="Editor notifications">
+                {renderToasts(regular)}
+            </div>}
+            {centered.length > 0 && <div className="ui-toast-viewport ui-toast-viewport--center" aria-label="Parallel lane warnings">
+                {renderToasts(centered)}
+            </div>}
+        </>,
         document.body,
     );
 }

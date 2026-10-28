@@ -11197,3 +11197,30 @@ dialog.skill-paste-choice-overlay {
     color: #0f172a;
     border-color: #cbd5e1;
 }
+
+/* Run Options stays attached directly above the Run controller. Placement
+   comes from the controller's measured viewport rect, not a fixed top offset. */
+.runtime-commander-drawer { box-sizing: border-box; }
+.runtime-loading-results-section { padding-top: 8px; padding-bottom: 8px; }
+.runtime-loading-results-section .runtime-commander-results-toggle { width: 100%; }
+
+/* Compact transition order: event and target share a single row; badges only
+   appear when the transition actually has a condition or assignments. */
+.transition-order-title-row { flex-wrap: nowrap; }
+.transition-order-title-row .transition-event-name { flex: 0 1 auto; }
+.transition-inline-arrow { flex: 0 0 auto; width: 12px; height: 12px; color: #94a3b8; }
+.transition-inline-target {
+    font-size: 11px; color: #cbd5e1; font-weight: 550;
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.transition-order-flags { display: flex; align-items: center; gap: 4px; min-height: 15px; }
+.transition-order-flag {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 15px; height: 15px; padding: 0 2px; border: 1px solid rgba(125, 182, 233, .45);
+    border-radius: 4px; background: rgba(56, 189, 248, .09);
+    color: #bae6fd; font-size: 10px; line-height: 1; font-weight: 750;
+}
+.transition-expression-column .transition-remove-condition-button {
+    min-height: 26px; width: 26px; padding: 0; display: inline-flex;
+    align-items: center; justify-content: center;
+}

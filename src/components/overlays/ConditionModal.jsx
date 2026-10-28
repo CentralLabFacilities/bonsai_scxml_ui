@@ -167,13 +167,16 @@ function SharedContainerExitCard({ exit }) {
             <div className="transition-order-main">
                 <div className="transition-order-title-row">
                     <span className="transition-event-name">{exit.event}</span>
+                    <FiArrowRight className="transition-inline-arrow" aria-hidden="true" />
+                    <span className="transition-inline-target" title={exit.targetLabel}>{exit.targetLabel}</span>
                     <span className="transition-scope-type">↳ Shared</span>
                 </div>
-                <div className="transition-order-summary">
-                    <span>{exit.cond || "No condition"}</span>
-                    <FiArrowRight />
-                    <span>{exit.targetLabel}</span>
-                </div>
+                {(exit.cond || exit.assignments?.length > 0) && (
+                    <div className="transition-order-flags">
+                        {exit.cond && <span className="transition-order-flag" title={exit.cond}>c</span>}
+                        {exit.assignments?.length > 0 && <span className="transition-order-flag" title={`${exit.assignments.length} assignment(s)`}>a</span>}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -1189,10 +1192,6 @@ function ConditionModal({
         });
     };
 
-    const selectedEventDescription = normalizedEvents.find(
-        (event) => event.id === selectedTransition?.event
-    )?.description;
-
     return (
         <div className="bottom-drawer-container">
             <div ref={drawerRef} className="bottom-drawer-content full-width">
@@ -1207,13 +1206,11 @@ function ConditionModal({
                                 </>
                             )}
                         </span>
-                        <span className="transition-drawer-subtitle">
-                            {targetOnlyMode
-                                ? (containerEventMode
-                                    ? "Use the emitted SCXML descriptor (Wait.success.* catches Wait events; success.* is a direct Parallel event)."
-                                    : "Only transition targets can be reassigned.")
-                                : "Child transitions are evaluated before parent transitions. Reorder within each scope."}
-                        </span>
+                        {targetOnlyMode && <span className="transition-drawer-subtitle">
+                            {containerEventMode
+                                ? "Use the emitted SCXML event descriptor."
+                                : "Only transition targets can be reassigned."}
+                        </span>}
                     </div>
                     <button className="modal-close-button" onClick={onClose}>
                         <FiX />
@@ -1234,7 +1231,7 @@ function ConditionModal({
                     <div className="step-card transition-list-step">
                         <div className="step-card-header">
                             <span className="step-number">1</span>
-                            <span className="step-title">Transitions</span>
+                            <span className="step-title">Transition Order</span>
                         </div>
 
                         <div className="step-card-body transition-step-body">
@@ -1356,22 +1353,18 @@ function ConditionModal({
                                                                 {transition.eventDisplayName || transition.event || "No event"}
                                                             </span>
                                                         )}
-                                                    </div>
-
-                                                    <div className="transition-order-summary">
-                                                        <span>
-                                                            {transition.conditionEnabled
-                                                                ? transition.conditionVariable &&
-                                                                transition.conditionValue
-                                                                    ? `${transition.conditionVariable} ${transition.conditionOperator} ${transition.conditionValue}`
-                                                                    : "Condition configured"
-                                                                : "No condition"}
-                                                        </span>
-                                                        <FiArrowRight />
-                                                        <span>
+                                                        <FiArrowRight className="transition-inline-arrow" aria-hidden="true" />
+                                                        <span className="transition-inline-target" title={targetName || "No target"}>
                                                             {targetName || "No target"}
                                                         </span>
                                                     </div>
+
+                                                    {(transition.conditionEnabled || transition.assignments?.length > 0) && (
+                                                        <div className="transition-order-flags" aria-label="Transition details">
+                                                            {transition.conditionEnabled && <span className="transition-order-flag" title="Condition" aria-label="Has condition">c</span>}
+                                                            {transition.assignments?.length > 0 && <span className="transition-order-flag" title={`${transition.assignments.length} assignment(s)`} aria-label="Has assignments">a</span>}
+                                                        </div>
+                                                    )}
                                                     {shadowedBy && (
                                                         <div className="transition-scope-warning" title="This event is already handled by an unconditional transition at a higher priority">
                                                             <FiAlertTriangle aria-hidden="true" />
@@ -1550,7 +1543,7 @@ function ConditionModal({
                                         ? commitCondition({ conditionEnabled: false })
                                         : updateSelectedTransition({ conditionEnabled: true })}
                                 >
-                                    {selectedTransition.conditionEnabled ? <><FiX /> Remove</> : <><FiPlus /> Add</>}
+                                    {selectedTransition.conditionEnabled ? <FiTrash2 aria-label="Delete condition" /> : <><FiPlus /> Add</>}
                                 </button>
                             )}
                             {targetOnlyMode && (
@@ -1563,9 +1556,6 @@ function ConditionModal({
                         <div className="step-card-body transition-step-body">
                             {selectedTransition ? (
                                 <>
-                                    {!selectedTransition.conditionEnabled && (
-                                        <div className="transition-empty-state">No condition yet. Use + Add to create one.</div>
-                                    )}
                                     {selectedTransition.conditionEnabled && (
                                         <>
                                             <div className="condition-expression-row transition-expression-builder">
@@ -1689,11 +1679,7 @@ function ConditionModal({
                         <div className="step-card-body transition-step-body">
                             {selectedTransition ? (
                                 <>
-                                    {(selectedTransition.assignments || []).length === 0 ? (
-                                        <div className="transition-empty-state">
-                                            No assignments yet. Use + Add to create one.
-                                        </div>
-                                    ) : (
+                                    {(selectedTransition.assignments || []).length > 0 && (
                                         <div className="transition-assignment-list transition-expression-list">
                                             {(selectedTransition.assignments || []).map(
                                                 (assignment, assignmentIndex) => {
@@ -1908,28 +1894,7 @@ function ConditionModal({
                                             )}
                                     </div>
 
-                                    {selectedTransition.target ? (
-                                        <div className="transition-selected-target">
-                                            <FiArrowRight />
-                                            <span>
-                                                {getTargetDisplayName(
-                                                    selectedTransition.target,
-                                                    availableTargets
-                                                )}
-                                            </span>
-                                        </div>
-                                    ) : (
-                                        <div className="transition-help-text">
-                                            Start typing and choose a target from the
-                                            autocomplete results.
-                                        </div>
-                                    )}
 
-                                    {selectedEventDescription && (
-                                        <div className="transition-help-text">
-                                            Event: {selectedEventDescription}
-                                        </div>
-                                    )}
                                 </>
                             ) : (
                                 <div className="transition-empty-state">

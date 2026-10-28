@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { isMovingPositionBatch, collectDraggedPositions, splitDragPreviewChanges, withDragPreviewPositions, finishedDragPositions } from './dragPositionBatch.js';
+import { isMovingPositionBatch, collectDraggedPositions, splitDragPreviewChanges, withDragPreviewPositions, finishedDragPositions, isLiveGeometryBatch, collectLiveGeometry } from './dragPositionBatch.js';
 
 test('only in-flight node positions may be frame coalesced', () => {
     assert.equal(isMovingPositionBatch([{id:'p', type:'position', dragging:true}]), true);
@@ -70,4 +70,21 @@ test('drop commits latest positions once for all dragged nodes and preserves fin
     ]);
     assert.ok(final.every((change) => change.dragging === false));
     assert.equal(preview.get('one').dragging, true);
+});
+
+test('only intermediate positions and resize dimensions are frame-batched', () => {
+    assert.equal(isLiveGeometryBatch([{id:'parallel', type:'dimensions', resizing:true, dimensions:{width:600,height:420}}]), true);
+    assert.equal(isLiveGeometryBatch([{id:'parallel', type:'dimensions', resizing:true, dimensions:{width:600,height:420}}, {id:'lane', type:'position', dragging:true,position:{x:0,y:90}}]), true);
+    assert.equal(isLiveGeometryBatch([{id:'parallel', type:'dimensions', resizing:false, dimensions:{width:600,height:420}}]), false);
+    assert.equal(isLiveGeometryBatch([{id:'parallel', type:'dimensions', dimensions:{width:600,height:420}}]), false);
+    assert.equal(isLiveGeometryBatch([{id:'parallel', type:'dimensions', resizing:true, dimensions:{width:600,height:420}}, {id:'skill', type:'remove'}]), false);
+});
+
+test('last live resize replaces earlier dimensions, while independent position survives', () => {
+    const pending = new Map();
+    collectLiveGeometry(pending, [{id:'parallel', type:'dimensions', resizing:true, dimensions:{width:500,height:300}}]);
+    collectLiveGeometry(pending, [{id:'parallel', type:'dimensions', resizing:true, dimensions:{width:540,height:360}}, {id:'skill',type:'position',dragging:true,position:{x:20,y:30}}]);
+    assert.equal(pending.size, 2);
+    assert.deepEqual(pending.get('parallel:dimensions').dimensions, {width:540,height:360});
+    assert.deepEqual(pending.get('skill:position').position, {x:20,y:30});
 });

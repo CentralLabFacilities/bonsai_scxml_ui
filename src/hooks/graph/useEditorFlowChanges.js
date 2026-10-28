@@ -5,7 +5,8 @@ import { expandSharedSlotEdgeRemovals, findSharedSlotPartner, updateSharedSlotBi
 import { rebuildBoundaryTransitions } from "../../utils/boundaryTransitions";
 import { canonicalizeVisibleEdgeChanges } from "../../utils/transitionVisualOwnership.js";
 import { isWildcardTransitionEvent } from "../../utils/transitionEvents";
-import { cleanEventsForDeletedStates } from "../../utils/transitionDeletion";
+import { cleanEventsForDeletedStates, cleanEventsForDeletedTransitions } from "../../utils/transitionDeletion";
+import { getLogicalEdgeSourceId, getLogicalEdgeSourceHandle } from "../../utils/transitionSemantics";
 import { getSlotPathFromNode, isSlotDeletionProtected, normalizeSlotPath } from "../../utils/editorGraph";
 import {
     PARALLEL_BOTTOM_PADDING,
@@ -613,7 +614,7 @@ export function useEditorFlowChanges({
                             );
                         });
 
-                    const cleanedNodes =
+                    const transientCleanedNodes =
                         removedTransientEventsByNode.size === 0
                             ? currentNodes
                             : currentNodes.map((node) => {
@@ -633,6 +634,17 @@ export function useEditorFlowChanges({
                                     },
                                 };
                             });
+
+                    // Clear the semantic event target/condition/assignments as
+                    // well as the edge. Otherwise the exporter reconstructs the
+                    // deleted transition from the stale source-node event.
+                    const removedSemanticEdges = liveTransitionEdges.filter(edge =>
+                        transitionChanges.some(change => change.type === "remove" && change.id === edge.id) &&
+                        isSemanticTransitionEdge(edge));
+                    const cleanedNodes = cleanEventsForDeletedTransitions(
+                        transientCleanedNodes, removedSemanticEdges, changedEdges.filter(isSemanticTransitionEdge),
+                        { getSourceId: getLogicalEdgeSourceId, getSourceHandle: getLogicalEdgeSourceHandle }
+                    );
 
                     // Deletion must fully regenerate boundary edges and ports.
                     // Incremental updates are appropriate for addition/editing,

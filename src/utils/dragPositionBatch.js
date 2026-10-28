@@ -52,3 +52,16 @@ export const finishedDragPositions = (preview, draggedNodes = []) => {
         .filter((change) => Boolean(change.position))
         .map((change) => ({ ...change, dragging: false }));
 };
+
+// React Flow emits intermediate container dimensions on every pointer move.
+// Treat these like drag positions: only in-flight geometry can be batched.
+// Final dimensions (resizing:false), selections and structural edits flush first.
+export const isLiveGeometryBatch = (changes = []) =>
+    changes.length > 0 && changes.every((change) =>
+        (change.type === 'position' && change.dragging === true) ||
+        (change.type === 'dimensions' && change.resizing === true && Boolean(change.dimensions))
+    );
+
+export const collectLiveGeometry = (pending, changes) => {
+    for (const change of changes) pending.set(`${change.id}:${change.type}`, change);
+};

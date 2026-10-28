@@ -118,6 +118,7 @@ export function CompoundNode({ id, data = {}, selected = false }) {
     // Let the gesture proceed down to a conservative floor; clamp to the
     // *current* subtree only once when the gesture finishes.
     const refitAfterResize = useCallback((_event, params) => {
+        data.onContainerResizeEnd?.(id);
         setNodes((nodes) => {
             const compound = nodes.find((node) => node.id === id);
             if (!compound) return nodes;
@@ -137,7 +138,6 @@ export function CompoundNode({ id, data = {}, selected = false }) {
             return result;
         });
         finishResizeTrace(id, params, getNodes);
-        data.onContainerResizeEnd?.(id);
     }, [setNodes, getNodes, data.onContainerResizeEnd, id]);
 
     return (
@@ -217,6 +217,7 @@ export function ParallelNode({ id, data = {}, selected = false }) {
     // rebuilding transitions. Only the final content-aware constraints and
     // nested-container fit run once when the gesture finishes.
     const refitAfterResize = useCallback((_event, params) => {
+        data.onContainerResizeEnd?.(id);
         const width = Number(params?.width);
         const height = Number(params?.height);
         setNodes((nodes) => {
@@ -244,7 +245,6 @@ export function ParallelNode({ id, data = {}, selected = false }) {
             return fitted;
         });
         finishResizeTrace(id, params, getNodes);
-        data.onContainerResizeEnd?.(id);
     }, [id, setNodes, getNodes, data.onContainerResizeEnd]);
 
     return (

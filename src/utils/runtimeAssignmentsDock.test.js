@@ -67,10 +67,11 @@ test("Run Assignments uses compact MemorySlot values without descriptive subtitl
     assert.match(drawer, /className="datamodel-compact-list"/);
 });
 
-test("Loading event shows the requested short status", () => {
+test("Loading status lives in the badge rather than a redundant caption", () => {
     const commander = readFileSync(new URL("../components/overlays/RuntimeCommander.jsx", import.meta.url), "utf8");
-    assert.match(commander, /setRuntimeNotice\("Loaded"\)/);
-    assert.doesNotMatch(commander, /Backend is loading; waiting for the next matching run/);
+    assert.match(commander, /runtimeBadgeStatus\(\{/);
+    assert.match(commander, /loading: busyAction === "load"/);
+    assert.doesNotMatch(commander, /setRuntimeNotice\("Loaded"\)/);
 });
 
 

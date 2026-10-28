@@ -380,3 +380,17 @@
         transition: none;
     }
 }
+
+/* WebKitGTK can spend several frames painting the entire nested graph when
+   opacity/filter/handle transitions restart during pointer gestures. Keep
+   those animations for idle editing, but not while dragging or resizing. */
+.react-flow.editor-node-dragging .react-flow__node,
+.react-flow.editor-node-dragging .react-flow__handle,
+.react-flow.editor-node-dragging .react-flow__edge,
+.react-flow.editor-node-dragging .react-flow__edge .react-flow__edge-path {
+    transition: none !important;
+    animation: none !important;
+}
+.react-flow.editor-node-dragging .react-flow__edge .react-flow__edge-path {
+    filter: none !important;
+}

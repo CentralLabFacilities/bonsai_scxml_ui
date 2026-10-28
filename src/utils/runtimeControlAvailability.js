@@ -40,3 +40,32 @@ export function runtimeControlAvailability({
     }
     return { canLoad: !loadReason, canStart: !startReason, loadReason, startReason };
 }
+
+/**
+ * Run badge meaning is driven by HTTP engine availability, the last load
+ * response and the engine's execution status. The event WebSocket is not an
+ * HTTP connectivity check and must not decide whether the engine is online.
+ *
+ * `loadSucceeded` is null until a load responds (or is reset on restart).
+ */
+export function runtimeBadgeStatus({
+    configuration = "",
+    httpConnected = null,
+    engineStatus = null,
+    loadSucceeded = null,
+    loading = false,
+} = {}) {
+    if (httpConnected !== true) return { label: "No connection", tone: "warning" };
+    if (loading || engineStatus === "LOADING") return { label: "Loading", tone: "neutral" };
+    if (engineStatus === "RUNNING") return { label: "Running", tone: "running" };
+    if (engineStatus === "PAUSED") return { label: "Paused", tone: "paused" };
+    if (!String(configuration).trim()) return { label: "No config selected", tone: "neutral" };
+    if (loadSucceeded === false) return { label: "Loaded with errors", tone: "warning" };
+    if (loadSucceeded === true || engineStatus === "INITIALIZED") {
+        return { label: "Loaded", tone: "neutral" };
+    }
+    if (engineStatus === "INITIALIZED_BUT_WARNINGS") {
+        return { label: "Loaded with errors", tone: "warning" };
+    }
+    return { label: "Nothing loaded", tone: "neutral" };
+}

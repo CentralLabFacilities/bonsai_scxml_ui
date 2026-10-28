@@ -99,7 +99,7 @@ function AppContent() {
     // expensive transition routing until the completed layout is committed.
     const [resizingContainerId, setResizingContainerId] = useState(null);
     const onContainerResizeStart = useCallback((id) => setResizingContainerId(id), []);
-    const onContainerResizeEnd = useCallback(() => setResizingContainerId(null), []);
+
     const liveRunRef = useRef(null);
     const openRootRef = useRef(null);
     const liveOptionsRef = useRef({ followCamera: true });
@@ -341,6 +341,11 @@ function AppContent() {
         replaceDocument,
         getDocumentSnapshot,
     } = useEditorGraphState();
+    // Flush the last resize frame before NodeResizer clamps/fits final geometry.
+    const onContainerResizeEnd = useCallback(() => {
+        flushPendingNodeChanges();
+        setResizingContainerId(null);
+    }, [flushPendingNodeChanges]);
 
     const availableDataModelParameters = useMemo(() => {
         const parameters = [];
@@ -1830,7 +1835,7 @@ function AppContent() {
                             handleSelectAction={handleSelectAction}
                             hasGraphClipboard={hasGraphClipboard}
                             slotConnectionDrag={slotConnectionDrag}
-                            isDraggingNode={isDraggingNode}
+                            isDraggingNode={isDraggingNode || Boolean(resizingContainerId)}
                             isOverTrash={isOverTrash}
                             handleNodesChange={handleNodesChange}
                             handleVisibleEdgesChange={handleVisibleEdgesChange}

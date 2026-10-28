@@ -11,7 +11,7 @@ import { matchesLoadedInitial, initialWorkflowStateIds } from "../../utils/runti
 import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
 import { runtimeConnectionNeedsStatusRefresh, shouldReplaceControlStatusBaseline, shouldRetryControlStatusSnapshot } from "../../utils/runtimeControlRecovery.js";
-import { runtimeControlAvailability } from "../../utils/runtimeControlAvailability.js";
+import { runtimeControlAvailability, runtimeBadgeStatus } from "../../utils/runtimeControlAvailability.js";
 
 export default function RuntimeCommander({
     isOpen,
@@ -50,7 +50,6 @@ export default function RuntimeCommander({
     const [followCamera, setFollowCamera] = useState(true);
     const [optionsOpen, setOptionsOpen] = useState(false);
     const [timelineExpanded, setTimelineExpanded] = useState(false);
-    const [resultsOpen, setResultsOpen] = useState(false);
     const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
     const [autoOpenSubMachines, setAutoOpenSubMachines] = useState(false);
     const [autoExpandCompounds, setAutoExpandCompounds] = useState(false);
@@ -58,6 +57,8 @@ export default function RuntimeCommander({
     const [automaticEnabled, setAutomaticEnabled] = useState(true);
     const [error, setError] = useState("");
     const [statusError, setStatusError] = useState("");
+    // Verified by the HTTP status endpoint, not the runtime-event WebSocket.
+    const [httpConnected, setHttpConnected] = useState(null);
     const [runtimeNotice, setRuntimeNotice] = useState("");
     const [busyAction, setBusyAction] = useState("");
     const [isRefreshing, setIsRefreshing] = useState(false);
@@ -69,6 +70,7 @@ export default function RuntimeCommander({
     const [previouslyOpen, setPreviouslyOpen] = useState(isOpen);
     const configurationRef = useRef(null);
     const panelRef = useRef(null);
+    const [optionsPosition, setOptionsPosition] = useState(null);
     const openerRef = useRef(null);
     const ownerRef = useRef(null);
     const operationRef = useRef(null);
@@ -101,6 +103,46 @@ export default function RuntimeCommander({
             browseRef.current = null;
         };
     }, [isOpen]);
+
+    // The options panel is portaled to <body> to stay above all editor ledges.
+    // Position it using the actual Run window, rather than viewport constants.
+    useLayoutEffect(() => {
+        if (!isOpen || !optionsOpen) return;
+        const positionOptions = () => {
+            const rect = panelRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const margin = 10;
+            const width = Math.min(460, window.innerWidth - 24);
+            const left = Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12));
+            setOptionsPosition({
+                left: `${left}px`,
+                right: "auto",
+                top: "auto",
+                bottom: `${Math.max(12, window.innerHeight - rect.top + margin)}px`,
+                maxHeight: `${Math.max(100, rect.top - margin - 12)}px`,
+                width: `${width}px`,
+            });
+        };
+        positionOptions();
+        window.addEventListener("resize", positionOptions);
+        const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(positionOptions) : null;
+        if (panelRef.current) observer?.observe(panelRef.current);
+        return () => { window.removeEventListener("resize", positionOptions); observer?.disconnect(); };
+    }, [isOpen, optionsOpen]);
+
+    // The drawer is a sibling portal, so Escape must work regardless of whether
+    // keyboard focus is inside the Run window or the options drawer.
+    useEffect(() => {
+        if (!optionsOpen || !isOpen) return;
+        const onEscape = (event) => {
+            if (event.key !== "Escape" || diagnosticsPopupOpen) return;
+            event.preventDefault();
+            event.stopPropagation();
+            setOptionsOpen(false);
+        };
+        document.addEventListener("keydown", onEscape, true);
+        return () => document.removeEventListener("keydown", onEscape, true);
+    }, [isOpen, optionsOpen, diagnosticsPopupOpen]);
 
     const publishOptions = (changes) => {
         displayOptionsRef.current = { ...displayOptionsRef.current, ...changes };
@@ -143,6 +185,7 @@ export default function RuntimeCommander({
                 return { ...next, statusStale: false };
             });
             setStatusError("");
+            setHttpConnected(true);
             setStatusRecoveryPending(shouldRetryControlStatusSnapshot(next));
             if (followingRef.current && ["RUNNING", "PAUSED"].includes(next.status)) observedRunningRef.current = true;
             else if (followingRef.current && observedRunningRef.current) {
@@ -166,10 +209,12 @@ export default function RuntimeCommander({
             onExecutionUpdate?.({ workflow: loadedWorkflowRef.current, snapshot: null, following: false,
                 followCamera: followCameraRef.current, ...displayOptionsRef.current });
             if (status) {
+                setHttpConnected(true);
                 setSnapshot({ status, currentStates: [], stateIds: [], transitions: [], checkedAt: Date.now(), detailsUnavailable: true, statusStale: false });
                 setStatusError(`Engine status is available, but state/transition details could not be read. ${String(reason?.message || reason)}`);
                 setStatusRecoveryPending(true);
             } else {
+                setHttpConnected(false);
                 setSnapshot((previous) => previous ? { ...previous, statusStale: true } : null);
                 setStatusError(`Could not get engine status. ${String(reason?.message || reason)} Check that WebCommander is running on localhost:8080.`);
                 setStatusRecoveryPending(true);
@@ -210,7 +255,7 @@ export default function RuntimeCommander({
             const payload = runtimePayload(message);
             eventVersionRef.current += 1;
             if (message.type === "status" && payload.value === "LOADING") {
-                setRuntimeNotice("Loaded");
+                setRuntimeNotice("");
                 acceptedRunRef.current = false;
                 followingRef.current = false;
                 setIsFollowing(false);
@@ -301,6 +346,9 @@ export default function RuntimeCommander({
             loadedWorkflowRef.current = null;
             setLoadedWorkflow(null);
             setSnapshot(null);
+            setHttpConnected(null);
+            setLoadSucceeded(null);
+            setLoadMessages([]);
             setStatusRecoveryPending(true);
             setRuntimeNotice("Backend restarted; waiting for the next matching run.");
             onRuntimeBackendRestart?.();
@@ -406,7 +454,6 @@ export default function RuntimeCommander({
                 setLoadMessages([]);
                 setLoadSucceeded(null);
                 setDiagnosticsPopupOpen(false);
-                setResultsOpen(false);
                 setTimelineExpanded(false);
                 setAutomaticEnabled(true);
                 setEventName("");
@@ -418,6 +465,8 @@ export default function RuntimeCommander({
                     followCamera: followCameraRef.current, ...displayOptionsRef.current });
                 const result = await loadWebCommander({ pathToConfig, pathToTask: workflow.filePath || "", includeMapping, forceConfigure }, operation.controller.signal, workflow);
                 if (ownerRef.current !== owner) return;
+                // Even a failed configuration response proves the HTTP service responded.
+                setHttpConnected(true);
                 // Loading a workflow always restores the default: automatic events ON.
                 // Apply it to the engine as well as to the toggle (no stale previous run state).
                 if (result.success) {
@@ -547,12 +596,13 @@ export default function RuntimeCommander({
     };
     const diagnostics = classifyWebCommanderMessages(loadMessages);
     const totalIssues = diagnostics.warnings.length + diagnostics.errors.length + diagnostics.diagnostics.length;
-    const statusLabel = !String(configuration || "").trim() ? "No config selected"
-        : eventConnection !== "connected" || snapshot?.statusStale || Boolean(statusError) ? "No connection"
-        : loadedCurrent && loadSucceeded === true ? "Loaded" : "Nothing loaded";
-    const statusTone = eventConnection !== "connected" || snapshot?.statusStale || statusError ? "warning" :
-        snapshot?.status === "RUNNING" ? "running" : snapshot?.status === "PAUSED" ? "paused" :
-            snapshot?.status === "INITIALIZED_BUT_WARNINGS" ? "warning" : "neutral";
+    const { label: statusLabel, tone: statusTone } = runtimeBadgeStatus({
+        configuration,
+        httpConnected,
+        engineStatus: snapshot?.status,
+        loadSucceeded,
+        loading: busyAction === "load",
+    });
 
     return createPortal(
         <>
@@ -567,7 +617,7 @@ export default function RuntimeCommander({
                     }
                 }}>
                 {optionsOpen && createPortal(<div className="runtime-commander-drawer nodrag nopan" id={`${id}-options`}
-                    data-editor-shortcut-scope onKeyDown={(event) => {
+                    style={optionsPosition || undefined} data-editor-shortcut-scope onKeyDown={(event) => {
                         event.stopPropagation();
                         if (event.key === "Escape") setOptionsOpen(false);
                     }}>
@@ -578,7 +628,6 @@ export default function RuntimeCommander({
                     </div>
                     <div className="runtime-commander-drawer-body">
                         <section className="runtime-commander-section">
-                            <h4>Configuration</h4>
                             <label className="runtime-commander-field">
                                 <span>Configuration file</span>
                                 <div className="runtime-commander-path-row">
@@ -601,6 +650,14 @@ export default function RuntimeCommander({
                                 <InlineFeedback tone="warning">The open workflow has changed. Load the current version before Start.</InlineFeedback>}
                             {!["RUNNING", "PAUSED"].includes(snapshot?.status) ? null :
                                 <p className="runtime-commander-note">Stop execution before loading another workflow.</p>}
+                        </section>
+                        <section className="runtime-commander-section runtime-loading-results-section">
+                            <button type="button" className="runtime-commander-results-toggle"
+                                onClick={() => setDiagnosticsPopupOpen(true)} title="Open the last loading results">
+                                <span>Loading results</span>
+                                {totalIssues > 0 && <span className="runtime-commander-count">{totalIssues}</span>}
+                                <FiChevronRight aria-hidden="true" />
+                            </button>
                         </section>
                         <section className="runtime-commander-section">
                             <h4>Live visualization</h4>
@@ -629,22 +686,7 @@ export default function RuntimeCommander({
                                 </button>
                             </div>
                         </section>
-                        <section className="runtime-commander-section">
-                            <h4>Loading results</h4>
-                            <button type="button" className="runtime-commander-results-toggle"
-                                aria-expanded={resultsOpen} aria-controls={`${id}-results`} onClick={() => setResultsOpen(!resultsOpen)}>
-                                <span>{loadSucceeded === null ? "No load performed" : loadSucceeded ? "Last load completed" : "Last load reported issues"}</span>
-                                {totalIssues > 0 && <span className="runtime-commander-count">{totalIssues}</span>}
-                                {resultsOpen ? <FiChevronDown /> : <FiChevronRight />}
-                            </button>
-                            {resultsOpen && <div className="runtime-commander-results" id={`${id}-results`}>
-                                {loadSucceeded === null && <p className="runtime-commander-note">Load a configuration and workflow to see its results.</p>}
-                                {loadSucceeded === false && <InlineFeedback tone="warning">Loading reported issues. Check engine status before starting.</InlineFeedback>}
-                                {totalIssues === 0 && loadSucceeded === true && <p>Loaded without reported diagnostics.</p>}
-                                <LoadMessages diagnostics={diagnostics} />
-                                {totalIssues > 0 && <Button size="sm" onClick={() => setDiagnosticsPopupOpen(true)}>View in popup</Button>}
-                            </div>}
-                        </section>
+
                     </div>
                 </div>, document.body)}
                 <div className="runtime-commander-main">
@@ -725,13 +767,11 @@ export default function RuntimeCommander({
                             <FiRadio /><span>Auto events</span><span className="runtime-commander-auto-state">{automaticEnabled ? "On" : "Off"}</span>
                         </button>
                     </div>
-                    {(eventConnection !== "connected" || availability.loadReason || availability.startReason) &&
+                    {(eventConnection !== "connected" || snapshot?.statusStale || statusError) &&
                         <div className="runtime-commander-connection-help" role="status" aria-live="polite">
                             <div className="runtime-commander-connection-message">
                                 {eventConnection !== "connected" &&
                                     <span>Runtime WebSocket {eventConnection === "connecting" ? "connecting" : "disconnected"}; automatic retry active.</span>}
-                                {availability.loadReason && <span>Load: {availability.loadReason}</span>}
-                                {availability.startReason && <span>Start: {availability.startReason}</span>}
                                 {statusError && <span title={statusError}>Status check failed; verify the HTTP server on port 8080.</span>}
                             </div>
                             {(eventConnection !== "connected" || snapshot?.statusStale || statusError) &&
@@ -802,7 +842,6 @@ function LoadMessages({ diagnostics }) {
         {diagnostics.diagnostics.length > 0 && <div className="runtime-commander-diagnostic info">
             <strong>Other messages ({diagnostics.diagnostics.length})</strong>
             <ul>{diagnostics.diagnostics.map((message, index) => <li key={index}>{message}</li>)}</ul>
-            <p>WebCommander did not provide severity for these messages.</p>
         </div>}
     </div>;
 }

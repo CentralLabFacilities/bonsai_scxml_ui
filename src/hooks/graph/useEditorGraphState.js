@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { applyEdgeChanges, applyNodeChanges } from "@xyflow/react";
 import { applyGraphTransaction } from "../../utils/graphTransaction.js";
 import { followParallelResizeGesture, reconcileMeasuredParallelLanes } from "../../utils/containerState.js";
-import { isMovingPositionBatch, collectDraggedPositions } from "../../utils/dragPositionBatch.js";
+import { isLiveGeometryBatch, collectLiveGeometry } from "../../utils/dragPositionBatch.js";
 import { traceResizeNodeChanges, traceResizeNodeMutation } from "../../utils/resizeDiagnostics.js";
 
 const createStatePrefixDeclaration = () => [
@@ -61,62 +61,60 @@ export function useEditorGraphState() {
     // projections (even though semantic edges/parentage did not change).
     // Keep only the latest position per node and publish at most once per
     // animation frame. Structural/selection changes still commit immediately.
-    const pendingDraggedPositionsRef = useRef(new Map());
+    const pendingLiveGeometryRef = useRef(new Map());
     const pendingDragFrameRef = useRef(null);
+
+    // Apply a live parallel resize and its lane-frame updates atomically.
+    // Do not fit descendants, rebuild edges or change SCXML during the gesture.
+    const applyEditorNodeChanges = useCallback((nodes, changes) => {
+        let next = applyNodeChanges(changes, nodes);
+        for (const change of changes) {
+            if (change.type !== "dimensions" || change.resizing !== true ||
+                !change.dimensions || !nodes.some((node) =>
+                    node.id === change.id && node.type === "parallel")) continue;
+            next = followParallelResizeGesture(next, change.id,
+                Number(change.dimensions.width), Number(change.dimensions.height));
+        }
+        const remeasuredIds = changes
+            .filter((change) => change.type === "dimensions" &&
+                change.resizing !== true && change.dimensions)
+            .map((change) => change.id);
+        if (remeasuredIds.length) {
+            next = reconcileMeasuredParallelLanes(next, remeasuredIds);
+        }
+        return next;
+    }, []);
+
     const flushPendingNodeChanges = useCallback(() => {
         if (pendingDragFrameRef.current !== null) {
             cancelAnimationFrame(pendingDragFrameRef.current);
             pendingDragFrameRef.current = null;
         }
-        const positions = [...pendingDraggedPositionsRef.current.values()];
-        pendingDraggedPositionsRef.current.clear();
-        if (positions.length) {
-            setNodes((nodes) => applyNodeChanges(positions, nodes));
+        const changes = [...pendingLiveGeometryRef.current.values()];
+        pendingLiveGeometryRef.current.clear();
+        if (changes.length) {
+            setNodes((nodes) => applyEditorNodeChanges(nodes, changes));
         }
-    }, [setNodes]);
+    }, [setNodes, applyEditorNodeChanges]);
     useEffect(() => () => {
         if (pendingDragFrameRef.current !== null) cancelAnimationFrame(pendingDragFrameRef.current);
         pendingDragFrameRef.current = null;
-        pendingDraggedPositionsRef.current.clear();
+        pendingLiveGeometryRef.current.clear();
     }, []);
     const onNodesChange = useCallback((changes) => {
         traceResizeNodeChanges(changes);
-        if (isMovingPositionBatch(changes)) {
-            collectDraggedPositions(pendingDraggedPositionsRef.current, changes);
+        if (isLiveGeometryBatch(changes)) {
+            collectLiveGeometry(pendingLiveGeometryRef.current, changes);
             if (pendingDragFrameRef.current === null) {
                 pendingDragFrameRef.current = requestAnimationFrame(flushPendingNodeChanges);
             }
             return;
         }
-        // The final position, dimensions or a deletion must never overtake a
-        // queued frame. In particular, commit the final geometry before the
-        // drag-stop handler reads the document for containment/SCXML sync.
+        // A final dimension, position, or structural edit must not overtake
+        // queued pointer geometry, especially when NodeResizer commits on release.
         flushPendingNodeChanges();
-        setNodes((nodes) => {
-            let next = applyNodeChanges(changes, nodes);
-            // Keep structural lane frames in step with the parallel rectangle
-            // in the *same* document publication as React Flow's dimensions.
-            // No edge rebuild / descendant sizing is performed while dragging.
-            for (const change of changes) {
-                if (change.type !== "dimensions" || change.resizing !== true ||
-                    !change.dimensions || !nodes.some((node) =>
-                        node.id === change.id && node.type === "parallel")) continue;
-                next = followParallelResizeGesture(next, change.id,
-                    Number(change.dimensions.width), Number(change.dimensions.height));
-            }
-            // A mode change can remeasure a skill after its lane was laid out.
-            // Reflow only the affected parallel branches, after applying those
-            // new dimensions; never do expensive fitting during live resizing.
-            const remeasuredIds = changes
-                .filter((change) => change.type === "dimensions" &&
-                    change.resizing !== true && change.dimensions)
-                .map((change) => change.id);
-            if (remeasuredIds.length) {
-                next = reconcileMeasuredParallelLanes(next, remeasuredIds);
-            }
-            return next;
-        });
-    }, [setNodes, flushPendingNodeChanges]);
+        setNodes((nodes) => applyEditorNodeChanges(nodes, changes));
+    }, [setNodes, flushPendingNodeChanges, applyEditorNodeChanges]);
     const onEdgesChange = useCallback(
         (changes) => setEdges((edges) => applyEdgeChanges(changes, edges)),
         [setEdges],
@@ -138,7 +136,7 @@ export function useEditorGraphState() {
             cancelAnimationFrame(pendingDragFrameRef.current);
             pendingDragFrameRef.current = null;
         }
-        pendingDraggedPositionsRef.current.clear();
+        pendingLiveGeometryRef.current.clear();
         const next = {
             nodes: nextDocument.nodes || [],
             edges: nextDocument.edges || [],

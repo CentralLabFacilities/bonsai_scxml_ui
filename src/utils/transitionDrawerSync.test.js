@@ -31,3 +31,52 @@ test('an unpublished transition must not disappear before its first graph update
   assert.deepEqual(result.draft,[pending]);
   assert.equal(result.removed.size,0);
 });
+
+import { cleanEventsForDeletedTransitions } from './transitionDeletion.js';
+
+const deletedTransitionMetadata = {
+    getSourceId: (edge) => edge.source,
+    getSourceHandle: (edge) => edge.sourceHandle,
+};
+
+test('deleting a conditioned transition clears persisted event metadata without deleting the exit token', () => {
+    const nodes = [
+        { id: 'wait', type: 'custom', data: { events: [
+            { id: 'success', target: 'end', cond: 'counter == 1', assignments: [{ location: 'counter', expr: '2' }], selectedSkill: 'End' },
+            { id: 'fatal', target: 'fatal', cond: '', assignments: [] },
+        ] } },
+        { id: 'parent', type: 'compound', data: { containerTransitionOrder: ['deleted', 'kept'] } },
+    ];
+    const removed = { id: 'deleted', source: 'wait', sourceHandle: 'success', target: 'end', data: { cond: 'counter == 1' } };
+    const kept = { id: 'kept', source: 'wait', sourceHandle: 'fatal', target: 'fatal', data: { cond: '' } };
+    const next = cleanEventsForDeletedTransitions(nodes, [removed], [kept], deletedTransitionMetadata);
+    assert.equal(next[0].data.events.length, 2);
+    assert.equal(next[0].data.events[0].target, null);
+    assert.equal(next[0].data.events[0].cond, '');
+    assert.deepEqual(next[0].data.events[0].assignments, []);
+    assert.deepEqual(next[0].data.events[1], nodes[0].data.events[1]);
+    assert.deepEqual(next[1].data.containerTransitionOrder, ['kept']);
+});
+
+test('deleting one of two conditional transitions preserves the other even for the same target', () => {
+    const nodes = [{ id: 'wait', data: { events: [
+        { id: 'success', target: 'end', cond: 'x == 1', assignments: [{ location: 'x', expr: '2' }] },
+        { id: 'success', target: 'end', cond: 'x == 2', assignments: [{ location: 'x', expr: '3' }] },
+    ] } }];
+    const removed = { id: 'first', source: 'wait', sourceHandle: 'success', target: 'end', data: { cond: 'x == 1' } };
+    const kept = { id: 'second', source: 'wait', sourceHandle: 'success', target: 'end', data: { cond: 'x == 2' } };
+    const next = cleanEventsForDeletedTransitions(nodes, [removed], [kept], deletedTransitionMetadata);
+    assert.equal(next[0].data.events[0].target, null);
+    assert.equal(next[0].data.events[1].target, 'end');
+    assert.deepEqual(next[0].data.events[1].assignments, nodes[0].data.events[1].assignments);
+});
+
+test('removing an imported synthetic transition removes its event and does not touch other events', () => {
+    const nodes = [{ id: 'skill', data: { events: [
+        { id: 'success', target: 'end', cond: '', editorImportedSynthetic: true },
+        { id: 'fatal' },
+    ] } }];
+    const removed = { id: 'gone', source: 'skill', sourceHandle: 'success', target: 'end', data: {} };
+    const next = cleanEventsForDeletedTransitions(nodes, [removed], [], deletedTransitionMetadata);
+    assert.deepEqual(next[0].data.events, [{ id: 'fatal' }]);
+});
