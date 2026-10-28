@@ -11,7 +11,7 @@ import { SmartEdgeProvider } from "@tisoap/react-flow-smart-edge";
 import { SkillNode, SubMachineNode, StateReferenceNode } from "../graph/StateNodes.jsx";
 import SlotNode from "../graph/SlotNode";
 import { CompoundNode, ParallelNode, ParallelLaneNode } from "../graph/ContainerNodes.jsx";
-import EditableTransitionEdge from "../graph/EditableTransitionEdge";
+import EditableTransitionEdge, { GestureRoutingContext } from "../graph/EditableTransitionEdge";
 import CodeView from "./CodeView";
 import ModeSwitcher from "./ModeSwitcher.jsx";
 import RuntimeLogPlayer from "../inspector/RuntimeLogPlayer.jsx";
@@ -166,6 +166,11 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
+    // Reversible benchmark: set bonsai:fastGestureRouting to "0" and reload
+    // to compare the exact same graph against normal routing during gestures.
+    const fastGestureRouting = typeof window === "undefined" ||
+        window.localStorage.getItem("bonsai:fastGestureRouting") !== "0";
+    const lightweightGestureRouting = Boolean(isDraggingNode && fastGestureRouting);
     useEffect(() => {
         traceDragEvent('canvas:mount');
         return () => traceDragEvent('canvas:unmount');
@@ -637,6 +642,7 @@ export default function EditorCanvas({
 
             <Profiler id="BonsaiCanvas" onRender={handleCanvasProfile}>
             <SmartEdgeProvider nodes={smartRoutingNodes}>
+                <GestureRoutingContext.Provider value={lightweightGestureRouting}>
                 <ReactFlow
                     key={documentKey}
                     className={
@@ -751,6 +757,7 @@ export default function EditorCanvas({
                     <Background />
                     <Controls position={runtimePlayback?.loaded || liveExecutionActive ? "bottom-right" : "bottom-left"} />
                 </ReactFlow>
+                </GestureRoutingContext.Provider>
             </SmartEdgeProvider>
             </Profiler>
         </>

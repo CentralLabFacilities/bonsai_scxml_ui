@@ -11,7 +11,6 @@ import {
     projectNodeWarningTitles,
 } from "../../utils/editorValidation";
 import { validateParameterValue } from "../../utils/valueValidation.js";
-import { collectParallelLaneSkillProblems } from "../../utils/parallelLaneSkillValidation.js";
 import { measureEditorAsync, measureEditorTask } from "../../utils/editorPerf";
 import { slotDebug, summarizeProblems } from "../../utils/slotDebug";
 import {
@@ -607,6 +606,8 @@ export function useEditorAnalysis({
                         ancestorSlotSourcesByPath,
                         manualSlots,
                         currentSlotNodes: semanticSlotNodes,
+                        tabs,
+                        activeTabId,
                     };
                     const source = buildEditorValidationRequest(options);
                     return {
@@ -630,6 +631,8 @@ export function useEditorAnalysis({
             ancestorSlotSourcesByPath,
             manualSlots,
             semanticSlotNodes,
+            tabs,
+            activeTabId,
         ]
     );
 
@@ -656,20 +659,9 @@ export function useEditorAnalysis({
         : validationResult.query === validationQuery ? validationResult.status : "pending";
     // A revision-only refresh can retain diagnostics for the identical source.
     // Changed documents/configuration hide old ownership synchronously in render.
-    // Imported workflows can contain conflicts that UI operations now reject.
-    // Keep these visible in Problems even in Tauri/native validation mode.
-    // The semantic graph is stable during dragging, avoiding per-frame scans.
-    const parallelSkillProblems = useMemo(
-        () => collectParallelLaneSkillProblems(semanticNodes),
-        [semanticNodes],
-    );
-    const baseProblems = !nativeValidationAvailable ? browserProblems
+    const editorProblems = !nativeValidationAvailable ? browserProblems
         : validationResult.query?.validationSource === validationSource
             ? validationResult.problems : EMPTY_PROBLEMS;
-    const editorProblems = useMemo(
-        () => parallelSkillProblems.length ? [...baseProblems, ...parallelSkillProblems] : baseProblems,
-        [baseProblems, parallelSkillProblems],
-    );
     const validationRevisionRef = useRef(0);
     const semanticNodeCount = semanticNodes?.length || 0;
     const edgeCount = edges?.length || 0;

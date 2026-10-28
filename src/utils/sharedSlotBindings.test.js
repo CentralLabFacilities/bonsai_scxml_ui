@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
     findSharedSlotPartner, updateSharedSlotBinding, getGroupedSkillSlotRequests,
-    fillMissingSharedSlotBindings, expandSharedSlotEdgeRemovals,
+    fillMissingSharedSlotBindings, expandSharedSlotEdgeRemovals, resolveSlotInheritanceOwner,
 } from "./sharedSlotBindings.js";
 import { getStateSlotDisplayRows } from "./slotVisuals.js";
 
@@ -118,4 +118,21 @@ test('right-click slot bindings export key and state, while obsolete malformed m
         { key: '', state: '', xpath: '/entity', inherited: false },
     ]);
     assert.equal(result.states[0].inputSlots[0].key, 'Entity');
+});
+
+
+test("inheritance owner resolves a derived slot through a bound skill", () => {
+    const nodes = [{ id: "writer", type: "custom", data: { fullSkillName: "Writer#1",
+        outSlots: [{ key: "Result", type: "ObjectSlot", path: "/result" }] } }];
+    assert.deepEqual(resolveSlotInheritanceOwner(nodes, "result"), { state: "Writer#1", key: "Result" });
+});
+
+test("inheritance owner resolves a child-only required slot through submachine", () => {
+    const nodes = [{ id: "child", type: "submachine", data: { fullSkillName: "Search#2",
+        inheritedSlots: [{ key: "Read", path: "/result", type: "ObjectSlot" }] } }];
+    assert.deepEqual(resolveSlotInheritanceOwner(nodes, "result"), { state: "Search#2", key: "Read" });
+});
+
+test("inheritance does not invent a binding for an unbound slot", () => {
+    assert.equal(resolveSlotInheritanceOwner([], "no-owner"), null);
 });

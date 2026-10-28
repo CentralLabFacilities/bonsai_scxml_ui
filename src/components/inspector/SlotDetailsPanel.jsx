@@ -359,6 +359,7 @@ function SlotDetailsPanel({
         slotDetails?.isInherited ??
         selectedNode.data?.currentMachineInherited
     );
+    const [inheritanceError, setInheritanceError] = useState("");
 
     const commitPath = (nextValue) => {
         const cleanPath = String(nextValue || "").trim();
@@ -390,14 +391,18 @@ function SlotDetailsPanel({
                         className="slot-inherit-checkbox"
                         type="checkbox"
                         checked={isInherited}
-                        onChange={(event) =>
-                            onUpdateSlotInherited?.(event.target.checked)
-                        }
+                        onChange={(event) => {
+                            const changed = onUpdateSlotInherited?.(event.target.checked);
+                            setInheritanceError(changed === false
+                                ? "This slot has no identifiable key/state binding to inherit. Connect it to a skill or sub-state-machine slot first."
+                                : "");
+                        }}
                     />
                     <span className="slot-inherit-switch" aria-hidden="true">
                         <span className="slot-inherit-switch-knob" />
                     </span>
                 </label>
+                {inheritanceError && <p role="alert" className="slot-inherit-error">{inheritanceError}</p>}
             </div>
 
             <div className="tab-content slot-details-content">

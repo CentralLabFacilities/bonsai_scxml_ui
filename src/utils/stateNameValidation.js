@@ -51,3 +51,22 @@ export function validateStateRename(nodes, nodeId, requestedName) {
     });
     return collision ? `The state name "${proposed}" is already in use.` : null;
 }
+
+
+/** Avoid sending duplicate child-machine SCXML ids to the live engine. */
+export function findDuplicateSubmachineStateName(nodes = []) {
+    const seen = new Map();
+    for (const node of nodes) {
+        if (!node || node.type === "slot" || node.type === "parallelLane" ||
+            node.data?.isSkillClone || node.data?.isStateClone ||
+            isEditorOnlyInstanceName(node)) continue;
+        const name = getExportedStateName(node);
+        if (!name) continue;
+        const previous = seen.get(name);
+        if (previous && (node.type === "submachine" || previous.type === "submachine")) {
+            return name;
+        }
+        if (!previous) seen.set(name, node);
+    }
+    return null;
+}

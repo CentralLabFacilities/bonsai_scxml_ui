@@ -30,6 +30,19 @@ export function getContainerExitEvents(data, type) {
         uniqueEvents.push({ ...event, id: eventId });
     });
 
+    // Parallel lane edges can be projected from a child skill's exit without
+    // writing a corresponding event into lane.data.events. React Flow still
+    // requires a real source Handle for each displayed edge. These read-only
+    // ports come from the actual semantic edge handles, never from SCXML state.
+    if (type === "parallelLane" && Array.isArray(data?.outgoingTransitionHandles)) {
+        data.outgoingTransitionHandles.forEach((rawId) => {
+            const eventId = String(rawId || "").trim();
+            if (!eventId || eventId === "parallel-entry" || seen.has(eventId)) return;
+            seen.add(eventId);
+            uniqueEvents.push({ id: eventId, name: eventId, editorVisualOnly: true });
+        });
+    }
+
     if (type === "parallel" && Array.isArray(data?.collapsedTransitionHandles)) {
         data.collapsedTransitionHandles.forEach((event) => {
             const eventId = String(event?.id || "").trim();

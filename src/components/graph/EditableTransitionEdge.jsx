@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import {
     BaseEdge,
     EdgeLabelRenderer,
@@ -11,6 +11,11 @@ import {
     getSmartEdge,
     smartEdgePresets,
 } from "@tisoap/react-flow-smart-edge";
+
+// A presentation-only switch. It never changes semantic edge arrays/ids.
+// During an interaction it avoids A* route work for all displayed edges;
+// the SmartEdgeProvider stays mounted and receives the final geometry on drop.
+export const GestureRoutingContext = createContext(false);
 
 const AUTO_ROUTING_OPTIONS = {
     routeOnlyWhenBlocked: true,
@@ -67,23 +72,6 @@ function TransitionAnnotationBadges({ data, x, y, hasLabel = false, selected = f
                     onBlur={(event) => data?.onHoverTransitionBadge?.(false, event)}
                     onClick={(event) => { event.preventDefault(); event.stopPropagation(); data?.onOpenTransitionBadge?.("assignment"); }}>a</button>}
             </div>
-        </EdgeLabelRenderer>
-    );
-}
-
-/** One discreet label per projected outer leg, never per boundary helper. */
-function SharedExitIndicator({ data, x, y }) {
-    if (!data?.editorVisualProjection || !data?.implicitSharedExit) return null;
-    const origin = data.sharedExitOriginName || data.sharedExitOriginSourceId || "original skill";
-    const event = data.sharedExitOriginSourceHandle || "transition";
-    return (
-        <EdgeLabelRenderer>
-            <span
-                className="editor-shared-exit-indicator nodrag nopan"
-                style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${x}px, ${y - 16}px)`, pointerEvents: "all" }}
-                title={`Implicit shared exit from ${origin} (${event}). The transition belongs to the enclosing container.`}
-                aria-label={`Shared exit from ${origin}, ${event}`}
-            >↳ shared</span>
         </EdgeLabelRenderer>
     );
 }
@@ -289,6 +277,7 @@ function ManualEditableTransitionEdge(
     // Obstacle geometry is injected from useEditorDisplay as a stable cache.
     // Do not subscribe every manual edge to React Flow's complete node store:
     // selection/hover-only node updates would otherwise wake every manual edge.
+    const lightweightGestureRouting = useContext(GestureRoutingContext);
     const routingNodes = Array.isArray(data?.routingNodes)
         ? data.routingNodes
         : EMPTY_ARRAY;
@@ -638,13 +627,20 @@ function ManualEditableTransitionEdge(
             const isLastSegment = index === routePoints.length - 2;
 
             routedSegments.push(
-                getRoutedSegmentPath(
-                    routePoints[index],
-                    routePoints[index + 1],
-                    routingNodes,
-                    isFirstSegment ? sourcePosition : null,
-                    isLastSegment ? targetPosition : null
-                )
+                lightweightGestureRouting
+                    ? getFallbackSegmentPath(
+                        routePoints[index],
+                        routePoints[index + 1],
+                        isFirstSegment ? sourcePosition : null,
+                        isLastSegment ? targetPosition : null
+                    )
+                    : getRoutedSegmentPath(
+                        routePoints[index],
+                        routePoints[index + 1],
+                        routingNodes,
+                        isFirstSegment ? sourcePosition : null,
+                        isLastSegment ? targetPosition : null
+                    )
             );
         }
 
@@ -683,6 +679,7 @@ function ManualEditableTransitionEdge(
     }, [
         routePoints,
         routingNodes,
+        lightweightGestureRouting,
         sourcePosition,
         targetPosition,
         sourceX,
@@ -705,7 +702,6 @@ function ManualEditableTransitionEdge(
             />
 
             <TransitionAnnotationBadges data={data} selected={selected} x={labelPoint.x} y={labelPoint.y} hasLabel={Boolean(label)} />
-            <SharedExitIndicator data={data} x={labelPoint.x} y={labelPoint.y} />
             <EdgeLabelRenderer>
                 {label && (
                     <div
@@ -926,6 +922,7 @@ function AutoEditableTransitionEdge(props) {
         data,
     } = props;
     const { setEdges } = useReactFlow();
+    const lightweightGestureRouting = useContext(GestureRoutingContext);
 
     const addInitialControlPointAt = useCallback(
         (absolutePoint) => {
@@ -1004,7 +1001,7 @@ function AutoEditableTransitionEdge(props) {
         ? ForcedSmartTransitionEdge
         : AutoSmartTransitionEdge;
     const useLightweightBackgroundRouting = Boolean(
-        data?.lightweightBackgroundRouting && !selected
+        lightweightGestureRouting || (data?.lightweightBackgroundRouting && !selected)
     );
 
     return (
@@ -1016,7 +1013,6 @@ function AutoEditableTransitionEdge(props) {
             )}
 
             <TransitionAnnotationBadges data={data} selected={selected} x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2} hasLabel={Boolean(props.label)} />
-            <SharedExitIndicator data={data} x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2} />
             {selected && (
                 <EdgeLabelRenderer>
                     <button

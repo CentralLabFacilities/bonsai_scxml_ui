@@ -152,3 +152,33 @@ export function fillMissingSharedSlotBindings(data) {
     }
     return next;
 }
+
+
+/**
+ * A visually derived slot may have no manual #_SLOTS declaration. The
+ * inheritance switch must materialize one, otherwise the next slot-graph
+ * projection silently resets the switch. Prefer concrete skill bindings;
+ * otherwise use a referenced child machine's inherited-slot requirement.
+ */
+export function resolveSlotInheritanceOwner(nodes = [], cleanPath = "") {
+    const path = String(cleanPath || "").replace(/^\/+/, "");
+    for (const node of nodes) {
+        if (node?.data?.isSkillClone || node?.data?.isStateClone) continue;
+        const state = String(node?.data?.fullSkillName || node?.data?.label || node?.id || "").trim();
+        for (const slot of [...(node?.data?.inSlots || []), ...(node?.data?.outSlots || [])]) {
+            if (effectivePath(slot) !== path) continue;
+            const key = String(slot?.key || "").trim();
+            if (state && key) return { state: String(slot?.inherited?.state || state), key };
+        }
+    }
+    for (const node of nodes) {
+        if (node?.type !== "submachine" || node?.data?.isStateClone) continue;
+        const state = String(node?.data?.fullSkillName || node?.data?.label || "").trim();
+        for (const slot of node?.data?.inheritedSlots || []) {
+            if (effectivePath(slot) !== path) continue;
+            const key = String(slot?.key || "").trim();
+            if (state && key) return { state, key };
+        }
+    }
+    return null;
+}

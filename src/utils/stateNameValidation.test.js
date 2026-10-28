@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getExportedStateName, proposedExportedStateName, validateStateRename } from './stateNameValidation.js';
+import { getExportedStateName, proposedExportedStateName, validateStateRename, findDuplicateSubmachineStateName } from './stateNameValidation.js';
 
 const skill = (id, fullSkillName, parentId = null, extra = {}) => ({
     id, type: 'custom', parentId,
@@ -53,4 +53,17 @@ test('a parallel lane is renamed as a container state, not as a skill instance',
     assert.equal(proposedExportedStateName(lane, 'Left'), 'Left');
     assert.equal(validateStateRename([...nodes, lane], 'lane', 'Left'), null);
     assert.match(validateStateRename([...nodes, lane], 'lane', 'Container'), /already in use/);
+});
+
+
+test("load preflight catches duplicate sub-state-machine names without flagging shared End", () => {
+    const nodes = [
+        { id: "a", type: "submachine", data: { fullSkillName: "Search", label: "Search" } },
+        { id: "b", type: "submachine", data: { fullSkillName: "Search", label: "Search" } },
+        { id: "end1", type: "custom", data: { fullSkillName: "End", label: "End" } },
+        { id: "end2", type: "custom", data: { fullSkillName: "End", label: "End" } },
+    ];
+    assert.equal(findDuplicateSubmachineStateName(nodes), "Search");
+    nodes[1].data.fullSkillName = "Search#2";
+    assert.equal(findDuplicateSubmachineStateName(nodes), null);
 });

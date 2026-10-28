@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
 import { isTauri, saveFile } from "../../tauri-client.js";
+import { reserveSubmachineStateName } from "../../utils/libraryInitialState.js";
 import { useFeedback } from "../../components/ui/index.js";
 import { collectInheritedSlotUsages } from "../../utils/editorGraph";
 import { getNodeId } from "../../utils/editorGeometry";
@@ -536,13 +537,13 @@ export function useSubStateMachines({
                 currentTabPatch: (liveOriginSnapshot) => ({
                     nodes: [
                         ...liveOriginSnapshot.nodes,
-                        {
+                        reserveSubmachineStateName(liveOriginSnapshot.nodes, {
                             ...subMachineNode,
                             data: {
                                 ...subMachineNode.data,
                                 isInitial: liveOriginSnapshot.nodes.length === 0,
                             },
-                        },
+                        }),
                     ],
                 }),
                 fit: true,
@@ -694,7 +695,10 @@ export function useSubStateMachines({
                             ...liveOriginSnapshot.nodes.filter((node) =>
                                 !selectedIds.has(node.id)
                             ),
-                            subMachineNode,
+                            reserveSubmachineStateName(
+                                liveOriginSnapshot.nodes.filter((node) => !selectedIds.has(node.id)),
+                                subMachineNode,
+                            ),
                         ],
                         edges: liveParentGraph.edges
                             .map((edge) => {

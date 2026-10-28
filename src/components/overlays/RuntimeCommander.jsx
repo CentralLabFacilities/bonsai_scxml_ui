@@ -12,6 +12,7 @@ import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
 import { runtimeConnectionNeedsStatusRefresh, shouldReplaceControlStatusBaseline, shouldRetryControlStatusSnapshot } from "../../utils/runtimeControlRecovery.js";
 import { runtimeControlAvailability, runtimeBadgeStatus } from "../../utils/runtimeControlAvailability.js";
+import { findDuplicateSubmachineStateName } from "../../utils/stateNameValidation.js";
 
 export default function RuntimeCommander({
     isOpen,
@@ -435,6 +436,10 @@ export default function RuntimeCommander({
                 const identity = getActiveDocumentIdentity();
                 const workflow = getTabSnapshot();
                 if (!workflow) throw new Error("Open a state machine first.");
+                const conflictingName = findDuplicateSubmachineStateName(workflow.nodes || []);
+                if (conflictingName) {
+                    throw new Error(`Duplicate SCXML state name "${conflictingName}". Rename one sub-state machine before loading. Nothing was sent to the engine; Load remains available.`);
+                }
                 const tabsSnapshot = getTabsSnapshot?.() ?? [workflow];
                 if (getActiveDocumentIdentity() !== identity) {
                     throw new Error("The open workflow changed before loading. Nothing was sent to the engine.");
@@ -508,7 +513,14 @@ export default function RuntimeCommander({
                 await requestWebCommander(action, { method: "POST", body, signal: operation.controller.signal });
                 if (ownerRef.current !== owner) return;
                 if (action === "stop_events") setAutomaticEnabled(enabled);
-                if (action === "resume") setSnapshot((current) => ({ ...current, status: "RUNNING", statusStale: false }));
+                // The engine may not publish a live status event while paused.
+                // A successful control acknowledgment must still expose the
+                // matching Resume/Pause action immediately; the HTTP snapshot
+                // below reconciles this optimistic control status.
+                if (action === "pause" || action === "resume") {
+                    const expected = action === "pause" ? "PAUSED" : "RUNNING";
+                    setSnapshot((current) => ({ ...current, status: expected, statusStale: false }));
+                }
                 if ((action === "start" || action === "resume") && loadedWorkflowRef.current) {
                     followingRef.current = true;
                     setIsFollowing(true);

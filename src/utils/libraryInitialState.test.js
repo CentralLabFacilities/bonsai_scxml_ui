@@ -138,3 +138,24 @@ test("insertion acknowledgement keeps an explicit initial in a nested scope", ()
     assert.deepEqual(initialIds(normalized, "compound"), ["chosen"]);
     assert.equal(normalized[0].data.initialChildId, "chosen");
 });
+
+
+test("repeated sub-state-machine drops get unique SCXML names even across lanes", () => {
+    const behavior = (id, parentId) => ({ ...node(id, parentId, false, "submachine"),
+        data: { label: "Search", fullSkillName: "Search", src: "${BEHAVIORS}/Search.xml" } });
+    const first = appendLibraryNodeWithInitial([], behavior("child1", "laneA"));
+    const second = appendLibraryNodeWithInitial(first, behavior("child2", "laneB"));
+    const third = appendLibraryNodeWithInitial(second, behavior("child3", "laneA"));
+    assert.deepEqual(third.map((n) => n.data.fullSkillName), ["Search", "Search#2", "Search#3"]);
+    assert.deepEqual(third.map((n) => n.data.label), ["Search", "Search#2", "Search#3"]);
+    assert.ok(third.every((n) => n.data.src === "${BEHAVIORS}/Search.xml"));
+});
+
+test("a sub-state-machine also avoids collisions with an existing compound", () => {
+    const compound = { ...node("compound", null, false, "compound"),
+        data: { label: "Search", fullSkillName: "Search" } };
+    const incoming = { ...node("sub", null, false, "submachine"),
+        data: { label: "Search", fullSkillName: "Search", src: "Search.xml" } };
+    const result = appendLibraryNodeWithInitial([compound], incoming);
+    assert.equal(result[1].data.fullSkillName, "Search#2");
+});

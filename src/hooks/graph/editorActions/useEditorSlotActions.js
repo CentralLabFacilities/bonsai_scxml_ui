@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
+import { updateSharedSlotBinding, resolveSlotInheritanceOwner } from "../../../utils/sharedSlotBindings.js";
 import {
     getSlotPathFromNode,
     normalizeSlotPath,
@@ -132,6 +132,16 @@ export function useEditorSlotActions({
             const path = getSlotPathFromNode(slotNode);
             if (!path) return false;
             const formattedPath = `/${path}`;
+            const owner = shouldInherit ? resolveSlotInheritanceOwner(nodes, path) : null;
+            const matchingDeclarations = (manualSlots || []).filter((slot) =>
+                normalizeSlotPath(slot?.inherited?.xpath || slot?.path) === path);
+            const hasDeclaration = matchingDeclarations.length > 0;
+            const hasValidDeclaration = matchingDeclarations.some((slot) =>
+                String(slot?.key || "").trim() &&
+                String(slot?.inherited?.state || slot?.state || "").trim());
+            // An inheritSlot without a binding key/state cannot be serialized.
+            // Do not make a temporary visual change that silently resets.
+            if (shouldInherit && !owner && !hasValidDeclaration) return false;
 
             const updatedNodes = nodes.map((node) => {
                 const stateName =
@@ -175,17 +185,33 @@ export function useEditorSlotActions({
 
                 return {
                     ...slot,
+                    path: formattedPath,
+                    key: slot?.key || owner?.key || "",
+                    state: slot?.state || owner?.state || "",
                     slotKind: shouldInherit ? "inheritSlot" : "slot",
                     inherited: shouldInherit
                         ? {
                               ...(slot?.inherited || {}),
-                              state:
-                                  slot?.inherited?.state || slot?.state || "",
+                              state: slot?.inherited?.state || slot?.state || owner?.state || "",
                               xpath: formattedPath,
                           }
                         : null,
                 };
             });
+
+            // Only the current workflow's declarations govern its inheritance.
+            // A slot derived solely from child requirements still needs a
+            // persisted declaration if the user enables inheritSlot here.
+            if (shouldInherit && !hasDeclaration && owner) {
+                updatedManualSlots.push({
+                    id: `manual-${crypto.randomUUID()}`,
+                    path: formattedPath,
+                    key: owner.key,
+                    state: owner.state,
+                    slotKind: "inheritSlot",
+                    inherited: { state: owner.state, xpath: formattedPath },
+                });
+            }
 
             setNodes(updatedNodes);
             setManualSlots(updatedManualSlots);

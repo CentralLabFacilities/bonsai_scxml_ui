@@ -21,7 +21,24 @@ export function availableLibrarySkillName(nodes, requestedName) {
 // before awaiting the API may therefore collide even if initials do not.
 // Resolve the identity in the same synchronous document transaction as append.
 const resolveIncomingSkillIdentity = (currentNodes, incomingNode) => {
-    if (incomingNode.type !== "custom" || !incomingNode.data) return incomingNode;
+    if (!incomingNode.data) return incomingNode;
+    if (incomingNode.type === "submachine") {
+        // Sub-state-machine references need unique *SCXML* ids, not merely
+        // unique React Flow node ids. The source file remains shared.
+        const requested = String(incomingNode.data.fullSkillName || incomingNode.data.label || "").trim();
+        if (!requested) return incomingNode;
+        const used = new Set(currentNodes
+            .filter((node) => node.type !== "slot" && !isEditorCloneNode(node))
+            .map((node) => String(node.data?.fullSkillName || node.data?.label || node.id || "").trim()));
+        if (!used.has(requested)) return incomingNode;
+        const base = requested.replace(/#\d+$/, "");
+        let index = 2;
+        while (used.has(`${base}#${index}`)) index += 1;
+        const name = `${base}#${index}`;
+        return { ...incomingNode, data: { ...incomingNode.data,
+            label: name, fullSkillName: name } };
+    }
+    if (incomingNode.type !== "custom") return incomingNode;
     const data = incomingNode.data;
     const fullName = String(data.fullSkillName || "").trim();
     if (!fullName) return incomingNode;
@@ -47,6 +64,10 @@ const resolveIncomingSkillIdentity = (currentNodes, incomingNode) => {
         ...data, fullSkillName: availableLibrarySkillName(currentNodes, fullName),
     } };
 };
+
+/** Reserve a unique SCXML state name when creating a child file as well. */
+export const reserveSubmachineStateName = (nodes, incomingNode) =>
+    resolveIncomingSkillIdentity(nodes, incomingNode);
 
 export function appendLibraryNodeWithInitial(currentNodes, incomingNode) {
     const resolvedNode = resolveIncomingSkillIdentity(currentNodes, incomingNode);

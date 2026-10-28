@@ -6,6 +6,7 @@ import {
     layoutStateContainerForExpansion,
 } from "../../utils/editorGeometry.js";
 import { getLocalDataModelEntries } from "../../utils/editorScxml.js";
+import { submachineActionDataModel } from "../../utils/editorValidation.js";
 import { isEditorCloneNode } from "../../utils/editorClones.js";
 
 // The inspector has a fixed event API. Stable forwarders retain drag-time memo
@@ -250,45 +251,11 @@ export function useEditorDetailsController({
     // OnEntry/OnExit has asymmetric scope for sub-state-machines:
     // - assignment location belongs to the child machine's local datamodel
     // - assignment expression is evaluated in the parent workflow scope
-    const selectedActionDataModel = useMemo(() => {
-        if (!selectedNode || selectedNode.type !== "submachine") {
-            return availableDataModelParameters;
-        }
-
-        const srcFileName = String(selectedNode.data?.src || "")
-            .split(/[\\/]/)
-            .pop()
-            ?.replace(/\.(xml|scxml)$/i, "");
-
-        const childTab = tabs.find((tab) => {
-            if (tab.parentTabId !== activeTabId) return false;
-
-            const tabFileName = String(tab.fileName || "")
-                .split(/[\\/]/)
-                .pop()
-                ?.replace(/\.(xml|scxml)$/i, "");
-
-            return (
-                (tab.sourcePath &&
-                    String(tab.sourcePath) ===
-                        String(selectedNode.data?.src || "")) ||
-                String(tab.title || "") ===
-                    String(selectedNode.data?.label || "") ||
-                (srcFileName && tabFileName === srcFileName)
-            );
-        });
-
-        if (childTab) {
-            return getLocalDataModelEntries(childTab.globalDataModel);
-        }
-
-        return getLocalDataModelEntries(selectedNode.data?.localDataModel || []);
-    }, [
-        activeTabId,
-        availableDataModelParameters,
-        selectedNode,
-        tabs,
-    ]);
+    const selectedActionDataModel = useMemo(() =>
+        selectedNode?.type === "submachine"
+            ? getLocalDataModelEntries(submachineActionDataModel(selectedNode, tabs, activeTabId))
+            : availableDataModelParameters,
+    [selectedNode, tabs, activeTabId, availableDataModelParameters]);
 
     const selectedActionExpressionVariables = availableDataModelParameters;
 
