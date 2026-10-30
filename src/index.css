@@ -5,6 +5,20 @@ body,
     height: 100%;
     margin: 0;
 }
+body {
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+body input,
+body textarea,
+body select,
+body [contenteditable="true"],
+body .monaco-editor,
+body .cm-editor {
+    user-select: text;
+    -webkit-user-select: text;
+}
 
 body {
     font-family: var(--ui-font-family, Arial, sans-serif);
