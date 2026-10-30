@@ -68,3 +68,14 @@ API_TARGET=http://other-host:9000 ./target/bonsai-ui   # custom API backend
 The server automatically proxies `/api/*` requests to `http://localhost:8080/*` (stripping the `/api` prefix). Override with `API_TARGET`.
 
 ---
+## Development
+
+### Ignoring formatting commits in git blame/diff
+
+To ignore formatting commits when using `git blame` or `git diff`, configure git to use a blame ignore file:
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+Then list the SHAs of formatting-only commits in `.git-blame-ignore-revs` (one per line).
