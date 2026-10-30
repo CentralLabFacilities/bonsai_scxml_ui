@@ -4,13 +4,14 @@ import { createSmartEdge, getSmartEdge, smartEdgePresets } from "@tisoap/react-f
 import { GestureRoutingContext } from "./GestureRoutingContext.js";
 
 const AUTO_ROUTING_OPTIONS = {
+  //...smartEdgePresets.smoothstep,
   routeOnlyWhenBlocked: true,
   gridRatio: 4,
   nodePadding: 32,
 };
 
 const MANUAL_ROUTING_OPTIONS = {
-  ...smartEdgePresets.simplebezier,
+  ...smartEdgePresets.step,
   routeOnlyWhenBlocked: false,
   gridRatio: 4,
   nodePadding: 32,
