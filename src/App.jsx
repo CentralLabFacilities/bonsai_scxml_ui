@@ -653,6 +653,7 @@ function AppContent() {
         setActiveTab,
         setHoveredEditorNodeId,
         setHoveredEditorEdgeId,
+        rightPanelTab,
     });
 
     const {

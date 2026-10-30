@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
     FiAlertCircle,
     FiAlertTriangle,
@@ -25,11 +26,33 @@ function SeverityIcon({ severity }) {
     return <FiAlertCircle aria-hidden="true" />;
 }
 
+function getNodeDisplayName(node) {
+    const data = node.data || {};
+    const fullSkillName = String(data.fullSkillName || "");
+    const editorInstanceId = data.editorInstanceId;
+    const isReference = Boolean(data.isSkillClone || data.isStateClone);
+    const skillName = data.label || fullSkillName.split(".").pop().split("#")[0] || node.id;
+    if (isReference) {
+        return `${skillName} [${editorInstanceId || node.id}]`;
+    }
+    if (editorInstanceId) {
+        return `${skillName}#${editorInstanceId}`;
+    }
+    const stateName = fullSkillName.includes("#") ? fullSkillName.split("#").pop() : "";
+    if (stateName && stateName !== skillName) {
+        return `${skillName}${stateName.startsWith("#") ? "" : "#"}${stateName}`;
+    }
+    return skillName;
+}
+
 export default function ProblemsPanel({
     problems = [],
     onProblemClick,
     validationStatus = "ready",
+    selectedNode,
 }) {
+    const [showAll, setShowAll] = useState(false);
+    useEffect(() => { setShowAll(false); }, [selectedNode?.id]);
     const validationNotice = {
         pending: { title: "Validation running", message: "Waiting for validation of the current workflow." },
         unavailable: { title: "Full workflow validation unavailable", message: "Only local parameter and slot checks are available. Use the desktop app for full workflow validation." },
@@ -42,7 +65,12 @@ export default function ProblemsPanel({
         (problem) => problem.severity === "warning"
     ).length;
 
-    if (problems.length === 0) {
+    const filteredProblems = selectedNode && !showAll
+        ? problems.filter((p) => p.nodeId === selectedNode.id)
+        : problems;
+    const isFiltered = !!selectedNode && !showAll && filteredProblems.length !== problems.length;
+
+    if (filteredProblems.length === 0) {
         return (
             <div className="problems-panel">
                 <div className="problems-panel-header">
@@ -51,7 +79,7 @@ export default function ProblemsPanel({
                             Problems
                         </div>
                         <div className="problems-panel-summary">
-                            Workflow validation
+                            {selectedNode ? "No problems for this node" : "Workflow validation"}
                         </div>
                     </div>
                 </div>
@@ -71,7 +99,7 @@ export default function ProblemsPanel({
     }
 
     const grouped = new Map();
-    problems.forEach((problem) => {
+    filteredProblems.forEach((problem) => {
         if (!grouped.has(problem.category)) {
             grouped.set(problem.category, []);
         }
@@ -101,6 +129,14 @@ export default function ProblemsPanel({
                         {warningCount} warning
                         {warningCount === 1 ? "" : "s"}
                     </div>
+                    {(isFiltered || (selectedNode && showAll)) && (
+                        <div className="problems-panel-summary" style={{ color: "var(--ui-text-muted)" }}>
+                            {showAll ? `Showing all ${problems.length} problems` : `Problems for "${getNodeDisplayName(selectedNode)}" (${filteredProblems.length} of ${problems.length} total)`}
+                            <button type="button" className="order-btn" style={{ display: "inline-flex", marginLeft: 8 }} onClick={() => setShowAll(!showAll)}>
+                                {showAll ? "Show node only" : "Show all"}
+                            </button>
+                        </div>
+                    )}
                     {validationNotice && <div className="problems-panel-summary" role="status">{validationNotice.message}</div>}
                 </div>
             </div>

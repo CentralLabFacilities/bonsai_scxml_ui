@@ -14,6 +14,7 @@ export function useEditorSelectionController({
     setActiveTab,
     setHoveredEditorNodeId,
     setHoveredEditorEdgeId,
+    rightPanelTab,
 }) {
     const handleEdgeClick = useCallback(
         (event, edge) => {
@@ -84,8 +85,10 @@ export function useEditorSelectionController({
     const handleNodeClick = useCallback((_, node) => {
         clearAllEdgeSelection();
         setSelectedNodeId(getInspectableNode(node).id);
-        setRightPanelTab("details");
-    }, [clearAllEdgeSelection, getInspectableNode, setSelectedNodeId, setRightPanelTab]);
+        if (rightPanelTab !== "problems") {
+            setRightPanelTab("details");
+        }
+    }, [clearAllEdgeSelection, getInspectableNode, setSelectedNodeId, setRightPanelTab, rightPanelTab]);
 
     const handleNodeDoubleClick = useCallback((_, node) => {
         clearAllEdgeSelection();

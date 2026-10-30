@@ -153,7 +153,7 @@ export default function EditorInspectorPanel({
                 )}
 
                 {inspectorTab === "problems" && (
-                    <ProblemsPanel problems={problems.items} validationStatus={problems.status} onProblemClick={problems.onClick} />
+                    <ProblemsPanel problems={problems.items} validationStatus={problems.status} onProblemClick={problems.onClick} selectedNode={selectedNode} />
                 )}
 
                 {inspectorTab === "details" && selectedNode && (
