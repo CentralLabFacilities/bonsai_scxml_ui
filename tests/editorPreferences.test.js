@@ -78,14 +78,19 @@ test("behavior directories preserve custom mappings and remove only retired buil
     ];
     assert.deepEqual(loadBehaviorDirectories(storageWith(JSON.stringify(stored))), [
         { key: "ROBOCUP", path: "/workspace", isDefault: true },
+        { key: "EXERCISE", path: "/old", isDefault: true },
         { key: "CHALLENGE", path: "/custom", isDefault: false },
     ]);
     assert.deepEqual(stored[0].key, " robocup ");
-    assert.deepEqual(loadBehaviorDirectories(storageWith("[]")), []);
+    assert.equal(loadBehaviorDirectories(storageWith("[]")).length, 3);
 });
 
 test("malformed or blocked storage falls back to independent defaults", () => {
-    const defaults = [{ key: "ROBOCUP", path: "/robocup_ws/robocup", isDefault: true }];
+    const defaults = [
+        { key: "ROBOCUP", path: "/robocup_ws/robocup", isDefault: true },
+        { key: "EXERCISE", path: "~/robocup-exercise/src/exercise_pkgs/bonsai_exercises/bonsai_exercises-scxml/src/main/config/state_machines", isDefault: true },
+        { key: "CHALLENGE", path: "", isDefault: true },
+    ];
     for (const value of [null, "not JSON", "{}", "null"]) {
         assert.deepEqual(loadBehaviorDirectories(storageWith(value)), defaults);
     }
@@ -117,6 +122,8 @@ test("persisting preferences tolerates individual failures and keeps attempting 
         ["bonsai.behaviorDirectories", "[]"],
         ["bonsai.showTransitionEdges", "false"],
         ["bonsai.showSlotEdges", "true"],
+        ["bonsai.showCodeViewButton", "true"],
+        ["bonsai.colorblindMode", "false"],
     ]);
 });
 

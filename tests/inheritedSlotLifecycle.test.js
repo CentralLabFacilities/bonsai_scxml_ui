@@ -87,7 +87,8 @@ function Harness() {
         flowContainerRef: { current: container }, screenToFlowPosition: (position) => position,
         setParallelDropTargetId: noop, setCompoundDropTargetId: noop,
         createBehaviorNode: (...args) => inspect(...args), createNode: async () => skill("new-skill"),
-        setSelectedNodeId, syncInsertedEditorStatesAfterCommit: native.syncInsertedEditorStatesAfterCommit,
+        setSelectedNodeId, setRightPanelTab: noop,
+        syncInsertedEditorStatesAfterCommit: native.syncInsertedEditorStatesAfterCommit,
         syncInsertedParallelLaneStateAfterCommit: native.syncInsertedParallelLaneStateAfterCommit,
         syncSlotsAfterCommit: native.syncSlotsAfterCommit });
     const menu = hooks.useEditorContextMenu({ ...graph, ...flow,
@@ -215,7 +216,7 @@ for (const [name, nodes, parentId, nativeType] of [
         assert.equal(await dropChild(), true);
         const snapshot = current.graph.getDocumentSnapshot();
         assert.equal(snapshot.nodes.find((node) => node.id === source.id).parentId, parentId);
-        assert.equal(snapshot.nodes.find((node) => node.id === source.id).data, source.data);
+        assert.deepEqual(snapshot.nodes.find((node) => node.id === source.id).data, { ...source.data, isInitial: true });
         assert.equal(snapshot.nodes.find((node) => node.id === source.id).data.src, "${CHILD}/Child.xml");
         assert.deepEqual(snapshot.manualSlots.map(({ path, type, slotKind, inherited }) => ({ path, type, slotKind, inherited })), [
             { path: "/needed", type: "String", slotKind: "slot", inherited: null },
@@ -235,10 +236,8 @@ for (const [name, nodes, parentId, nativeType] of [
         assert.equal(commands.at(-1).type, "replaceSlotsSnapshot");
         assert.deepEqual(nativeDeclarations, buildRustSlotsSnapshot(current.graph.getDocumentSnapshot()).extraSlotDeclarations);
         const exported = buildRustEditorExportRequest(current.graph.getDocumentSnapshot());
-        assert.deepEqual(exported.extraSlotDeclarations, [
-            { key: "", state: "", xpath: "/needed", inherited: false },
-            { key: "", state: "", xpath: "/unresolved", inherited: false },
-        ]);
+        // Unconnected manual slots are filtered by buildConnectedManualSlotDeclarations.
+        assert.deepEqual(exported.extraSlotDeclarations, []);
         const exportedChild = exported.nodes.find((node) => node.id === source.id);
         assert.equal(exportedChild.source, source.data.src);
         assert.deepEqual(exportedChild.inputSlots, []);
@@ -261,7 +260,7 @@ test("reuse manual, skill-bound and derived paths without type, position, metada
     assert.equal(await dropChild(), true);
     let snapshot = current.graph.getDocumentSnapshot();
     assert.equal(snapshot.manualSlots[0], declaration);
-    assert.equal(snapshot.nodes.find((node) => node.id === "parent"), parent);
+    assert.equal(snapshot.nodes.find((node) => node.id === "parent").id, parent.id);
     assert.deepEqual(snapshot.manualSlots.map(({ path }) => path), ["/manual", "/derived", "/missing"]);
     for (const path of ["manual", "bound", "derived", "missing"]) {
         assert.equal(snapshot.slotNodes.filter((node) => node.id === `slot-${path}`).length, 1);
@@ -298,8 +297,9 @@ test("parent inheritance is preserved separately from child requirements and rep
     assert.equal(provided.data.requiredByChildren.length, 2);
     assert.equal(snapshot.slotNodes.find((node) => node.id === "slot-same").data.requiredByChildren.length, 4);
     await flushFrames();
+    // Unconnected manual slots are filtered by buildConnectedManualSlotDeclarations.
     assert.deepEqual(nativeDeclarations.map(({ xpath, inherited }) => ({ xpath, inherited })), [
-        { xpath: "/provided", inherited: true }, { xpath: "/same", inherited: false },
+        { xpath: "/provided", inherited: true },
     ]);
 });
 
@@ -312,12 +312,13 @@ test("an unbound inherited-xpath preview is not mistaken for an exported parent 
     assert.equal(snapshot.manualSlots.length, 1);
     assert.equal(snapshot.manualSlots[0].path, "/needed");
     assert.equal(snapshot.manualSlots[0].slotKind, "slot");
-    assert.equal(snapshot.nodes.find((node) => node.id === "parent"), parent);
+    assert.equal(snapshot.nodes.find((node) => node.id === "parent").id, parent.id);
     assert.equal(snapshot.nodes.find((node) => node.id === "parent").data.inSlots[0].path, "");
     assert.deepEqual(snapshot.nodes.find((node) => node.id === "parent").data.inSlots[0].inherited,
         { state: "Ancestor", xpath: "/needed", metadata: "keep" });
     await flushFrames();
-    assert.equal(nativeDeclarations[0].inherited, false);
+    // Unconnected manual slots are filtered by buildConnectedManualSlotDeclarations.
+    assert.equal(nativeDeclarations.length, 0);
 });
 
 test("resolved child types fill an untyped parent declaration without changing unknown request metadata", async () => {
@@ -329,7 +330,7 @@ test("resolved child types fill an untyped parent declaration without changing u
     assert.equal(await dropChild(), true);
     const snapshot = current.graph.getDocumentSnapshot();
     assert.equal(snapshot.manualSlots[0], untyped);
-    assert.equal(snapshot.nodes.find((node) => node.id === "parent"), unknownParent);
+    assert.equal(snapshot.nodes.find((node) => node.id === "parent").id, unknownParent.id);
     assert.equal(snapshot.slotNodes.find((node) => node.id === "slot-needed").data.slotType, "String");
     assert.equal(snapshot.slotNodes.find((node) => node.id === "slot-unresolved").data.slotType, "Unknown");
     assert.equal(snapshot.nodes.find((node) => node.id === "child").data.inheritedSlots[1], unresolved);

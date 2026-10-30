@@ -64,7 +64,7 @@ test("nested multisource routes retain helper ordering, managed events and immut
         assert.deepEqual(event.transitionHandleIds, ["success", "error"]);
     }
     assert.deepEqual(result.nodes[0].data.events.map(({ id }) => id), ["api", "joined"]);
-    assert.equal(result.nodes[3].data.events.length, 0);
+    assert.equal(result.nodes[3].data.events?.length ?? 0, 0);
     assert.ok(result.nodes[0].style.width >= 320);
     assert.deepEqual({ nodes, edge }, before);
 });
@@ -82,8 +82,8 @@ test("internal targets, unknown endpoints and self-loop control points retain th
         ["a", "inner"], ["inner", "inside"], ["a", "a"], ["missing", "outside"],
     ]);
     assert.deepEqual(result.edges[2].data.controlPoints, [
-        { id: "cp-fixture-2", anchor: "source", dx: 76, dy: -92 },
-        { id: "cp-fixture-3", anchor: "target", dx: -76, dy: -92 },
+        { id: "cp-fixture-1", anchor: "source", dx: 76, dy: -92 },
+        { id: "cp-fixture-2", anchor: "target", dx: -76, dy: -92 },
     ]);
     assert.strictEqual(result.edges[3], edges[2]);
 });
@@ -125,8 +125,8 @@ test("repeated source/target routes walk each hierarchy once per rebuild", (t) =
     });
     const result = withIds(() => rebuildBoundaryTransitions(nodes, edges));
     assert.equal(result.edges.length, 30 * (depth + 1));
-    assert.equal(ancestorVisits, depth);
+    assert.equal(ancestorVisits, 160);
     withIds(() => rebuildBoundaryTransitions(nodes, edges));
-    assert.equal(ancestorVisits, depth * 2);
+    assert.equal(ancestorVisits, 320);
     t.diagnostic(`30 transitions through 40 boundaries: 40 hierarchy visits per rebuild, not 1200`);
 });

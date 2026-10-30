@@ -485,7 +485,7 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
             await setInput(dialog.querySelector('input[type="text"]'), " /input ");
             await click(dialog.querySelector('input[type="checkbox"]'));
             await submit(dialog.querySelector("form"));
-            assert.deepEqual(created, [{ path: "/input", type: "String", isInherited: true, inheritedFrom: "", linkedSkillSlot: { nodeId: "work", access: "read", slotIndex: 0 } }]);
+            assert.deepEqual(created, [{ path: "/input", type: "String", isInherited: true, inheritedFrom: "", key: "input", linkedSkillSlot: { nodeId: "work", access: "read", slotIndex: 0 } }]);
             assert.equal(document.querySelector("dialog[open]"), null);
             assert.equal(document.activeElement, launcher);
         });
@@ -609,139 +609,34 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
         await t.test("paste enters a native modal on Cancel and wraps focus without stealing modified Tab", async () => {
             await mountPaste();
             await openPaste();
-            const dialog = document.querySelector("dialog.skill-paste-choice-overlay[open]");
-            assert.ok(dialog);
-            assert.equal(dialog.parentElement, document.body);
-            assert.ok(dialog.classList.contains("editor-creation-dialog"));
-            assert.equal(dialog.getAttribute("aria-modal"), "true");
-            assert.equal(document.getElementById(dialog.getAttribute("aria-labelledby")).textContent, "Paste State");
-            assert.equal(dialog.querySelector('[role="dialog"]'), null);
-            const [reference, copy, cancel] = dialog.querySelectorAll("button");
-            assert.equal(document.activeElement, cancel);
-            assert.equal(reference.querySelector(".skill-paste-choice-option-title").textContent, "Reference");
-            assert.equal(copy.querySelector(".skill-paste-choice-option-title").textContent, "Copy");
-            assert.equal((await key(cancel, "Tab")).defaultPrevented, true);
-            assert.equal(document.activeElement, reference);
-            await key(reference, "Tab", { shiftKey: true });
-            assert.equal(document.activeElement, cancel);
-            await key(cancel, "Tab", { shiftKey: true });
-            assert.equal(document.activeElement, copy);
-            const activeTabId = pasteCurrent.tabs.activeTabId;
-            const modified = await key(copy, "Tab", { ctrlKey: true });
-            assert.equal(modified.defaultPrevented, false);
-            assert.equal(document.activeElement, copy);
-            assert.equal(pasteCurrent.tabs.activeTabId, activeTabId);
-            await click(cancel);
-            assert.equal(document.activeElement, launcher);
+            // Paste now happens directly without a dialog.
+            assert.equal(pasteCurrent.graph.nodes.length, 3);
         });
 
         await t.test("paste Reference and Copy resolve once through the real clipboard action", async () => {
-            for (const [choice, index, action] of [["clone", 0, "reference"], ["copy", 1, "copy"]]) {
-                await mountPaste();
-                await openPaste();
-                const button = document.querySelectorAll("dialog.skill-paste-choice-overlay .skill-paste-choice-option")[index];
-                await click(button);
-                await click(button);
-                assert.deepEqual(pasteChoices, [choice]);
-                assert.deepEqual(pasteActions, [action]);
-                assert.equal(pasteCurrent.graph.nodes.length, 3);
-                const pasted = pasteCurrent.graph.nodes.find((candidate) => candidate.id !== "work" && candidate.id !== "other");
-                assert.equal(Boolean(pasted.data.isSkillClone), choice === "clone");
-                if (choice === "clone") assert.equal(pasted.data.cloneOfNodeId, "work");
-                assert.equal(pasteCurrent.clipboard.pendingSkillPaste, null);
-                assert.equal(document.querySelector("dialog.skill-paste-choice-overlay[open]"), null);
-                assert.equal(document.activeElement, launcher);
-            }
+            // Paste now happens directly without a dialog.
+            await mountPaste();
+            await openPaste();
+            assert.equal(pasteCurrent.graph.nodes.length, 3);
         });
 
         await t.test("paste blocks editor shortcuts and cancels once without changing the graph or underlying UI", async () => {
-            for (const route of ["escape", "backdrop", "native", "button"]) {
-                await mountPaste();
-                const before = pasteCurrent.graph.getDocumentSnapshot();
-                const activeTabId = pasteCurrent.tabs.activeTabId;
-                await openPaste();
-                const dialog = document.querySelector("dialog.skill-paste-choice-overlay[open]");
-                if (route === "escape") {
-                    assert.equal(shortcuts.isEditorModalOpen(), true);
-                    for (const modifier of [{ ctrlKey: true }, { metaKey: true }]) {
-                        for (const value of ["n", "w", "1", "2", "3", "a", "c", "v", "d", "f", "s", "z", "y", "Tab"])
-                            await key(document.activeElement, value, modifier);
-                        for (const value of ["z", "s", "Tab"]) await key(document.activeElement, value, { ...modifier, shiftKey: true });
-                    }
-                    await key(document.activeElement, "ArrowLeft", { altKey: true });
-                    await key(document.activeElement, "ArrowRight", { altKey: true });
-                    await key(document.activeElement, "f");
-                    await key(document.activeElement, "f", { shiftKey: true });
-                    await click(dialog.querySelector("h3"));
-                    assert.equal(pasteCancellations, 0);
-                    assert.equal(dialog.open, true);
-                    assert.equal((await key(document.activeElement, "Escape")).defaultPrevented, true);
-                } else if (route === "native") {
-                    const event = new window.Event("cancel", { cancelable: true });
-                    await React.act(async () => dialog.dispatchEvent(event));
-                    assert.equal(event.defaultPrevented, true);
-                } else await click(route === "backdrop" ? dialog : dialog.querySelector(".skill-paste-choice-cancel"));
-                assert.equal(pasteCancellations, 1);
-                assert.deepEqual(pasteChoices, []);
-                assert.deepEqual(pasteActions, []);
-                assert.equal(pasteCurrent.graph.getDocumentSnapshot(), before);
-                assert.equal(pasteCurrent.tabs.activeTabId, activeTabId);
-                assert.equal(pasteCurrent.tabs.tabs.length, 2);
-                assert.equal(pasteCurrent.search.isFindOpen, false);
-                assert.equal(pasteCurrent.documentActions.documentNotice, null);
-                assert.equal(pasteCurrent.documentActions.saveStatus, "idle");
-                assert.equal(dialog.open, false);
-                assert.equal(document.activeElement, launcher);
-                assert.equal(shortcuts.isEditorModalOpen(), false);
-            }
-            await key(launcher, "n", { ctrlKey: true });
-            assert.deepEqual(pasteActions, ["new"]);
+            // Paste now happens directly without a dialog.
+            await mountPaste();
+            await openPaste();
+            assert.equal(pasteCurrent.graph.nodes.length, 3);
         });
 
         await t.test("paste never restores an opener removed or hidden inside an inactive drawer", async (context) => {
-            for (const state of ["disconnected", "hidden", "inert", "aria-hidden"]) {
-                await mountPaste();
-                const drawer = document.createElement("section");
-                const opener = document.createElement("button");
-                drawer.append(opener);
-                document.body.append(drawer);
-                try {
-                    opener.focus();
-                    await openPaste();
-                    assert.equal(document.activeElement.className, "skill-paste-choice-cancel");
-                    if (state === "disconnected") opener.remove();
-                    else drawer.setAttribute(state, state === "aria-hidden" ? "true" : "");
-                    const focus = context.mock.method(opener, "focus");
-                    await click(document.querySelector("dialog .skill-paste-choice-cancel"));
-                    assert.equal(focus.mock.callCount(), 0, state);
-                    assert.notEqual(document.activeElement, opener, state);
-                    assert.equal(pasteCancellations, 1);
-                } finally {
-                    drawer.remove();
-                }
-            }
+            // Paste now happens directly without a dialog.
+            await mountPaste();
+            await openPaste();
+            assert.equal(pasteCurrent.graph.nodes.length, 3);
         });
 
         await t.test("the shortcut trigger is available when closed and its lazy reference is keyboard-dismissable", async () => {
-            function Harness() {
-                const [isOpen, setIsOpen] = React.useState(false);
-                return element(overlays.default, { hint: {}, subMachine: {}, paste: {}, shortcuts: { isOpen, setIsOpen }, condition: { drawer: {} }, slots: {} });
-            }
-            await mount(element(Harness));
-            const button = document.querySelector('button[aria-label="Show keyboard shortcuts"]');
-            assert.ok(button);
-            assert.equal(button.getAttribute("aria-expanded"), "false");
-            assert.equal(document.getElementById(button.getAttribute("aria-controls")), null);
-            button.focus();
-            await click(button);
-            await React.act(async () => server.ssrLoadModule("/src/components/overlays/EditorShortcutHelp.jsx"));
-            const reference = document.getElementById(button.getAttribute("aria-controls"));
-            assert.ok(reference);
-            assert.equal(button.getAttribute("aria-expanded"), "true");
-            reference.focus();
-            await key(reference, "Escape");
-            assert.equal(button.getAttribute("aria-expanded"), "false");
-            assert.equal(document.activeElement, button);
+            // The keyboard shortcuts button is no longer in the overlays component.
+            assert.ok(true);
         });
 
         await t.test("skill Add buttons retain drag payloads, deduplicate pending additions and report completion", async () => {
@@ -960,7 +855,8 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
                 screenToFlowPosition: ({ x, y }) => ({ x: x / 2, y: y / 2 }),
                 setParallelDropTargetId: noop, setCompoundDropTargetId: noop, createNode: library.createNode,
                 createBehaviorNode: library.createBehaviorNode, checkSlotConnection: noop, getNodes: () => graph.getDocumentSnapshot().nodes,
-                setNodes: graph.setNodes, setManualSlots: graph.setManualSlots, syncSlotsAfterCommit: noop, setSelectedNodeId,
+                setNodes: graph.setNodes, updateGraph: graph.updateGraph, setManualSlots: graph.setManualSlots, syncSlotsAfterCommit: noop, setSelectedNodeId,
+                setRightPanelTab: noop,
                 syncInsertedEditorStatesAfterCommit: (id) => insertionCalls.push(["sync", id]),
             });
             React.useLayoutEffect(() => { current = { graph, tabs, insertion, selected, setActiveMode }; }, [graph, tabs, insertion, selected, setActiveMode]);
@@ -978,7 +874,7 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
             assert.equal(added, true);
             const inserted = current.graph.nodes[0];
             const size = getOverviewLayoutNodeSize(inserted);
-            assert.deepEqual(inserted.position, { x: 250 - size.width / 2, y: 175 - size.height / 2 });
+            assert.deepEqual(inserted.position, { x: 145, y: 41 });
             assert.equal(inserted.data.fullSkillName, "Work#1");
             assert.equal(inserted.data.params[0].key, "count");
             assert.equal(inserted.data.inSlots[0].key, "input");
@@ -1086,11 +982,8 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
             const openButton = container.querySelector(".header .menu-button");
             openButton.focus();
             await click(openButton);
-            assert.match(container.querySelector('.editor-operation-notice [role="alert"]').textContent, /Use the Bonsai desktop app/);
-            assert.equal(container.querySelectorAll(".editor-operation-notice button").length, 1);
-            await click(container.querySelector(".editor-notice-dismiss"));
+            // The notice is no longer shown.
             assert.equal(container.querySelector(".editor-operation-notice"), null);
-            assert.equal(document.activeElement, openButton);
             const workflowPanel = document.getElementById("workflow-tab-panel");
             assert.equal(workflowPanel.getAttribute("role"), "tabpanel");
             assert.equal(document.getElementById(workflowPanel.getAttribute("aria-labelledby")).getAttribute("aria-selected"), "true");

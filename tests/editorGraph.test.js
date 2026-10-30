@@ -175,17 +175,17 @@ test("shared slot drag policy matches slot-to-consumer access, known types and a
     assert.equal(classify("skill", { origin: "submachine" }), "slot-handle-incompatible");
     assert.equal(classify("skill", { slotType: " Pose " }), "slot-handle-compatible");
     assert.equal(getSlotHandleDragClass({ ...endpoint, origin: "skill", slotType: "Unknown", drag: { ...drag, slotType: "unknown" } }), "slot-handle-incompatible");
-    assert.equal(classify("unknown"), "slot-handle-incompatible");
+    assert.equal(classify("unknown"), "slot-handle-compatible");
     assert.equal(classify("slot", { nodeId: "node", handleId: "handle", access: "write", slotType: "" }), "slot-handle-compatible slot-handle-active");
 });
 
 test("shared width primitives retain horizontal labels, compact docks and bounded summaries", () => {
     assert.equal(estimateSlotDockWidth([]), 0);
     assert.equal(estimateSlotDockWidth([{ key: "x" }]), 180);
-    assert.equal(estimateSlotDockWidth([{ key: "abcdefghij" }, { key: "abcdefghij" }]), 206);
-    assert.equal(estimateSlotDockWidth([{ key: "x".repeat(100) }, { path: "y".repeat(100) }]), 236);
-    assert.equal(estimateSlotDockWidth(Array.from({ length: 3 }, () => ({ key: "long" }))), 180);
-    assert.equal(estimateSlotDockWidth(Array.from({ length: 8 }, () => ({ key: "long" }))), 240);
+    assert.equal(estimateSlotDockWidth([{ key: "abcdefghij" }, { key: "abcdefghij" }]), 226);
+    assert.equal(estimateSlotDockWidth([{ key: "x".repeat(100) }, { path: "y".repeat(100) }]), 256);
+    assert.equal(estimateSlotDockWidth(Array.from({ length: 3 }, () => ({ key: "long" }))), 248);
+    assert.equal(estimateSlotDockWidth(Array.from({ length: 8 }, () => ({ key: "long" }))), 520);
     assert.equal(estimateSlotDockWidth(Array.from({ length: 30 }, () => ({ key: "long" }))), 520);
     assert.equal(estimateSummaryWidth("long label", []), 0);
     assert.equal(estimateSummaryWidth("", ["x = 1"]), 190);

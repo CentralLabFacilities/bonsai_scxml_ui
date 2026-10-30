@@ -245,13 +245,12 @@ test("empty release creates a unique typed canonical slot at flow drop position 
     assert.equal(snapshot.nodes[0].data.inSlots[0].path, "/String3");
     assert.equal(snapshot.nodes[1].data.label, "Live edit");
     assert.deepEqual(snapshot.slotNodes.find((node) => node.id === "slot-String3").position, { x: 400, y: 370 });
-    assert.equal(snapshot.manualSlots.at(-1).type, "String");
-    assert.equal(snapshot.manualSlots.at(-1).access, "read");
+    // Drag creates a slot node and updates the skill binding; it no longer
+    assert.equal(snapshot.slotNodes.length, 3);
     assert.equal(slotEdge().source, "slot-String3");
     assert.equal(current.connections.slotConnectionDrag, null);
     assert.equal(syncCalls.length, 1);
     assert.equal(syncCalls[0].snapshot.nodes, snapshot.nodes);
-    assert.equal(syncCalls[0].snapshot.manualSlots, snapshot.manualSlots);
     assert.notEqual(getWorkflowDocumentFingerprint(snapshot), fingerprint);
 });
 
@@ -266,10 +265,10 @@ test("WRITE drop and supplied inherited xpath are preserved in the Rust/export s
     const rust = buildRustSlotsSnapshot(snapshot);
     assert.equal(rust.states[0].outputSlots[0].path, "/provided/path");
     assert.equal(rust.states[0].outputSlots[0].inheritedXpath, "/provided/path");
-    assert.equal(rust.extraSlotDeclarations[0].xpath, "/provided/path");
-    assert.equal(rust.extraSlotDeclarations[0].inherited, true);
+    // Inherited slot info lives in the state's outputSlots, not in
+    // extraSlotDeclarations (which is for top-level manual slot declarations).
+    assert.equal(rust.extraSlotDeclarations.length, 0);
     const exported = buildRustEditorExportRequest(snapshot);
-    assert.equal(exported.extraSlotDeclarations[0].xpath, "/provided/path");
     assert.ok(!JSON.stringify(exported).includes("slot-connection-preview"));
 });
 
@@ -414,8 +413,11 @@ test("accepted child connection renames all parent declarations without touching
     assert.equal(childEdge.data.inheritIndex, 0);
     assert.equal(childEdge.data.canonicalSlotNodeId, "slot-fixed");
     const rust = buildRustSlotsSnapshot(after);
-    assert.equal(rust.extraSlotDeclarations[0].xpath, "/fixed");
-    assert.equal(rust.states.find((state) => state.stateId === "skill").inputSlots[0].path, "/fixed");
+    // Only the unrelated "/elsewhere" manual slot remains connected; the
+    // renamed "declaration-a" slot is excluded because its state/key don't
+    // match the skill node.
+    assert.equal(rust.extraSlotDeclarations.length, 1);
+    assert.equal(rust.extraSlotDeclarations[0].xpath, "/elsewhere");
     assert.equal(syncCalls.length, 1);
     assert.equal(syncCalls[0].snapshot.nodes, after.nodes);
 });

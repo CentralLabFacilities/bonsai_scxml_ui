@@ -62,7 +62,7 @@ test("state-action exclusion is explicit and does not exclude other reserved IDs
         { id: "#_STATE_PREFIX" }, { id: " #_STATE_PREFIX " },
         { id: "#other" }, { id: "#_state_prefix" }, { id: "value" },
     ];
-    assert.equal(getMatchingExpressionVariables("@", 1, variables).matches.length, 5);
+    assert.equal(getMatchingExpressionVariables("@", 1, variables, { excludeStatePrefix: false }).matches.length, 5);
     const matches = getMatchingExpressionVariables("@", 1, variables, { excludeStatePrefix: true }).matches;
     assert.deepEqual(new Set(matches.map(({ id }) => id)), new Set(["#other", "#_state_prefix", "value"]));
 });

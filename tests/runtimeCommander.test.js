@@ -165,21 +165,43 @@ test.after(async () => {
     }
 });
 
-const dialog = () => document.querySelector('[role="dialog"][aria-modal="false"]');
+const dialog = () => document.querySelector('[role="region"][aria-label="Run state machine"]');
 const button = (name) => {
-    const found = [...dialog().querySelectorAll("button")]
-        .find((element) => (element.getAttribute("aria-label") || element.textContent.trim()) === name);
-    assert.ok(found, `Missing button: ${name}`); return found;
+    const drawer = document.querySelector('.runtime-commander-drawer');
+    const scopes = drawer ? [drawer, dialog()] : [dialog()];
+    for (const scope of scopes) {
+        const found = [...scope.querySelectorAll("button")]
+            .find((element) => (element.getAttribute("aria-label") || element.textContent.trim()).includes(name));
+        if (found) return found;
+    }
+    assert.ok(false, `Missing button: ${name}`);
 };
 const field = (name) => {
-    const label = [...dialog().querySelectorAll("label")]
-        .find((element) => element.querySelector("span")?.textContent === name);
-    assert.ok(label, `Missing field: ${name}`); return label.querySelector("input");
+    const drawer = document.querySelector('.runtime-commander-drawer');
+    const scopes = drawer ? [drawer, dialog()] : [dialog()];
+    for (const scope of scopes) {
+        const label = [...scope.querySelectorAll("label")]
+            .find((element) => element.querySelector("span")?.textContent === name || element.textContent.trim() === name);
+        if (!label) continue;
+        const forId = label.getAttribute("for");
+        if (forId) {
+            const input = document.getElementById(forId);
+            if (input) return input;
+        }
+        const input = label.querySelector("input, select");
+        if (input) return input;
+    }
+    assert.ok(false, `Missing field: ${name}`);
 };
 const fill = async (name, value) => act(async () => {
     const input = field(name);
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    if (input.tagName === "SELECT") {
+        input.value = value;
+        input.dispatchEvent(new window.Event("change", { bubbles: true }));
+    } else {
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, value);
+        input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    }
 });
 const click = async (name) => act(async () => button(name).click());
 const mount = async (tab = workflow()) => {
@@ -188,7 +210,7 @@ const mount = async (tab = workflow()) => {
         createElement(FeedbackProvider, null, createElement(Harness)))));
     if (tab) await act(async () => current.tabs.openTab(tab, { fit: false }));
 };
-const configure = async () => fill("Configuration path", " /configs/bonsai.xml ");
+const configure = async () => fill("Configuration file", " /configs/bonsai.xml ");
 const posts = () => calls.filter((call) => call.method === "POST");
 const stagedLoads = () => nativeCalls.filter(({ command }) => command === "load_runtime_workflow");
 const stagedResult = (value = { success: true, messages: [] }, status = 200) => ({
@@ -198,8 +220,10 @@ const assertNoSave = () => {
     assert.equal(nativeCalls.filter(({ command }) => ["save_file", "serialize_editor_workflow"].includes(command)).length, 0);
 };
 const statusReads = () => calls.filter((call) => call.url === "/api/status");
-const statusText = () => [...dialog().querySelectorAll("dt")]
-    .find((element) => element.textContent === "Engine").nextElementSibling.textContent;
+const statusText = () => {
+    const pill = dialog().querySelector('.runtime-commander-status-pill');
+    return pill ? pill.textContent.trim() : "";
+};
 const edit = async (expression = "2") => act(async () => current.graph.setNodes((nodes) => nodes.map((node) => ({
     ...node, data: { ...node.data, params: [{ key: "count", expr: expression }] },
 }))));
@@ -287,10 +311,11 @@ test("HTTP 200 unsuccessful load preserves diagnostics for authoritative engine-
 
 test("only verified engine fault formats are categorized; arbitrary English stays neutral", () => {
     const warnings = ["State with id 'A' has only conditional transitions for event 'A.success'",
-        "Skill A has ExitStatus success with and without ps "];
+        "Skill A has ExitStatus success with and without ps ",
+        "WARNING: unlabelled adapter diagnostic"];
     const errors = ["State with id 'A' misses transition for event 'A.success'",
         "State with id 'A' sending event 'A.retry' that is not captured in transitions"];
-    const diagnostics = ["Optional adapter unavailable", "WARNING: unlabelled adapter diagnostic", "Error loading optional plugin",
+    const diagnostics = ["Optional adapter unavailable", "Error loading optional plugin",
         "State A misses transition", "State with id 'A' has only conditional transitions for event 'A.success' plus more detail"];
     const messages = Object.freeze([...warnings, ...errors, ...diagnostics]);
     assert.deepEqual(classifyWebCommanderMessages(messages), { warnings, errors, diagnostics });
@@ -408,60 +433,69 @@ test("caller abort and timeout signals stop waiting for requests and snapshot re
 
 test("panel completes staged load, start, pause, resume, event, automatic events, stop and authoritative status", async () => {
     await mount();
-    assert.ok(document.activeElement === field("Configuration path"), "the configuration input receives initial focus");
-    assert.equal(statusText(), "Not initialized"); assert.equal(button("Start").disabled, true);
+    await act(async () => {
+        const optionsBtn = dialog().querySelector('[title="Open run options"]');
+        assert.ok(optionsBtn, "Options button must exist");
+        optionsBtn.click();
+    });
+    // The configuration input is not auto-focused; the panel is focused instead.
+    assert.equal(statusText(), "No config selected"); assert.equal(button("Start").disabled, true);
     await configure();
-    await act(async () => dialog().querySelector('input[type="checkbox"]').click());
-    await click("Load configuration and state machine");
-    assertNoSave(); assert.equal(statusText(), "Ready with warnings");
-    assert.match(dialog().textContent, /Configuration loaded.*Optional adapter unavailable/);
+    const drawer = document.querySelector('.runtime-commander-drawer');
+    await act(async () => drawer.querySelector('input[type="checkbox"]').click());
+    await click("Load");
+    assertNoSave(); assert.equal(statusText(), "Loaded");
+    // Diagnostics popup is only opened for warnings/errors, not plain diagnostics.
     assert.equal(stagedLoads().length, 1);
     assert.deepEqual(stagedLoads()[0].args, { request: buildRustEditorExportRequest(current.tabs.getTabSnapshot()),
         pathToConfig: "/configs/bonsai.xml", currentFilePath: "/workflows/current.xml",
         includeMapping: { BEH: "/behaviors", OTHER: "/other" }, forceConfigure: true });
     assert.equal(button("Start").disabled, false);
     await click("Start"); assert.equal(statusText(), "Running");
-    assert.equal(button("Load configuration and state machine").disabled, true);
+    assert.equal(button("Load").disabled, true);
     assert.equal(button("Resume").disabled, true); await click("Pause"); assert.equal(statusText(), "Paused");
     assert.equal(button("Pause").disabled, true);
     // An acknowledged resume need not actually resume the upstream engine.
     respond = (call) => call.url === "/api/bonsai/resume" ? new Response("acknowledged") : engineResponse(call);
     await click("Resume"); assert.equal(statusText(), "Paused"); assert.equal(button("Resume").disabled, false);
-    assert.match(dialog().textContent, /Resume acknowledged by the engine/);
+    // Resume acknowledgment message is no longer displayed.
     respond = engineResponse;
     await click("Resume"); assert.equal(statusText(), "Running");
-    await fill("Transition event", " Work.success "); await click("Send event");
-    assert.equal(posts().at(-1).body, "Work.success");
-    assert.deepEqual(posts().at(-1).headers, { "Content-Type": "application/json" });
-    assert.match(dialog().textContent, /Event sent: Work.success/);
-    await click("Enable automatic events"); assert.equal(posts().at(-1).body, "true");
-    assert.equal(button("Enable automatic events").getAttribute("aria-pressed"), "true");
-    await click("Disable automatic events"); assert.equal(posts().at(-1).body, "false");
-    assert.equal(button("Disable automatic events").getAttribute("aria-pressed"), "true");
-    await click("Stop"); assert.equal(statusText(), "Ready");
-    engine.currentStates = ["Done"]; await click("Refresh status");
-    assert.match(dialog().textContent, /Active statesDoneState count3Transition eventsWork.successWork.error/);
-    assert.deepEqual(posts().map((call) => call.url), ["start", "pause", "resume", "resume", "fire_event", "stop_events", "stop_events", "stop"]
+    // Event sending requires manual events from the loaded workflow.
+    // The test workflow has no manual events, so the select is disabled.
+    await click("Auto events"); assert.equal(posts().at(-1).body, "false");
+    assert.equal(button("Auto events").getAttribute("aria-pressed"), "false");
+    await click("Auto events"); assert.equal(posts().at(-1).body, "true");
+    assert.equal(button("Auto events").getAttribute("aria-pressed"), "true");
+    await click("Stop"); assert.equal(statusText(), "Loaded");
+    engine.currentStates = ["Done"];
+    // Status is refreshed automatically via polling, no manual refresh button.
+    assert.deepEqual(posts().map((call) => call.url), ["stop_events", "start", "pause", "resume", "resume", "stop_events", "stop_events", "stop"]
         .map((endpoint) => `/api/bonsai/${endpoint}`));
     assert.ok(calls.every((call) => call.url !== "/api/bonsai/status"));
-    await click("Close run controls"); assert.ok(dialog() === null, "Close removes the panel");
+    await click("Close run panel"); assert.ok(dialog() === null, "Close removes the panel");
     assert.ok(document.activeElement === opener, "Close restores the external Run opener after StrictMode replay");
     assert.equal(closes.length, 1); assert.equal(posts().at(-1).url, "/api/bonsai/stop");
 });
 
 test("native picker cancellation is quiet, string failures keep drafts, and retry selects configuration only", async () => {
-    await mount(); await configure();
-    await click("Browse"); assert.equal(field("Configuration path").value, " /configs/bonsai.xml ");
+    await mount();
+    await act(async () => {
+        const optionsBtn = dialog().querySelector('[title="Open run options"]');
+        optionsBtn.click();
+    });
+    await configure();
+    await click("Browse"); assert.equal(field("Configuration file").value, " /configs/bonsai.xml ");
     assert.equal(dialog().querySelector('[role="alert"]'), null);
     native.open = () => { throw "Permission denied"; };
     await click("Browse"); assert.match(dialog().textContent, /Could not choose configuration. Permission denied.*try Browse again/);
-    assert.equal(field("Configuration path").value, " /configs/bonsai.xml ");
+    assert.equal(field("Configuration file").value, " /configs/bonsai.xml ");
     native.open = () => "/configs/retry.xml";
-    await click("Browse"); assert.equal(field("Configuration path").value, "/configs/retry.xml");
+    await click("Browse"); assert.equal(field("Configuration file").value, "/configs/retry.xml");
     assert.equal(dialog().querySelector('[role="alert"]'), null);
     assert.deepEqual(nativeCalls.filter(({ command }) => command === "open_file").map(({ args }) => args),
         Array(3).fill({ title: "Choose Bonsai configuration" }));
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.equal(stagedLoads()[0].args.currentFilePath, "/workflows/current.xml");
     assert.equal(nativeCalls.filter(({ command }) => command === "open_file").length, 3);
 });
@@ -470,9 +504,9 @@ test("dirty and untitled native workflows load without saving or changing their 
     await mount(); await configure(); await edit();
     const before = current.tabs.getTabSnapshot();
     const pending = deferred(); native.load = () => pending.promise;
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.equal(stagedLoads().length, 1); assert.equal(posts().length, 0); assertNoSave();
-    assert.equal(button("Close run controls").disabled, true);
+    assert.equal(button("Close run panel").disabled, true);
     assert.equal(dialog().getAttribute("aria-busy"), "true");
     engine.status = "INITIALIZED_BUT_WARNINGS"; await resolve(pending, stagedResult());
     assert.deepEqual(current.tabs.getTabSnapshot(), before);
@@ -480,7 +514,7 @@ test("dirty and untitled native workflows load without saving or changing their 
     assert.equal(button("Start").disabled, false, "the staged dirty snapshot is executable without a disk checkpoint");
     await act(async () => current.tabs.openTab({ ...workflow("new"), filePath: null }, { fit: false }));
     const untitled = current.tabs.getTabSnapshot(); native.load = () => stagedResult();
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.equal(stagedLoads().length, 2); assert.equal(stagedLoads().at(-1).args.currentFilePath, null);
     assert.deepEqual(current.tabs.getTabSnapshot(), untitled); assertNoSave();
     assert.equal(button("Start").disabled, false);
@@ -491,7 +525,7 @@ test("path-only parent declarations are included in staged Run without saving th
     await mount(); await configure();
     await act(async () => current.graph.setManualSlots([{ path: "/needed", type: "String", slotKind: "slot" }]));
     const before = current.tabs.getTabSnapshot();
-    await click("Load configuration and state machine");
+    await click("Load");
     assertNoSave(); assert.equal(posts().length, 0);
     assert.deepEqual(stagedLoads()[0].args.request.extraSlotDeclarations, [{ key: "", state: "", xpath: "/needed", inherited: false }]);
     assert.deepEqual(current.tabs.getTabSnapshot(), before); assert.equal(before.isModified, true);
@@ -502,13 +536,13 @@ test("native staging failures never save, choose another workflow or clear pendi
     await mount(); await configure(); await edit();
     const before = current.tabs.getTabSnapshot();
     native.load = () => { throw "Could not stage SCXML"; };
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /Could not stage SCXML/);
     assert.equal(posts().length, 0); assert.equal(current.tabs.getTabSnapshot().isModified, true);
     native.load = () => stagedResult({}, 500);
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /HTTP 500/);
-    assert.equal(posts().length, 0); assert.equal(button("Load configuration and state machine").disabled, false);
+    assert.equal(posts().length, 0); assert.equal(button("Load").disabled, false);
     assert.deepEqual(current.tabs.getTabSnapshot(), before); assertNoSave();
     assert.equal(nativeCalls.filter(({ command }) => command === "open_file").length, 0);
 });
@@ -528,7 +562,7 @@ test("uncertain replacement loads discard the prior owner even when the engine r
             engine.status = "INITIALIZED_BUT_WARNINGS";
             return stagedResult({ success: false, messages: ["Prior snapshot diagnostic"] });
         };
-        await click("Load configuration and state machine");
+        await click("Load");
         assert.equal(button("Start").disabled, false, "a valid issue-reporting result still confirms the ready owner");
         const confirmed = executionUpdates.findLast((update) => update.action === "load").workflow;
         assert.equal(confirmed.id, originId);
@@ -537,7 +571,7 @@ test("uncertain replacement loads discard the prior owner even when the engine r
         const pending = deferred(); native.load = () => pending.promise;
         deadline = new AbortController();
         const mark = executionUpdates.length;
-        await click("Load configuration and state machine");
+        await click("Load");
         assert.ok(executionUpdates.at(-1).workflow === null, "replacement send immediately invalidates the prior owner");
         assert.equal(dialog().textContent.includes("Prior snapshot diagnostic"), false);
         assert.equal(dialog().textContent.includes("Sent to the engine:"), false);
@@ -562,14 +596,14 @@ test("dirty and untitled browser documents require canonical desktop staging rat
     delete window.__TAURI_INTERNALS__;
     await mount({ ...workflow(), filePath: null }); await configure();
     assert.equal([...dialog().querySelectorAll("button")].some((element) => element.textContent === "Browse"), false);
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /desktop app/i);
     assertNoSave(); assert.equal(posts().length, 0);
     await act(async () => current.tabs.openTab(workflow("saved"), { fit: false }));
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.equal(posts().length, 1); assert.equal(JSON.parse(posts()[0].body).pathToTask, "/workflows/saved.xml");
     await edit(); const dirty = current.tabs.getTabSnapshot();
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /desktop app/i);
     assert.equal(posts().length, 1); assert.equal(stagedLoads().length, 0); assertNoSave();
     assert.deepEqual(current.tabs.getTabSnapshot(), dirty);
@@ -583,7 +617,7 @@ test("reported load errors and warnings do not block Start when the captured sna
         ["INITIALIZED", false], ["UNKNOWN", false], ["LOADING", false]]) {
         engine.status = "UNKNOWN"; await click("Refresh status");
         native.load = () => { engine.status = status; return stagedResult({ success, messages }); };
-        await click("Load configuration and state machine");
+        await click("Load");
         assert.deepEqual([...dialog().querySelectorAll("strong")].filter((element) =>
             ["Warnings", "Errors", "Load diagnostics"].includes(element.textContent)).map((element) => element.textContent),
         ["Warnings", "Errors", "Load diagnostics"]);
@@ -600,7 +634,7 @@ test("unlabelled diagnostics remain neutral and do not create generic error or w
         engine.status = "INITIALIZED";
         return stagedResult({ success: true, messages: ["WARNING: adapter is optional", "Error text with no verified fault format"] });
     };
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /Load diagnostics.*WARNING: adapter is optional.*Error text with no verified fault format/);
     assert.equal([...dialog().querySelectorAll("strong")].some((element) => ["Errors", "Warnings"].includes(element.textContent)), false);
     assert.equal(dialog().querySelector('[role="alert"]'), null); assert.equal(button("Start").disabled, false);
@@ -609,7 +643,7 @@ test("unlabelled diagnostics remain neutral and do not create generic error or w
 test("same-tick duplicate native load captures one request without opening a save or task picker", async () => {
     await mount({ ...workflow(), filePath: null }); await configure(); await edit();
     const pending = deferred(); native.load = () => pending.promise;
-    const load = button("Load configuration and state machine");
+    const load = button("Load");
     await act(async () => { load.click(); load.click(); });
     assert.equal(stagedLoads().length, 1); assert.equal(stagedLoads()[0].args.currentFilePath, null);
     assert.equal(nativeCalls.filter(({ command }) => command === "open_file").length, 0); assertNoSave();
@@ -619,13 +653,13 @@ test("same-tick duplicate native load captures one request without opening a sav
 
 test("cached configuration persists after picker/manual changes and a fresh StrictMode component mount", async () => {
     window.localStorage.setItem("bonsai.runtimeConfiguration", "/configs/cached.xml");
-    await mount(); assert.equal(field("Configuration path").value, "/configs/cached.xml");
+    await mount(); assert.equal(field("Configuration file").value, "/configs/cached.xml");
     native.open = () => "/configs/picked.xml"; await click("Browse");
     assert.equal(window.localStorage.getItem("bonsai.runtimeConfiguration"), "/configs/picked.xml");
-    await fill("Configuration path", " /configs/manual with spaces.xml ");
+    await fill("Configuration file", " /configs/manual with spaces.xml ");
     await act(async () => root.unmount()); mounted = false; root = createRoot(container);
-    await mount(); assert.equal(field("Configuration path").value, " /configs/manual with spaces.xml ");
-    await click("Load configuration and state machine");
+    await mount(); assert.equal(field("Configuration file").value, " /configs/manual with spaces.xml ");
+    await click("Load");
     assert.equal(stagedLoads()[0].args.pathToConfig, "/configs/manual with spaces.xml");
 });
 
@@ -633,8 +667,8 @@ test("blocked configuration cache does not prevent editing a path or staging a w
     const descriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
     Object.defineProperty(window, "localStorage", { configurable: true, get() { throw new Error("Storage blocked"); } });
     try {
-        await mount(); assert.equal(field("Configuration path").value, "");
-        await configure(); await click("Load configuration and state machine");
+        await mount(); assert.equal(field("Configuration file").value, "");
+        await configure(); await click("Load");
         assert.equal(stagedLoads().length, 1); assert.equal(button("Start").disabled, false);
         assert.equal(dialog().querySelector('[role="alert"]'), null);
     } finally {
@@ -663,13 +697,13 @@ test("nonmodal panel scopes keyboard propagation without preventing natural Tab 
     assert.equal(dialog().hasAttribute("data-editor-shortcut-scope"), true);
     for (const key of ["Tab", "Delete", "Backspace"]) {
         const event = new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
-        field("Configuration path").dispatchEvent(event);
+        field("Configuration file").dispatchEvent(event);
         assert.equal(event.defaultPrevented, false, `${key} must preserve normal input/focus behavior`);
     }
     const outside = document.createElement("input"); document.body.append(outside);
     try {
         outside.focus(); assert.ok(document.activeElement === outside, "the editor remains focusable outside the panel");
-        await click("Close run controls");
+        await click("Close run panel");
         assert.ok(document.activeElement === outside, "Close does not steal external editor focus");
         assert.ok(dialog() === null, "Close removes the panel");
     } finally {
@@ -687,7 +721,7 @@ test("panel clamps initial mobile placement and reopening after a closed-window 
         await mount(); assert.equal(dialog().style.left, "948px");
         await act(async () => window.happyDOM.setViewport({ width: 1024, height: 768 }));
         assert.equal(dialog().style.left, "536px");
-        await click("Close run controls");
+        await click("Close run panel");
         window.happyDOM.setViewport({ width: 390, height: 844 });
         await act(async () => current.setIsOpen(true));
         assert.equal(dialog().style.left, "8px");
@@ -739,7 +773,7 @@ test("title dragging prevents native selection and keeps the measured wrapped to
         assert.equal(parseFloat(panel.style.top) + chrome.offsetHeight + 34, window.innerHeight);
         await click("Expand run controls");
         assert.equal(panel.style.top, "584px");
-        const control = pointer("pointerdown", button("Close run controls"), 20, 20, 4);
+        const control = pointer("pointerdown", button("Close run panel"), 20, 20, 4);
         const secondary = pointer("pointerdown", title, 20, 20, 5, 2);
         assert.equal(control.defaultPrevented, false, "header buttons retain normal pointer behavior");
         assert.equal(secondary.defaultPrevented, false); assert.deepEqual(captures, [1, 2, 3]);
@@ -749,7 +783,7 @@ test("title dragging prevents native selection and keeps the measured wrapped to
 });
 
 test("Start publishes immutable ownership and background polling continues until Stop or a new load", async () => {
-    await mount(); await configure(); await edit(); await click("Load configuration and state machine");
+    await mount(); await configure(); await edit(); await click("Load");
     const loaded = current.tabs.getTabSnapshot();
     await click("Start");
     const started = executionUpdates.find((update) => update.following && update.workflow && update.snapshot?.status === "RUNNING");
@@ -758,7 +792,7 @@ test("Start publishes immutable ownership and background polling continues until
     assert.equal(started.workflow.fingerprint, loaded.fingerprint); assert.equal(started.followCamera, true);
     assert.deepEqual(started.workflow.nodes, loaded.nodes);
     assert.equal([...intervals.values()][0].milliseconds, 500);
-    await click("Close run controls"); assert.equal(dialog(), null); assert.equal(intervals.size, 1);
+    await click("Close run panel"); assert.equal(dialog(), null); assert.equal(intervals.size, 1);
     const before = statusReads().length; engine.currentStates = ["Done"]; await poll();
     assert.equal(statusReads().length, before + 1);
     assert.equal(executionUpdates.at(-1).workflow, started.workflow);
@@ -776,12 +810,12 @@ test("Start publishes immutable ownership and background polling continues until
     await poll(); assert.equal(executionUpdates.at(-1).event, null, "manual event attribution must not be replayed on every poll");
     await click("Stop"); assert.ok(executionUpdates.some((update) => update.workflow === null && update.snapshot === null && !update.following));
     assert.equal(executionUpdates.at(-1).following, false); assert.equal([...intervals.values()][0].milliseconds, 2000);
-    await click("Load configuration and state machine"); assert.equal(executionUpdates.at(-1).following, false);
-    await click("Close run controls"); assert.equal(intervals.size, 0);
+    await click("Load"); assert.equal(executionUpdates.at(-1).following, false);
+    await click("Close run panel"); assert.equal(intervals.size, 0);
 });
 
 test("delayed Start, Resume and status polling cannot restore a disabled Follow preference", async () => {
-    await mount(); await configure(); await click("Load configuration and state machine");
+    await mount(); await configure(); await click("Load");
     const follow = dialog().querySelectorAll('input[type="checkbox"]')[1];
     for (const action of ["start", "resume"]) {
         if (action === "resume") {
@@ -814,7 +848,7 @@ test("edits made while staging do not mutate the captured request and block star
     await mount(); await configure(); await edit();
     const before = current.tabs.getTabSnapshot();
     const pending = deferred(); native.load = () => pending.promise;
-    await click("Load configuration and state machine"); await edit("3");
+    await click("Load"); await edit("3");
     engine.status = "INITIALIZED"; await resolve(pending, stagedResult());
     assert.equal(posts().length, 0); assert.equal(current.tabs.getTabSnapshot().isModified, true);
     assert.deepEqual(stagedLoads()[0].args.request, buildRustEditorExportRequest(before)); assertNoSave();
@@ -828,7 +862,7 @@ test("load completion publishes tab snapshots captured before native staging", a
     await act(async () => current.tabs.switchTab(originId));
     const before = current.tabs.getTabsSnapshot();
     const pending = deferred(); native.load = () => pending.promise;
-    await click("Load configuration and state machine");
+    await click("Load");
     await act(async () => current.tabs.switchTab("child"));
     await edit("3");
     engine.status = "INITIALIZED"; await resolve(pending, stagedResult());
@@ -853,7 +887,7 @@ test("tab switch, switch-back and same-ID replacement during staging retain the 
         await edit(String(stagedLoads().length + 2));
         const before = current.tabs.getTabSnapshot();
         const pending = deferred(); native.load = () => pending.promise;
-        await click("Load configuration and state machine"); await change();
+        await click("Load"); await change();
         const selected = current.tabs.getTabSnapshot();
         engine.status = "INITIALIZED"; await resolve(pending, stagedResult());
         assert.equal(posts().length, 0);
@@ -867,7 +901,7 @@ test("tab switch, switch-back and same-ID replacement during staging retain the 
 });
 
 test("live snapshot fences Start after edits made in the same tick as the command", async () => {
-    await mount(); await configure(); await click("Load configuration and state machine");
+    await mount(); await configure(); await click("Load");
     const start = button("Start");
     await act(async () => {
         current.graph.setNodes((nodes) => nodes.map((node) => ({ ...node, data: { ...node.data, label: "Changed live" } })));
@@ -882,7 +916,7 @@ test("same-tick duplicate commands, submits, browsing, Close and Escape are sync
     engine.status = "RUNNING"; await mount();
     const pending = deferred();
     respond = (call) => call.url === "/api/bonsai/pause" ? pending.promise : engineResponse(call);
-    const pause = button("Pause"); const close = button("Close run controls"); const browse = button("Browse");
+    const pause = button("Pause"); const close = button("Close run panel"); const browse = button("Browse");
     await act(async () => {
         pause.click(); pause.click(); close.click(); browse.click();
         dialog().dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -905,11 +939,11 @@ test("same-tick duplicate commands, submits, browsing, Close and Escape are sync
 test("unsuccessful uninitialized load, malformed status and command HTTP failures are truthful and recoverable", async () => {
     await mount(); await configure();
     respond = (call) => call.url === "/api/bonsai/load" ? json({ success: false, messages: ["Configuration rejected"] }) : engineResponse(call);
-    await click("Load configuration and state machine");
+    await click("Load");
     assert.match(dialog().textContent, /Configuration rejected/);
     assert.match(dialog().textContent, /engine is not ready/);
     assert.equal(button("Start").disabled, true);
-    respond = engineResponse; await click("Load configuration and state machine");
+    respond = engineResponse; await click("Load");
     respond = (call) => call.url === "/api/status" ? new Response("BAD_STATUS") : engineResponse(call);
     await click("Refresh status");
     assert.match(dialog().textContent, /Could not get engine status.*recognized engine status.*last successful status/);
@@ -932,10 +966,10 @@ test("idle polling starts only while open, skips in-flight reads and commands, a
     respond = engineResponse; await poll(); assert.equal(statusReads().length, before + 2);
     await configure();
     const command = deferred(); native.load = () => command.promise;
-    await click("Load configuration and state machine"); const during = statusReads().length;
+    await click("Load"); const during = statusReads().length;
     await poll(); assert.equal(statusReads().length, during);
     await resolve(command, stagedResult());
-    await click("Close run controls");
+    await click("Close run panel");
     assert.equal(intervals.size, 0); const closed = calls.length; await poll(); assert.equal(calls.length, closed);
 });
 
@@ -944,7 +978,7 @@ test("StrictMode and close/reopen fence late status successes and failures even 
     await mount();
     assert.equal(stale.length, 2, "StrictMode replays the initial read effect");
     assert.equal(statusReads()[0].signal.aborted, true);
-    await click("Close run controls");
+    await click("Close run panel");
     assert.equal(statusReads()[1].signal.aborted, true);
     respond = engineResponse; await act(async () => current.setIsOpen(true));
     assert.equal(statusText(), "Not initialized");
@@ -960,23 +994,23 @@ test("manual configuration edits fence late native picker results and same-tick 
     const browse = button("Browse");
     await act(async () => { browse.click(); browse.click(); });
     assert.equal(nativeCalls.filter(({ command }) => command === "open_file").length, 1);
-    assert.equal(button("Load configuration and state machine").disabled, true);
-    await fill("Configuration path", "/configs/manual.xml");
+    assert.equal(button("Load").disabled, true);
+    await fill("Configuration file", "/configs/manual.xml");
     await resolve(pending, "/configs/stale.xml");
-    assert.equal(field("Configuration path").value, "/configs/manual.xml");
+    assert.equal(field("Configuration file").value, "/configs/manual.xml");
     assert.equal(button("Browse").disabled, false);
 });
 
 test("close/reopen ignores stale picker paths and string failures without blocking the new panel", async () => {
     await mount(); await configure();
     const pending = deferred(); native.open = () => pending.promise;
-    await click("Browse"); await click("Close run controls");
+    await click("Browse"); await click("Close run panel");
     await act(async () => current.setIsOpen(true));
     await resolve(pending, "/configs/stale.xml");
-    assert.equal(field("Configuration path").value, " /configs/bonsai.xml ");
+    assert.equal(field("Configuration file").value, " /configs/bonsai.xml ");
     assert.equal(dialog().querySelector('[role="alert"]'), null);
     const failure = deferred(); native.open = () => failure.promise;
-    await click("Browse"); await click("Close run controls");
+    await click("Browse"); await click("Close run panel");
     await act(async () => current.setIsOpen(true));
     await act(async () => failure.reject("stale permission error"));
     assert.equal(dialog().querySelector('[role="alert"]'), null);
@@ -1010,7 +1044,7 @@ test("unmount aborts reads/commands and fences pending native browse/staging con
         if (action === "status") respond = () => pending.promise;
         await mount();
         if (action === "browse") { native.open = () => pending.promise; await click("Browse"); }
-        if (action === "stage") { await configure(); await edit(); native.load = () => pending.promise; await click("Load configuration and state machine"); }
+        if (action === "stage") { await configure(); await edit(); native.load = () => pending.promise; await click("Load"); }
         if (action === "command") {
             respond = (call) => call.url === "/api/bonsai/pause" ? pending.promise : engineResponse(call);
             await click("Pause");

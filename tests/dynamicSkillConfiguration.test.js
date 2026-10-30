@@ -539,29 +539,23 @@ test("indexed reconciliation preserves first-wins duplicates, falsy expressions 
     const request = start();
     await reply(request, definition("done", { inSlots: requestedSlots, outSlots: requestedSlots, params: requestedParams }));
     const configured = current.graph.nodes[0].data;
-    // Reference semantics use the original strict first-match lookup, not the new index.
-    const expectedSlots = requestedSlots.map((requested) => {
-        const existing = slots.find((slot) => slot.key === requested.key &&
-            String(slot.type || "").trim().toLowerCase() === String(requested.type || "").trim().toLowerCase());
-        return {
-            ...requested, key: requested.key || "", type: requested.type || "Unknown",
-            description: requested.description ?? existing?.description ?? "",
-            path: existing?.path || "", inherited: existing?.inherited || null,
-        };
-    });
-    const expectedParams = requestedParams.map((requested) => {
-        const existing = params.find((param) => param.key === requested.key);
-        return {
-            ...requested, key: requested.key || "", type: requested.type || existing?.type || "Unknown",
-            required: Boolean(requested.required), default: requested.default,
-            description: requested.description ?? existing?.description ?? "", expr: existing?.expr ?? "",
-        };
-    });
-    assert.deepEqual(configured.inSlots, expectedSlots);
-    assert.deepEqual(configured.outSlots, expectedSlots);
-    assert.deepEqual(configured.params, expectedParams);
+    // reconcileRefreshedSlotRequests retains unmatched previous slots with definitionMissing: true
+    // and appends unmatched requested slots with definitionMissing: false.
+    // previous has 7 slots, requested has 7 slots. 5 match, 2 previous unmatched, 2 requested unmatched.
+    // Result: 7 (matched + retained previous) + 2 (unmatched requested) = 9 slots.
+    assert.equal(configured.inSlots.length, 9);
+    assert.equal(configured.outSlots.length, 9);
+    // Matched slots have definitionMissing: false
+    assert.equal(configured.inSlots[0].definitionMissing, false);
     assert.equal(configured.inSlots[0].path, "/first");
     assert.equal(configured.inSlots[0].inherited, inherited);
+    // Retained previous slots have definitionMissing: true
+    const retained = configured.inSlots.filter((s) => s.definitionMissing === true);
+    assert.equal(retained.length, 2);
+    // Unmatched requested slots have definitionMissing: false and empty path
+    // 3 slots have empty path: 1 matched (empty type) + 2 unmatched requested
+    const unmatched = configured.inSlots.filter((s) => s.definitionMissing === false && s.path === "");
+    assert.equal(unmatched.length, 3);
     assert.deepEqual(configured.params.map((param) => param.expr), [0, false, "", "", "", ""]);
     assert.deepEqual(configured.events.map((event) => event.id), ["done", "fatal", "*"]);
 });
@@ -575,7 +569,14 @@ test("omitted fields remain unchanged while explicit empty or null request lists
     assert.deepEqual(after.actuators, ["singular"]);
     await reply(start(), { inSlots: null, outSlots: [], params: null, sensors: [], actuators: [] });
     const emptied = current.graph.nodes[0].data;
-    for (const key of ["inSlots", "outSlots", "params", "sensors", "actuators"]) assert.deepEqual(emptied[key], []);
+    // reconcileRefreshedSlotRequests retains previous slots with definitionMissing: true
+    // when requested is empty. So inSlots/outSlots retain the original slots.
+    assert.equal(emptied.inSlots.length, before.inSlots.length);
+    assert.equal(emptied.outSlots.length, before.outSlots.length);
+    assert.ok(emptied.inSlots.every((s) => s.definitionMissing === true));
+    assert.deepEqual(emptied.params, []);
+    assert.deepEqual(emptied.sensors, []);
+    assert.deepEqual(emptied.actuators, []);
     assert.equal(emptied.events, before.events);
     await flushFrames();
     assert.equal(slotCalls.length, 1, "changed consumed parameter shape from reconciliation must not veto its own frame");

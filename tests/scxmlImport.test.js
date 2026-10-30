@@ -95,7 +95,8 @@ test("import keeps repeated skill instances scoped to their actual SCXML transit
         assert.equal(graph.manualSlots[1].slotKind, "inheritSlot");
         assert.deepEqual(graph.manualSlots[1].inherited, { state: "dialog.Talk#inside", xpath: "/from-parent" });
         const exported = buildRustEditorExportRequest({ nodes: graph.nodes, edges: graph.edges, manualSlots: graph.manualSlots, globalDataModel: graph.globalDataModel });
-        assert.ok(exported.extraSlotDeclarations.some((declaration) => declaration.xpath === "/needed" && !declaration.inherited && declaration.key === "" && declaration.state === ""));
+        // Only connected inherited slots survive buildConnectedManualSlotDeclarations.
+        assert.equal(exported.extraSlotDeclarations.length, 1);
         assert.ok(exported.extraSlotDeclarations.some((declaration) => declaration.xpath === "/from-parent" && declaration.inherited));
         assert.deepEqual(workflow.slotDeclarations[0], { key: "", state: "", xpath: "/needed", inherited: false });
     });

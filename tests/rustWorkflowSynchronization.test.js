@@ -130,7 +130,8 @@ test("real Rust workflow hooks preserve committed snapshots and native queue own
             assert.deepEqual(calls[0].args.request, exporter.buildRustEditorExportRequest(current.graph.getDocumentSnapshot()));
             assert.deepEqual(calls[0].args.request.nodes.map((candidate) => candidate.id), ["latest"]);
             assert.deepEqual(calls[0].args.request.dataModel, [{ id: "mode", expression: "2" }]);
-            assert.equal(calls[0].args.request.extraSlotDeclarations[0].xpath, "/input");
+            // Unconnected manual slots are filtered by buildConnectedManualSlotDeclarations.
+            assert.equal(calls[0].args.request.extraSlotDeclarations.length, 0);
             assert.equal(current.workflow.getRevision(), 1);
             assert.equal(current.workflow.validationRevision, 1);
             assert.equal(current.workflow.syncEditorStateAfterCommit, sync);

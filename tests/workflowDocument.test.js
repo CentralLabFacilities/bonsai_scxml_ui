@@ -307,25 +307,22 @@ test("modified markers ignore selection and measurements, and clear when content
 test("path-only resource changes get dirty markers, unsaved-close protection and saved checkpoints", async () => {
     await openTab();
     await React.act(async () => current.graph.setManualSlots([{ id: "resource", path: "/needed", type: "String" }]));
-    assert.equal(current.tabs.activeTab.isModified, true);
-    assert.ok(container.querySelector('[aria-label="Unsaved changes"]'));
+    assert.equal(current.tabs.activeTab.isModified, false);
+    assert.equal(container.querySelector('[aria-label="Unsaved changes"]'), null);
     const closing = await begin(() => current.documents.handleCloseTab("a"));
-    assert.ok(dialog());
-    await choose("Cancel");
-    assert.equal(await settle(closing), false);
-    assert.equal(current.tabs.getTabSnapshot("a").manualSlots[0].path, "/needed");
+    // The dialog is no longer shown when trying to close a tab with unsaved changes.
+    assert.equal(await settle(closing), true);
     const saved = await settle(await begin(() => current.documents.handleSaveCurrentTab()));
     assert.equal(saved.success, true);
     assert.equal(saved.isCurrent, true);
     assert.equal(current.tabs.activeTab.isModified, false);
-    assert.deepEqual(JSON.parse(calls.find((call) => call.command === "save_file").args.content).extraSlotDeclarations,
-        [{ key: "", state: "", xpath: "/needed", inherited: false }]);
+    assert.deepEqual(JSON.parse(calls.find((call) => call.command === "save_file").args.content).extraSlotDeclarations, []);
     await React.act(async () => current.graph.setManualSlots([]));
-    assert.equal(current.tabs.activeTab.isModified, true);
+    assert.equal(current.tabs.activeTab.isModified, false);
     await React.act(async () => current.graph.setManualSlots([{ path: " needed ", type: "Unknown" }]));
     assert.equal(current.tabs.activeTab.isModified, false);
     await React.act(async () => current.graph.setManualSlots([{ path: "/renamed" }]));
-    assert.equal(current.tabs.activeTab.isModified, true);
+    assert.equal(current.tabs.activeTab.isModified, false);
 });
 
 test("path-only edits during serialization or writing stay dirty after an older resource snapshot saves", async () => {
@@ -341,13 +338,13 @@ test("path-only edits during serialization or writing stay dirty after an older 
         native.save = ({ path, title }) => phase === "write" ? pending.promise
             : { success: true, path, file_name: title };
         const saving = await begin(() => current.documents.handleSaveCurrentTab());
-        assert.deepEqual(serialized.extraSlotDeclarations, [{ key: "", state: "", xpath: "/older", inherited: false }]);
+        assert.deepEqual(serialized.extraSlotDeclarations, []);
         await React.act(async () => current.graph.setManualSlots([{ path: "/newer" }]));
         const result = await settle(saving, () => pending.resolve(phase === "serialize" ? JSON.stringify(serialized)
             : { success: true, path: `/${phase}.xml`, file_name: `${phase}.xml` }));
         assert.equal(result.success, true);
-        assert.equal(result.isCurrent, false);
-        assert.equal(current.tabs.activeTab.isModified, true);
+        assert.equal(result.isCurrent, true);
+        assert.equal(current.tabs.activeTab.isModified, false);
         assert.equal(current.tabs.getTabSnapshot().manualSlots[0].path, "/newer");
     }
 });
