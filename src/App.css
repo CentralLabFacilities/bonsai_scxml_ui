@@ -5287,6 +5287,22 @@
     color: #b45309;
 }
 
+.node-configuration-error {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    margin: 4px 0;
+    font-size: 11px;
+    line-height: 1.3;
+    color: #991b1b;
+    background: #fee2e2;
+    border: 1px solid #fca5a5;
+    border-radius: 4px;
+    white-space: normal;
+    word-break: break-word;
+}
+
 /* Exactly one slot handle per skill slot; the access class supplies its direction. */
 .node-slot-row .skill-slot-handle.react-flow__handle-right {
     right: -4px;

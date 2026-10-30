@@ -209,6 +209,17 @@ export function useDynamicSkillConfiguration({
                 const currentNode = currentNodes.find((candidate) => candidate.id === nodeId);
                 if (!isCurrentRequest(request, currentNode)) return;
 
+                if (data.error) {
+                    setNodes(currentNodes.map((candidate) => {
+                        if (candidate.id !== nodeId) return candidate;
+                        return {
+                            ...candidate,
+                            data: { ...candidate.data, configurationError: data.error },
+                        };
+                    }));
+                    return false;
+                }
+
                 let nextEvents = currentNode.data?.events || [];
                 if (Array.isArray(data.events)) {
                     const linkedHandles = getDocumentSnapshot().edges
@@ -237,6 +248,7 @@ export function useDynamicSkillConfiguration({
                         ...candidate,
                         data: {
                             ...candidate.data,
+                            configurationError: null,
                             events: nextEvents,
                             sensors:
                                 data.sensors !== undefined

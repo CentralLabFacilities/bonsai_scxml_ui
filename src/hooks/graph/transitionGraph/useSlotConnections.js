@@ -3,9 +3,9 @@ import { MarkerType } from "@xyflow/react";
 import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
 import {
     SLOT_CONNECTION_COLORS,
-    getDefaultSlotPath,
     getSlotConnectionEndpoint,
     getSlotEdgeEndpoints,
+    getSlotPathForKey,
     getSlotPathFromNode,
     normalizeSlotPath,
     parseSlotConnectionHandle,
@@ -273,6 +273,7 @@ export const useSlotConnections = (options) => {
             origin: endpoint.origin, access: endpoint.access, slotType: endpoint.slotType,
             slotIndex: endpoint.slotIndex, inheritIndex: endpoint.inheritIndex,
             canCreate: endpoint.origin === "skill" && !reconnectRef.current,
+            previewPath: endpoint.origin === "skill" ? (endpoint.slot.inherited ? `/${normalizeSlotPath(endpoint.slot.inherited.xpath || endpoint.slot.path)}` : `/${getSlotPathForKey(model, endpoint.slot.type)}`) : null,
         };
         dragRef.current = { ...drag, identity: getIdentity(), signature: endpointSignature(endpoint), completed: false };
         setSlotConnectionDrag(drag);
@@ -289,7 +290,7 @@ export const useSlotConnections = (options) => {
         const consumer = getSlotConnectionEndpoint(drag.nodeId, drag.handleId, model);
         if (endpointSignature(consumer) !== drag.signature) return false;
         const inherited = consumer.slot.inherited;
-        const path = inherited && normalizeSlotPath(inherited.xpath || consumer.slot.path) || getDefaultSlotPath(model);
+        const path = inherited ? normalizeSlotPath(inherited.xpath || consumer.slot.path) : getSlotPathForKey(model, consumer.slot.type);
         if (model.slotNodes.some((node) => getSlotPathFromNode(node) === path)) {
             reportError(`/${path} already exists. Connect to its handle instead.`);
             return false;

@@ -589,6 +589,26 @@ export const getDefaultSlotPath = (model) => {
     return index === 1 ? "defaultslot" : `defaultslot${index}`;
 };
 
+export const getSlotPathForKey = (model, key) => {
+    const paths = new Set();
+    const add = (slot) => {
+        for (const path of [slot?.path, slot?.inherited?.xpath]) {
+            const normalized = normalizeSlotPath(path);
+            if (normalized) paths.add(normalized);
+        }
+    };
+    (model.nodes || []).forEach((node) => {
+        [...(node.data?.inSlots || []), ...(node.data?.outSlots || []), ...(node.data?.inheritedSlots || [])].forEach(add);
+    });
+    (model.manualSlots || []).forEach(add);
+    (model.slotNodes || []).forEach((node) => add(node.data));
+    const base = String(key).trim() || "defaultslot";
+    if (!paths.has(base)) return base;
+    let index = 2;
+    while (paths.has(`${base}${index}`)) index += 1;
+    return `${base}${index}`;
+};
+
 const slotMatchesPath = (slot, path) =>
     normalizeSlotPath(slot?.path) === path || normalizeSlotPath(slot?.inherited?.xpath) === path;
 

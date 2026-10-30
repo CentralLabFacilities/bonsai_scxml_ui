@@ -188,10 +188,15 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
 
                 if (response.ok) return cacheData(await response.json());
                 if (!hasParams) throw new Error(`Server returned ${response.status}`);
+                let errorMsg = `Server returned ${response.status}`;
+                try {
+                    const errBody = await response.json();
+                    if (errBody?.error) errorMsg = errBody.error;
+                } catch { /* non-JSON body */ }
                 console.warn(
-                    `Parameterized skill configuration failed for ${fullSkillName} (${response.status}); ` +
-                    (fallbackToBase ? "falling back to the base skill definition." : "keeping the existing slot configuration.")
+                    `Parameterized skill configuration failed for ${fullSkillName}: ${errorMsg}`
                 );
+                if (!fallbackToBase) return { error: errorMsg, status: response.status };
             } catch (error) {
                 if (!hasParams) {
                     console.error(`Error loading skill ${fullSkillName}:`, error);

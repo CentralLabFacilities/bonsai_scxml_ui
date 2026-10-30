@@ -226,11 +226,11 @@ test("deleting a slot clone remaps READ sources and WRITE targets; deleting edge
 });
 
 test("empty release creates a unique typed canonical slot at flow drop position and rebases fresh edits", async () => {
-    await seed(model([skill(), skill("other")], [{ path: "/defaultslot", type: "String" }], [slot("defaultslot")]));
+    await seed(model([skill(), skill("other")], [{ path: "/String", type: "String" }], [slot("String")]));
     const before = current.graph.getDocumentSnapshot();
     const fingerprint = getWorkflowDocumentFingerprint(before);
     await start();
-    assert.equal(current.connections.slotConnectionDrag.previewPath, "/defaultslot2");
+    assert.equal(current.connections.slotConnectionDrag.previewPath, "/String2");
     assert.equal(current.connections.slotConnectionDrag.origin, "skill");
     assert.equal(current.connections.slotConnectionDrag.slotIndex, 0);
     assert.equal(current.graph.getDocumentSnapshot(), before);
@@ -238,16 +238,16 @@ test("empty release creates a unique typed canonical slot at flow drop position 
     assert.equal(syncCalls.length, 0);
     await act(async () => {
         current.graph.setNodes((nodes) => nodes.map((node) => node.id === "other" ? { ...node, data: { ...node.data, label: "Live edit" } } : node));
-        current.graph.setManualSlots((slots) => [...slots, { path: "/defaultslot2", type: "String" }]);
+        current.graph.setManualSlots((slots) => [...slots, { path: "/String2", type: "String" }]);
         current.connections.handleConnectEnd(emptyRelease(), { isValid: false });
     });
     const snapshot = current.graph.getDocumentSnapshot();
-    assert.equal(snapshot.nodes[0].data.inSlots[0].path, "/defaultslot3");
+    assert.equal(snapshot.nodes[0].data.inSlots[0].path, "/String3");
     assert.equal(snapshot.nodes[1].data.label, "Live edit");
-    assert.deepEqual(snapshot.slotNodes.find((node) => node.id === "slot-defaultslot3").position, { x: 400, y: 370 });
+    assert.deepEqual(snapshot.slotNodes.find((node) => node.id === "slot-String3").position, { x: 400, y: 370 });
     assert.equal(snapshot.manualSlots.at(-1).type, "String");
     assert.equal(snapshot.manualSlots.at(-1).access, "read");
-    assert.equal(slotEdge().source, "slot-defaultslot3");
+    assert.equal(slotEdge().source, "slot-String3");
     assert.equal(current.connections.slotConnectionDrag, null);
     assert.equal(syncCalls.length, 1);
     assert.equal(syncCalls[0].snapshot.nodes, snapshot.nodes);
@@ -335,7 +335,7 @@ test("touchend can create, while valid connections and reconnect empty drops nev
     await act(async () => current.connections.handleReconnectEnd());
     await start("skill", "slot-skill-write-0");
     assert.equal(await release({ type: "touchend", changedTouches: [{ clientX: 610, clientY: 480 }], touches: [] }), true);
-    assert.deepEqual(current.graph.slotNodes.find((node) => node.id === "slot-defaultslot").position, { x: 510, y: 430 });
+    assert.deepEqual(current.graph.slotNodes.find((node) => node.id === "slot-String").position, { x: 510, y: 430 });
 });
 
 const inheritedFixture = () => {

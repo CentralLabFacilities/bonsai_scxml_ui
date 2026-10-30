@@ -546,6 +546,11 @@ function StateCard({ id, data, selected, submachine = false }) {
                     )}
                 </NodeTitle>
             )}
+            {data.configurationError && (
+                <div className="node-configuration-error" title={data.configurationError} role="alert">
+                    ⚠ {data.configurationError}
+                </div>
+            )}
             {hasEvents && (
                 <EventPorts
                     id={id}
