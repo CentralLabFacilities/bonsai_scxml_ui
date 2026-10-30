@@ -1,16 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef } from "react";
-import {
-    BaseEdge,
-    EdgeLabelRenderer,
-    Position,
-    getBezierPath,
-    useReactFlow,
-} from "@xyflow/react";
-import {
-    createSmartEdge,
-    getSmartEdge,
-    smartEdgePresets,
-} from "@tisoap/react-flow-smart-edge";
+import { BaseEdge, EdgeLabelRenderer, Position, getBezierPath, useReactFlow } from "@xyflow/react";
+import { createSmartEdge, getSmartEdge, smartEdgePresets } from "@tisoap/react-flow-smart-edge";
 
 // A presentation-only switch. It never changes semantic edge arrays/ids.
 // During an interaction it avoids A* route work for all displayed edges;
@@ -18,62 +8,94 @@ import {
 export const GestureRoutingContext = createContext(false);
 
 const AUTO_ROUTING_OPTIONS = {
-    routeOnlyWhenBlocked: true,
-    gridRatio: 4,
-    nodePadding: 32,
+  routeOnlyWhenBlocked: true,
+  gridRatio: 4,
+  nodePadding: 32,
 };
 
 const MANUAL_ROUTING_OPTIONS = {
-    ...smartEdgePresets.simplebezier,
-    routeOnlyWhenBlocked: false,
-    gridRatio: 4,
-    nodePadding: 32,
+  ...smartEdgePresets.simplebezier,
+  routeOnlyWhenBlocked: false,
+  gridRatio: 4,
+  nodePadding: 32,
 };
 
-const AutoSmartTransitionEdge = createSmartEdge(
-    "bezier",
-    AUTO_ROUTING_OPTIONS
-);
+const AutoSmartTransitionEdge = createSmartEdge("bezier", AUTO_ROUTING_OPTIONS);
 
-const ForcedSmartTransitionEdge = createSmartEdge(
-    "bezier",
-    {
-        ...AUTO_ROUTING_OPTIONS,
-        routeOnlyWhenBlocked: false,
-    }
-);
+const ForcedSmartTransitionEdge = createSmartEdge("bezier", {
+  ...AUTO_ROUTING_OPTIONS,
+  routeOnlyWhenBlocked: false,
+});
 
 /** Compact, interactive SCXML annotations anchored at the transition midpoint. */
 function TransitionAnnotationBadges({ data, x, y, hasLabel = false, selected = false }) {
-    if (data?.boundaryInternalEdge || data?.compoundInternalEdge ||
-        data?.parallelInternalEdge || data?.compoundInitialEdge || data?.parallelEntryEdge) return null;
-    const condition = String(data?.cond || "").trim();
-    const assignments = Array.isArray(data?.assignments)
-        ? data.assignments.filter((assignment) => assignment?.location)
-        : data?.assign?.location ? [data.assign] : [];
-    if (!condition && !assignments.length) return null;
-    return (
-        <EdgeLabelRenderer>
-            <div className={`editor-transition-annotations nodrag nopan ${data?.annotationContextVisible || selected ? "editor-transition-annotation-context-visible" : ""}`}
-                style={{ position: "absolute", transform: `translate(-50%, -50%) translate(${x}px, ${y + (hasLabel ? 18 : 0)}px)`, pointerEvents: "all" }}
-                onPointerDown={(event) => event.stopPropagation()}>
-                {condition && <button type="button" className="editor-transition-annotation" title={`Condition: ${condition}`}
-                    aria-label={`Edit transition condition: ${condition}`}
-                    onMouseEnter={(event) => data?.onHoverTransitionBadge?.(true, event)}
-                    onMouseLeave={(event) => data?.onHoverTransitionBadge?.(false, event)}
-                    onFocus={(event) => data?.onHoverTransitionBadge?.(true, event)}
-                    onBlur={(event) => data?.onHoverTransitionBadge?.(false, event)}
-                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); data?.onOpenTransitionBadge?.("condition"); }}>c</button>}
-                {assignments.length > 0 && <button type="button" className="editor-transition-annotation" title={assignments.map((assignment) => `${assignment.location} = ${assignment.expr ?? ""}`).join("\n")}
-                    aria-label="Edit transition assignments"
-                    onMouseEnter={(event) => data?.onHoverTransitionBadge?.(true, event)}
-                    onMouseLeave={(event) => data?.onHoverTransitionBadge?.(false, event)}
-                    onFocus={(event) => data?.onHoverTransitionBadge?.(true, event)}
-                    onBlur={(event) => data?.onHoverTransitionBadge?.(false, event)}
-                    onClick={(event) => { event.preventDefault(); event.stopPropagation(); data?.onOpenTransitionBadge?.("assignment"); }}>a</button>}
-            </div>
-        </EdgeLabelRenderer>
-    );
+  if (
+    data?.boundaryInternalEdge ||
+    data?.compoundInternalEdge ||
+    data?.parallelInternalEdge ||
+    data?.compoundInitialEdge ||
+    data?.parallelEntryEdge
+  )
+    return null;
+  const condition = String(data?.cond || "").trim();
+  const assignments = Array.isArray(data?.assignments)
+    ? data.assignments.filter((assignment) => assignment?.location)
+    : data?.assign?.location
+      ? [data.assign]
+      : [];
+  if (!condition && !assignments.length) return null;
+  return (
+    <EdgeLabelRenderer>
+      <div
+        className={`editor-transition-annotations nodrag nopan ${data?.annotationContextVisible || selected ? "editor-transition-annotation-context-visible" : ""}`}
+        style={{
+          position: "absolute",
+          transform: `translate(-50%, -50%) translate(${x}px, ${y + (hasLabel ? 18 : 0)}px)`,
+          pointerEvents: "all",
+        }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        {condition && (
+          <button
+            type="button"
+            className="editor-transition-annotation"
+            title={`Condition: ${condition}`}
+            aria-label={`Edit transition condition: ${condition}`}
+            onMouseEnter={(event) => data?.onHoverTransitionBadge?.(true, event)}
+            onMouseLeave={(event) => data?.onHoverTransitionBadge?.(false, event)}
+            onFocus={(event) => data?.onHoverTransitionBadge?.(true, event)}
+            onBlur={(event) => data?.onHoverTransitionBadge?.(false, event)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              data?.onOpenTransitionBadge?.("condition");
+            }}
+          >
+            c
+          </button>
+        )}
+        {assignments.length > 0 && (
+          <button
+            type="button"
+            className="editor-transition-annotation"
+            title={assignments.map((assignment) => `${assignment.location} = ${assignment.expr ?? ""}`).join("\n")}
+            aria-label="Edit transition assignments"
+            onMouseEnter={(event) => data?.onHoverTransitionBadge?.(true, event)}
+            onMouseLeave={(event) => data?.onHoverTransitionBadge?.(false, event)}
+            onFocus={(event) => data?.onHoverTransitionBadge?.(true, event)}
+            onBlur={(event) => data?.onHoverTransitionBadge?.(false, event)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              data?.onOpenTransitionBadge?.("assignment");
+            }}
+          >
+            a
+          </button>
+        )}
+      </div>
+    </EdgeLabelRenderer>
+  );
 }
 
 const CONTROL_POINT_SIZE = 14;
@@ -81,985 +103,692 @@ const ADD_POINT_SIZE = 18;
 const EMPTY_ARRAY = Object.freeze([]);
 
 const distanceSquared = (a, b) => {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return dx * dx + dy * dy;
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy;
 };
 
 const pointToSegmentDistanceSquared = (point, start, end) => {
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const lengthSquared = dx * dx + dy * dy;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
 
-    if (lengthSquared === 0) {
-        return distanceSquared(point, start);
-    }
+  if (lengthSquared === 0) {
+    return distanceSquared(point, start);
+  }
 
-    const t = Math.max(
-        0,
-        Math.min(
-            1,
-            ((point.x - start.x) * dx +
-                (point.y - start.y) * dy) /
-                lengthSquared
-        )
-    );
+  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
 
-    return distanceSquared(point, {
-        x: start.x + t * dx,
-        y: start.y + t * dy,
-    });
+  return distanceSquared(point, {
+    x: start.x + t * dx,
+    y: start.y + t * dy,
+  });
 };
 
 const getFacingPosition = (from, to) => {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
 
-    if (Math.abs(dx) >= Math.abs(dy)) {
-        return dx >= 0
-            ? Position.Right
-            : Position.Left;
-    }
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? Position.Right : Position.Left;
+  }
 
-    return dy >= 0
-        ? Position.Bottom
-        : Position.Top;
+  return dy >= 0 ? Position.Bottom : Position.Top;
 };
 
 const stripMoveCommand = (path) =>
-    String(path || "")
-        .replace(
-            /^\s*M\s*-?\d*\.?\d+(?:e[-+]?\d+)?[ ,]+-?\d*\.?\d+(?:e[-+]?\d+)?\s*/i,
-            ""
-        )
-        .trim();
+  String(path || "")
+    .replace(/^\s*M\s*-?\d*\.?\d+(?:e[-+]?\d+)?[ ,]+-?\d*\.?\d+(?:e[-+]?\d+)?\s*/i, "")
+    .trim();
 
-const getFallbackSegmentPath = (
-    from,
-    to,
-    sourcePosition,
-    targetPosition
-) => {
-    const [path] = getBezierPath({
-        sourceX: from.x,
-        sourceY: from.y,
-        targetX: to.x,
-        targetY: to.y,
-        sourcePosition:
-            sourcePosition ||
-            getFacingPosition(from, to),
-        targetPosition:
-            targetPosition ||
-            getFacingPosition(to, from),
-        curvature: 0.42,
-    });
+const getFallbackSegmentPath = (from, to, sourcePosition, targetPosition) => {
+  const [path] = getBezierPath({
+    sourceX: from.x,
+    sourceY: from.y,
+    targetX: to.x,
+    targetY: to.y,
+    sourcePosition: sourcePosition || getFacingPosition(from, to),
+    targetPosition: targetPosition || getFacingPosition(to, from),
+    curvature: 0.42,
+  });
 
-    return path;
+  return path;
 };
 
-const getRoutedSegmentPath = (
-    from,
-    to,
+const getRoutedSegmentPath = (from, to, nodes, sourcePosition = null, targetPosition = null) => {
+  const resolvedSourcePosition = sourcePosition || getFacingPosition(from, to);
+
+  const resolvedTargetPosition = targetPosition || getFacingPosition(to, from);
+
+  const result = getSmartEdge({
+    sourceX: from.x,
+    sourceY: from.y,
+    targetX: to.x,
+    targetY: to.y,
+    sourcePosition: resolvedSourcePosition,
+    targetPosition: resolvedTargetPosition,
     nodes,
-    sourcePosition = null,
-    targetPosition = null
-) => {
-    const resolvedSourcePosition =
-        sourcePosition ||
-        getFacingPosition(from, to);
+    options: MANUAL_ROUTING_OPTIONS,
+  });
 
-    const resolvedTargetPosition =
-        targetPosition ||
-        getFacingPosition(to, from);
+  if (result instanceof Error || !result?.svgPathString) {
+    return getFallbackSegmentPath(from, to, resolvedSourcePosition, resolvedTargetPosition);
+  }
 
-    const result = getSmartEdge({
-        sourceX: from.x,
-        sourceY: from.y,
-        targetX: to.x,
-        targetY: to.y,
-        sourcePosition: resolvedSourcePosition,
-        targetPosition: resolvedTargetPosition,
-        nodes,
-        options: MANUAL_ROUTING_OPTIONS,
-    });
+  return result.svgPathString;
+};
 
-    if (
-        result instanceof Error ||
-        !result?.svgPathString
-    ) {
-        return getFallbackSegmentPath(
-            from,
-            to,
-            resolvedSourcePosition,
-            resolvedTargetPosition
+const resolveControlPoint = (point, source, target) => {
+  const anchor = point.anchor === "target" ? target : source;
+
+  return {
+    id: point.id,
+    x: anchor.x + Number(point.dx || 0),
+    y: anchor.y + Number(point.dy || 0),
+    anchor: point.anchor === "target" ? "target" : "source",
+  };
+};
+
+const makeRelativeControlPoint = (absolutePoint, source, target, id) => {
+  const sourceDistance = distanceSquared(absolutePoint, source);
+
+  const targetDistance = distanceSquared(absolutePoint, target);
+
+  const anchorName = sourceDistance <= targetDistance ? "source" : "target";
+
+  const anchor = anchorName === "source" ? source : target;
+
+  return {
+    id,
+    anchor: anchorName,
+    dx: absolutePoint.x - anchor.x,
+    dy: absolutePoint.y - anchor.y,
+  };
+};
+
+function ManualEditableTransitionEdge(props) {
+  const {
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    markerEnd,
+    markerStart,
+    style,
+    selected,
+    data,
+    label,
+    labelStyle,
+    interactionWidth = 20,
+  } = props;
+
+  // Obstacle geometry is injected from useEditorDisplay as a stable cache.
+  // Do not subscribe every manual edge to React Flow's complete node store:
+  // selection/hover-only node updates would otherwise wake every manual edge.
+  const lightweightGestureRouting = useContext(GestureRoutingContext);
+  const routingNodes = Array.isArray(data?.routingNodes) ? data.routingNodes : EMPTY_ARRAY;
+
+  const { setEdges, screenToFlowPosition } = useReactFlow();
+
+  const activeDragRef = useRef(null);
+  const dragCleanupRef = useRef(null);
+
+  useEffect(
+    () => () => {
+      dragCleanupRef.current?.();
+    },
+    [],
+  );
+
+  const sourcePoint = useMemo(
+    () => ({
+      x: sourceX,
+      y: sourceY,
+    }),
+    [sourceX, sourceY],
+  );
+
+  const targetPoint = useMemo(
+    () => ({
+      x: targetX,
+      y: targetY,
+    }),
+    [targetX, targetY],
+  );
+
+  const storedControlPoints = Array.isArray(data?.controlPoints) ? data.controlPoints : EMPTY_ARRAY;
+
+  /*
+   * Keep a synchronous reference to the latest points.
+   *
+   * This matters during pointer dragging because multiple
+   * pointermove events can occur before React has rendered
+   * the previous state update.
+   */
+  const controlPointsRef = useRef(storedControlPoints);
+
+  useEffect(() => {
+    controlPointsRef.current = storedControlPoints;
+  }, [storedControlPoints]);
+
+  const controlPoints = useMemo(
+    () => storedControlPoints.map((point) => resolveControlPoint(point, sourcePoint, targetPoint)),
+    [storedControlPoints, sourcePoint, targetPoint],
+  );
+
+  const updateControlPoints = useCallback(
+    (updater) => {
+      const nextPoints = updater(controlPointsRef.current);
+
+      controlPointsRef.current = nextPoints;
+
+      /*
+       * Persist into the actual owner.
+       *
+       * App.jsx supplies this callback for both:
+       * - normal transition edges
+       * - slot edges
+       */
+      data?.onControlPointsChange?.(nextPoints);
+
+      /*
+       * Also update React Flow immediately so
+       * dragging remains visually responsive.
+       */
+      setEdges((currentEdges) =>
+        currentEdges.map((edge) =>
+          edge.id === id
+            ? {
+                ...edge,
+                data: {
+                  ...(edge.data || {}),
+                  controlPoints: nextPoints,
+                },
+              }
+            : edge,
+        ),
+      );
+    },
+    [data, id, setEdges],
+  );
+
+  const addControlPoint = useCallback(
+    (segmentIndex, absolutePoint) => {
+      const pointId = `cp-${crypto.randomUUID()}`;
+
+      const relativePoint = makeRelativeControlPoint(absolutePoint, sourcePoint, targetPoint, pointId);
+
+      updateControlPoints((currentPoints) => {
+        const next = [...currentPoints];
+
+        next.splice(segmentIndex, 0, relativePoint);
+
+        return next;
+      });
+    },
+    [sourcePoint, targetPoint, updateControlPoints],
+  );
+
+  const removeControlPoint = useCallback(
+    (pointId) => {
+      updateControlPoints((currentPoints) => currentPoints.filter((point) => point.id !== pointId));
+    },
+    [updateControlPoints],
+  );
+
+  const beginControlPointDrag = useCallback(
+    (event, pointId) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      dragCleanupRef.current?.();
+      const pointerId = event.pointerId;
+      const captureTarget = event.currentTarget;
+      captureTarget.setPointerCapture?.(pointerId);
+
+      activeDragRef.current = pointId;
+
+      const handlePointerMove = (moveEvent) => {
+        if (moveEvent.pointerId !== pointerId || activeDragRef.current !== pointId) {
+          return;
+        }
+
+        const flowPoint = screenToFlowPosition({
+          x: moveEvent.clientX,
+          y: moveEvent.clientY,
+        });
+
+        const relativePoint = makeRelativeControlPoint(flowPoint, sourcePoint, targetPoint, pointId);
+
+        updateControlPoints((currentPoints) =>
+          currentPoints.map((point) => (point.id === pointId ? relativePoint : point)),
         );
+      };
+
+      const finishDrag = (endEvent) => {
+        if (endEvent && endEvent.pointerId !== pointerId) return;
+        activeDragRef.current = null;
+        dragCleanupRef.current = null;
+
+        window.removeEventListener("pointermove", handlePointerMove);
+
+        window.removeEventListener("pointerup", finishDrag);
+        window.removeEventListener("pointercancel", finishDrag);
+        captureTarget.removeEventListener("lostpointercapture", finishDrag);
+        if (captureTarget.hasPointerCapture?.(pointerId)) {
+          captureTarget.releasePointerCapture?.(pointerId);
+        }
+      };
+
+      dragCleanupRef.current = finishDrag;
+
+      window.addEventListener("pointermove", handlePointerMove);
+
+      window.addEventListener("pointerup", finishDrag);
+      window.addEventListener("pointercancel", finishDrag);
+      captureTarget.addEventListener("lostpointercapture", finishDrag);
+    },
+    [screenToFlowPosition, sourcePoint, targetPoint, updateControlPoints],
+  );
+
+  const routePoints = useMemo(
+    () => [sourcePoint, ...controlPoints, targetPoint],
+    [sourcePoint, controlPoints, targetPoint],
+  );
+
+  const handledInsertRequestRef = useRef(null);
+
+  useEffect(() => {
+    const request = data?.controlPointInsertRequest;
+    if (!request?.requestId || request.edgeId !== id || handledInsertRequestRef.current === request.requestId) {
+      return;
     }
 
-    return result.svgPathString;
-};
+    const expectedControlPointCount = Number(request.expectedControlPointCount ?? controlPointsRef.current.length);
+    if (controlPointsRef.current.length !== expectedControlPointCount) {
+      handledInsertRequestRef.current = request.requestId;
+      return;
+    }
 
-const resolveControlPoint = (
-    point,
-    source,
-    target
-) => {
-    const anchor =
-        point.anchor === "target"
-            ? target
-            : source;
+    const absolutePoint = request.flowPosition;
+    if (!absolutePoint || !Number.isFinite(Number(absolutePoint.x)) || !Number.isFinite(Number(absolutePoint.y))) {
+      return;
+    }
 
-    return {
-        id: point.id,
-        x: anchor.x + Number(point.dx || 0),
-        y: anchor.y + Number(point.dy || 0),
-        anchor:
-            point.anchor === "target"
-                ? "target"
-                : "source",
-    };
-};
+    handledInsertRequestRef.current = request.requestId;
 
-const makeRelativeControlPoint = (
-    absolutePoint,
-    source,
-    target,
-    id
-) => {
-    const sourceDistance = distanceSquared(
-        absolutePoint,
-        source
-    );
+    let nearestSegmentIndex = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
 
-    const targetDistance = distanceSquared(
-        absolutePoint,
-        target
-    );
+    for (let index = 0; index < routePoints.length - 1; index += 1) {
+      const segmentDistance = pointToSegmentDistanceSquared(absolutePoint, routePoints[index], routePoints[index + 1]);
 
-    const anchorName =
-        sourceDistance <= targetDistance
-            ? "source"
-            : "target";
+      if (segmentDistance < nearestDistance) {
+        nearestDistance = segmentDistance;
+        nearestSegmentIndex = index;
+      }
+    }
 
-    const anchor =
-        anchorName === "source"
-            ? source
-            : target;
+    addControlPoint(nearestSegmentIndex, absolutePoint);
+  }, [addControlPoint, data?.controlPointInsertRequest, id, routePoints]);
 
-    return {
-        id,
-        anchor: anchorName,
-        dx: absolutePoint.x - anchor.x,
-        dy: absolutePoint.y - anchor.y,
-    };
-};
+  // Manual smart routing is expensive. Cache the complete geometry result so
+  // display-only updates (selection, hover, edge visibility, animation/style)
+  // do not rerun A* routing for every segment. The common routingNodes array
+  // changes only when actual node/slot geometry changes.
+  const { combinedPath, segmentMidpoints, labelPoint } = useMemo(() => {
+    const routedSegments = [];
 
-function ManualEditableTransitionEdge(
-    props
-) {
-    const {
-        id,
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-        sourcePosition,
-        targetPosition,
-        markerEnd,
-        markerStart,
-        style,
-        selected,
-        data,
-        label,
-        labelStyle,
-        interactionWidth = 20,
-    } = props;
+    for (let index = 0; index < routePoints.length - 1; index += 1) {
+      const isFirstSegment = index === 0;
+      const isLastSegment = index === routePoints.length - 2;
 
-    // Obstacle geometry is injected from useEditorDisplay as a stable cache.
-    // Do not subscribe every manual edge to React Flow's complete node store:
-    // selection/hover-only node updates would otherwise wake every manual edge.
-    const lightweightGestureRouting = useContext(GestureRoutingContext);
-    const routingNodes = Array.isArray(data?.routingNodes)
-        ? data.routingNodes
-        : EMPTY_ARRAY;
-
-    const {
-        setEdges,
-        screenToFlowPosition,
-    } = useReactFlow();
-
-    const activeDragRef = useRef(null);
-    const dragCleanupRef = useRef(null);
-
-    useEffect(() => () => {
-        dragCleanupRef.current?.();
-    }, []);
-
-    const sourcePoint = useMemo(
-        () => ({
-            x: sourceX,
-            y: sourceY,
-        }),
-        [sourceX, sourceY]
-    );
-
-    const targetPoint = useMemo(
-        () => ({
-            x: targetX,
-            y: targetY,
-        }),
-        [targetX, targetY]
-    );
-
-    const storedControlPoints =
-        Array.isArray(data?.controlPoints)
-            ? data.controlPoints
-            : EMPTY_ARRAY;
-
-    /*
-     * Keep a synchronous reference to the latest points.
-     *
-     * This matters during pointer dragging because multiple
-     * pointermove events can occur before React has rendered
-     * the previous state update.
-     */
-    const controlPointsRef = useRef(
-        storedControlPoints
-    );
-
-    useEffect(() => {
-        controlPointsRef.current =
-            storedControlPoints;
-    }, [storedControlPoints]);
-
-    const controlPoints = useMemo(
-        () =>
-            storedControlPoints.map(
-                (point) =>
-                    resolveControlPoint(
-                        point,
-                        sourcePoint,
-                        targetPoint
-                    )
+      routedSegments.push(
+        lightweightGestureRouting
+          ? getFallbackSegmentPath(
+              routePoints[index],
+              routePoints[index + 1],
+              isFirstSegment ? sourcePosition : null,
+              isLastSegment ? targetPosition : null,
+            )
+          : getRoutedSegmentPath(
+              routePoints[index],
+              routePoints[index + 1],
+              routingNodes,
+              isFirstSegment ? sourcePosition : null,
+              isLastSegment ? targetPosition : null,
             ),
-        [
-            storedControlPoints,
-            sourcePoint,
-            targetPoint,
-        ]
-    );
+      );
+    }
 
-    const updateControlPoints = useCallback(
-        (updater) => {
-            const nextPoints = updater(
-                controlPointsRef.current
-            );
+    const nextCombinedPath = routedSegments
+      .map((segmentPath, index) => {
+        if (index === 0) return segmentPath;
+        const remainder = stripMoveCommand(segmentPath);
+        return remainder || segmentPath;
+      })
+      .join(" ");
 
-            controlPointsRef.current =
-                nextPoints;
+    const nextSegmentMidpoints = routePoints.slice(0, -1).map((point, index) => {
+      const nextPoint = routePoints[index + 1];
+      return {
+        x: (point.x + nextPoint.x) / 2,
+        y: (point.y + nextPoint.y) / 2,
+        insertIndex: index,
+      };
+    });
 
-            /*
-             * Persist into the actual owner.
-             *
-             * App.jsx supplies this callback for both:
-             * - normal transition edges
-             * - slot edges
-             */
-            data?.onControlPointsChange?.(
-                nextPoints
-            );
+    const nextLabelPoint = nextSegmentMidpoints[Math.floor(nextSegmentMidpoints.length / 2)] || {
+      x: (sourceX + targetX) / 2,
+      y: (sourceY + targetY) / 2,
+    };
 
-            /*
-             * Also update React Flow immediately so
-             * dragging remains visually responsive.
-             */
-            setEdges((currentEdges) =>
-                currentEdges.map((edge) =>
-                    edge.id === id
-                        ? {
-                            ...edge,
-                            data: {
-                                ...(edge.data ||
-                                    {}),
-                                controlPoints:
-                                nextPoints,
-                            },
-                        }
-                        : edge
-                )
-            );
-        },
-        [
-            data,
-            id,
-            setEdges,
-        ]
-    );
+    return {
+      combinedPath: nextCombinedPath,
+      segmentMidpoints: nextSegmentMidpoints,
+      labelPoint: nextLabelPoint,
+    };
+  }, [
+    routePoints,
+    routingNodes,
+    lightweightGestureRouting,
+    sourcePosition,
+    targetPosition,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+  ]);
 
-    const addControlPoint = useCallback(
-        (
-            segmentIndex,
-            absolutePoint
-        ) => {
-            const pointId =
-                `cp-${crypto.randomUUID()}`;
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={combinedPath}
+        markerStart={markerStart}
+        markerEnd={markerEnd}
+        style={style}
+        interactionWidth={interactionWidth}
+      />
 
-            const relativePoint =
-                makeRelativeControlPoint(
-                    absolutePoint,
-                    sourcePoint,
-                    targetPoint,
-                    pointId
-                );
+      <TransitionAnnotationBadges
+        data={data}
+        selected={selected}
+        x={labelPoint.x}
+        y={labelPoint.y}
+        hasLabel={Boolean(label)}
+      />
+      <EdgeLabelRenderer>
+        {label && (
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) ` + `translate(${labelPoint.x}px, ${labelPoint.y}px)`,
+              pointerEvents: "none",
+              fontSize: 11,
+              color: "#cbd5e1",
+              ...(labelStyle || {}),
+            }}
+          >
+            {label}
+          </div>
+        )}
 
-            updateControlPoints(
-                (currentPoints) => {
-                    const next = [
-                        ...currentPoints,
-                    ];
-
-                    next.splice(
-                        segmentIndex,
-                        0,
-                        relativePoint
-                    );
-
-                    return next;
-                }
-            );
-        },
-        [
-            sourcePoint,
-            targetPoint,
-            updateControlPoints,
-        ]
-    );
-
-    const removeControlPoint =
-        useCallback(
-            (pointId) => {
-                updateControlPoints(
-                    (currentPoints) =>
-                        currentPoints.filter(
-                            (point) =>
-                                point.id !==
-                                pointId
-                        )
-                );
-            },
-            [updateControlPoints]
-        );
-
-    const beginControlPointDrag =
-        useCallback(
-            (event, pointId) => {
-                if (event.button !== 0) {
-                    return;
-                }
-
+        {selected &&
+          segmentMidpoints.map((midpoint) => (
+            <button
+              key={`add-${midpoint.insertIndex}`}
+              type="button"
+              className="nodrag nopan"
+              title="Add control point"
+              onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
 
-                dragCleanupRef.current?.();
-                const pointerId = event.pointerId;
-                const captureTarget = event.currentTarget;
-                captureTarget.setPointerCapture?.(pointerId);
+                addControlPoint(midpoint.insertIndex, midpoint);
+              }}
+              style={{
+                position: "absolute",
+                transform: `translate(-50%, -50%) ` + `translate(${midpoint.x}px, ${midpoint.y}px)`,
+                width: ADD_POINT_SIZE,
+                height: ADD_POINT_SIZE,
+                padding: 0,
+                borderRadius: "999px",
+                border: "1px solid #64748b",
+                background: "#111827",
+                color: "#e2e8f0",
+                fontSize: 14,
+                lineHeight: 1,
+                cursor: "pointer",
+                pointerEvents: "all",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 1001,
+              }}
+            >
+              +
+            </button>
+          ))}
 
-                activeDragRef.current =
-                    pointId;
+        {selected &&
+          controlPoints.map((point) => (
+            <button
+              key={point.id}
+              type="button"
+              className="nodrag nopan"
+              title={`${
+                point.anchor === "source" ? "Source" : "Target"
+              }-relative control point. Drag to move, double-click to remove.`}
+              onContextMenu={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                data?.onControlPointContextMenu?.(event, point.id);
+              }}
+              onPointerDown={(event) => beginControlPointDrag(event, point.id)}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
 
-                const handlePointerMove = (
-                    moveEvent
-                ) => {
-                    if (
-                        moveEvent.pointerId !== pointerId ||
-                        activeDragRef.current !==
-                        pointId
-                    ) {
-                        return;
-                    }
-
-                    const flowPoint =
-                        screenToFlowPosition({
-                            x:
-                            moveEvent.clientX,
-                            y:
-                            moveEvent.clientY,
-                        });
-
-                    const relativePoint =
-                        makeRelativeControlPoint(
-                            flowPoint,
-                            sourcePoint,
-                            targetPoint,
-                            pointId
-                        );
-
-                    updateControlPoints(
-                        (currentPoints) =>
-                            currentPoints.map(
-                                (point) =>
-                                    point.id ===
-                                    pointId
-                                        ? relativePoint
-                                        : point
-                            )
-                    );
-                };
-
-                const finishDrag =
-                    (endEvent) => {
-                        if (endEvent && endEvent.pointerId !== pointerId) return;
-                        activeDragRef.current =
-                            null;
-                        dragCleanupRef.current = null;
-
-                        window.removeEventListener(
-                            "pointermove",
-                            handlePointerMove
-                        );
-
-                        window.removeEventListener(
-                            "pointerup",
-                            finishDrag
-                        );
-                        window.removeEventListener("pointercancel", finishDrag);
-                        captureTarget.removeEventListener("lostpointercapture", finishDrag);
-                        if (captureTarget.hasPointerCapture?.(pointerId)) {
-                            captureTarget.releasePointerCapture?.(pointerId);
-                        }
-                    };
-
-                dragCleanupRef.current = finishDrag;
-
-                window.addEventListener(
-                    "pointermove",
-                    handlePointerMove
-                );
-
-                window.addEventListener(
-                    "pointerup",
-                    finishDrag
-                );
-                window.addEventListener("pointercancel", finishDrag);
-                captureTarget.addEventListener("lostpointercapture", finishDrag);
-            },
-            [
-                screenToFlowPosition,
-                sourcePoint,
-                targetPoint,
-                updateControlPoints,
-            ]
-        );
-
-    const routePoints = useMemo(
-        () => [sourcePoint, ...controlPoints, targetPoint],
-        [sourcePoint, controlPoints, targetPoint]
-    );
-
-    const handledInsertRequestRef = useRef(null);
-
-    useEffect(() => {
-        const request = data?.controlPointInsertRequest;
-        if (
-            !request?.requestId ||
-            request.edgeId !== id ||
-            handledInsertRequestRef.current === request.requestId
-        ) {
-            return;
-        }
-
-        const expectedControlPointCount = Number(
-            request.expectedControlPointCount ?? controlPointsRef.current.length
-        );
-        if (controlPointsRef.current.length !== expectedControlPointCount) {
-            handledInsertRequestRef.current = request.requestId;
-            return;
-        }
-
-        const absolutePoint = request.flowPosition;
-        if (
-            !absolutePoint ||
-            !Number.isFinite(Number(absolutePoint.x)) ||
-            !Number.isFinite(Number(absolutePoint.y))
-        ) {
-            return;
-        }
-
-        handledInsertRequestRef.current = request.requestId;
-
-        let nearestSegmentIndex = 0;
-        let nearestDistance = Number.POSITIVE_INFINITY;
-
-        for (let index = 0; index < routePoints.length - 1; index += 1) {
-            const segmentDistance = pointToSegmentDistanceSquared(
-                absolutePoint,
-                routePoints[index],
-                routePoints[index + 1]
-            );
-
-            if (segmentDistance < nearestDistance) {
-                nearestDistance = segmentDistance;
-                nearestSegmentIndex = index;
-            }
-        }
-
-        addControlPoint(nearestSegmentIndex, absolutePoint);
-    }, [
-        addControlPoint,
-        data?.controlPointInsertRequest,
-        id,
-        routePoints,
-    ]);
-
-    // Manual smart routing is expensive. Cache the complete geometry result so
-    // display-only updates (selection, hover, edge visibility, animation/style)
-    // do not rerun A* routing for every segment. The common routingNodes array
-    // changes only when actual node/slot geometry changes.
-    const { combinedPath, segmentMidpoints, labelPoint } = useMemo(() => {
-        const routedSegments = [];
-
-        for (
-            let index = 0;
-            index < routePoints.length - 1;
-            index += 1
-        ) {
-            const isFirstSegment = index === 0;
-            const isLastSegment = index === routePoints.length - 2;
-
-            routedSegments.push(
-                lightweightGestureRouting
-                    ? getFallbackSegmentPath(
-                        routePoints[index],
-                        routePoints[index + 1],
-                        isFirstSegment ? sourcePosition : null,
-                        isLastSegment ? targetPosition : null
-                    )
-                    : getRoutedSegmentPath(
-                        routePoints[index],
-                        routePoints[index + 1],
-                        routingNodes,
-                        isFirstSegment ? sourcePosition : null,
-                        isLastSegment ? targetPosition : null
-                    )
-            );
-        }
-
-        const nextCombinedPath = routedSegments
-            .map((segmentPath, index) => {
-                if (index === 0) return segmentPath;
-                const remainder = stripMoveCommand(segmentPath);
-                return remainder || segmentPath;
-            })
-            .join(" ");
-
-        const nextSegmentMidpoints = routePoints
-            .slice(0, -1)
-            .map((point, index) => {
-                const nextPoint = routePoints[index + 1];
-                return {
-                    x: (point.x + nextPoint.x) / 2,
-                    y: (point.y + nextPoint.y) / 2,
-                    insertIndex: index,
-                };
-            });
-
-        const nextLabelPoint =
-            nextSegmentMidpoints[
-                Math.floor(nextSegmentMidpoints.length / 2)
-            ] || {
-                x: (sourceX + targetX) / 2,
-                y: (sourceY + targetY) / 2,
-            };
-
-        return {
-            combinedPath: nextCombinedPath,
-            segmentMidpoints: nextSegmentMidpoints,
-            labelPoint: nextLabelPoint,
-        };
-    }, [
-        routePoints,
-        routingNodes,
-        lightweightGestureRouting,
-        sourcePosition,
-        targetPosition,
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-    ]);
-
-    return (
-        <>
-            <BaseEdge
-                id={id}
-                path={combinedPath}
-                markerStart={markerStart}
-                markerEnd={markerEnd}
-                style={style}
-                interactionWidth={
-                    interactionWidth
-                }
+                removeControlPoint(point.id);
+              }}
+              style={{
+                position: "absolute",
+                transform: `translate(-50%, -50%) ` + `translate(${point.x}px, ${point.y}px)`,
+                width: CONTROL_POINT_SIZE,
+                height: CONTROL_POINT_SIZE,
+                padding: 0,
+                borderRadius: "999px",
+                border: "2px solid #e2e8f0",
+                background: point.anchor === "source" ? "#2563eb" : "#7c3aed",
+                boxShadow: "0 0 0 2px rgba(15, 23, 42, 0.9)",
+                cursor: "grab",
+                pointerEvents: "all",
+                zIndex: 1002,
+              }}
             />
-
-            <TransitionAnnotationBadges data={data} selected={selected} x={labelPoint.x} y={labelPoint.y} hasLabel={Boolean(label)} />
-            <EdgeLabelRenderer>
-                {label && (
-                    <div
-                        style={{
-                            position:
-                                "absolute",
-                            transform:
-                                `translate(-50%, -50%) ` +
-                                `translate(${labelPoint.x}px, ${labelPoint.y}px)`,
-                            pointerEvents:
-                                "none",
-                            fontSize: 11,
-                            color:
-                                "#cbd5e1",
-                            ...(labelStyle ||
-                                {}),
-                        }}
-                    >
-                        {label}
-                    </div>
-                )}
-
-                {selected &&
-                    segmentMidpoints.map(
-                        (midpoint) => (
-                            <button
-                                key={`add-${midpoint.insertIndex}`}
-                                type="button"
-                                className="nodrag nopan"
-                                title="Add control point"
-                                onClick={(
-                                    event
-                                ) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-
-                                    addControlPoint(
-                                        midpoint.insertIndex,
-                                        midpoint
-                                    );
-                                }}
-                                style={{
-                                    position:
-                                        "absolute",
-                                    transform:
-                                        `translate(-50%, -50%) ` +
-                                        `translate(${midpoint.x}px, ${midpoint.y}px)`,
-                                    width:
-                                    ADD_POINT_SIZE,
-                                    height:
-                                    ADD_POINT_SIZE,
-                                    padding:
-                                        0,
-                                    borderRadius:
-                                        "999px",
-                                    border:
-                                        "1px solid #64748b",
-                                    background:
-                                        "#111827",
-                                    color:
-                                        "#e2e8f0",
-                                    fontSize:
-                                        14,
-                                    lineHeight:
-                                        1,
-                                    cursor:
-                                        "pointer",
-                                    pointerEvents:
-                                        "all",
-                                    display:
-                                        "flex",
-                                    alignItems:
-                                        "center",
-                                    justifyContent:
-                                        "center",
-                                    zIndex:
-                                        1001,
-                                }}
-                            >
-                                +
-                            </button>
-                        )
-                    )}
-
-                {selected &&
-                    controlPoints.map(
-                        (point) => (
-                            <button
-                                key={
-                                    point.id
-                                }
-                                type="button"
-                                className="nodrag nopan"
-                                title={`${
-                                    point.anchor ===
-                                    "source"
-                                        ? "Source"
-                                        : "Target"
-                                }-relative control point. Drag to move, double-click to remove.`}
-                                onContextMenu={(event) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                    data?.onControlPointContextMenu?.(
-                                        event,
-                                        point.id
-                                    );
-                                }}
-                                onPointerDown={(
-                                    event
-                                ) =>
-                                    beginControlPointDrag(
-                                        event,
-                                        point.id
-                                    )
-                                }
-                                onClick={(
-                                    event
-                                ) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-                                }}
-                                onDoubleClick={(
-                                    event
-                                ) => {
-                                    event.preventDefault();
-                                    event.stopPropagation();
-
-                                    removeControlPoint(
-                                        point.id
-                                    );
-                                }}
-                                style={{
-                                    position:
-                                        "absolute",
-                                    transform:
-                                        `translate(-50%, -50%) ` +
-                                        `translate(${point.x}px, ${point.y}px)`,
-                                    width:
-                                    CONTROL_POINT_SIZE,
-                                    height:
-                                    CONTROL_POINT_SIZE,
-                                    padding:
-                                        0,
-                                    borderRadius:
-                                        "999px",
-                                    border:
-                                        "2px solid #e2e8f0",
-                                    background:
-                                        point.anchor ===
-                                        "source"
-                                            ? "#2563eb"
-                                            : "#7c3aed",
-                                    boxShadow:
-                                        "0 0 0 2px rgba(15, 23, 42, 0.9)",
-                                    cursor:
-                                        "grab",
-                                    pointerEvents:
-                                        "all",
-                                    zIndex:
-                                        1002,
-                                }}
-                            />
-                        )
-                    )}
-            </EdgeLabelRenderer>
-        </>
-    );
+          ))}
+      </EdgeLabelRenderer>
+    </>
+  );
 }
 
 function LightweightBackgroundTransitionEdge(props) {
-    const {
-        id,
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-        sourcePosition,
-        targetPosition,
-        markerEnd,
-        markerStart,
-        style,
-        interactionWidth = 12,
-    } = props;
+  const {
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    markerEnd,
+    markerStart,
+    style,
+    interactionWidth = 12,
+  } = props;
 
-    // Large workflows keep the full semantic transition graph in memory, but
-    // background edges do not need obstacle-aware A* routing or a label DOM
-    // node. A focused/selected edge swaps to the normal smart-routed variant.
-    const [path] = getBezierPath({
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-        sourcePosition,
-        targetPosition,
-        curvature: 0.38,
-    });
+  // Large workflows keep the full semantic transition graph in memory, but
+  // background edges do not need obstacle-aware A* routing or a label DOM
+  // node. A focused/selected edge swaps to the normal smart-routed variant.
+  const [path] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+    curvature: 0.38,
+  });
 
-    return (
-        <BaseEdge
-            id={id}
-            path={path}
-            markerStart={markerStart}
-            markerEnd={markerEnd}
-            style={style}
-            interactionWidth={interactionWidth}
-        />
-    );
+  return (
+    <BaseEdge
+      id={id}
+      path={path}
+      markerStart={markerStart}
+      markerEnd={markerEnd}
+      style={style}
+      interactionWidth={interactionWidth}
+    />
+  );
 }
 
 function AutoEditableTransitionEdge(props) {
-    const {
-        id,
-        sourceX,
-        sourceY,
-        targetX,
-        targetY,
-        selected,
-        data,
-    } = props;
-    const { setEdges } = useReactFlow();
-    const lightweightGestureRouting = useContext(GestureRoutingContext);
+  const { id, sourceX, sourceY, targetX, targetY, selected, data } = props;
+  const { setEdges } = useReactFlow();
+  const lightweightGestureRouting = useContext(GestureRoutingContext);
 
-    const addInitialControlPointAt = useCallback(
-        (absolutePoint) => {
-            const sourcePoint = { x: sourceX, y: sourceY };
-            const targetPoint = { x: targetX, y: targetY };
-            const nextPoints = [
-                makeRelativeControlPoint(
-                    absolutePoint,
-                    sourcePoint,
-                    targetPoint,
-                    `cp-${crypto.randomUUID()}`
-                ),
-            ];
+  const addInitialControlPointAt = useCallback(
+    (absolutePoint) => {
+      const sourcePoint = { x: sourceX, y: sourceY };
+      const targetPoint = { x: targetX, y: targetY };
+      const nextPoints = [
+        makeRelativeControlPoint(absolutePoint, sourcePoint, targetPoint, `cp-${crypto.randomUUID()}`),
+      ];
 
-            data?.onControlPointsChange?.(nextPoints);
-            setEdges((currentEdges) =>
-                currentEdges.map((edge) =>
-                    edge.id === id
-                        ? {
-                              ...edge,
-                              data: {
-                                  ...(edge.data || {}),
-                                  controlPoints: nextPoints,
-                              },
-                          }
-                        : edge
-                )
-            );
-        },
-        [data, id, setEdges, sourceX, sourceY, targetX, targetY]
-    );
+      data?.onControlPointsChange?.(nextPoints);
+      setEdges((currentEdges) =>
+        currentEdges.map((edge) =>
+          edge.id === id
+            ? {
+                ...edge,
+                data: {
+                  ...(edge.data || {}),
+                  controlPoints: nextPoints,
+                },
+              }
+            : edge,
+        ),
+      );
+    },
+    [data, id, setEdges, sourceX, sourceY, targetX, targetY],
+  );
 
-    const addInitialControlPoint = useCallback(
-        (event) => {
-            event.preventDefault();
-            event.stopPropagation();
+  const addInitialControlPoint = useCallback(
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
 
-            addInitialControlPointAt({
-                x: (sourceX + targetX) / 2,
-                y: (sourceY + targetY) / 2,
-            });
-        },
-        [addInitialControlPointAt, sourceX, sourceY, targetX, targetY]
-    );
+      addInitialControlPointAt({
+        x: (sourceX + targetX) / 2,
+        y: (sourceY + targetY) / 2,
+      });
+    },
+    [addInitialControlPointAt, sourceX, sourceY, targetX, targetY],
+  );
 
-    const handledInsertRequestRef = useRef(null);
+  const handledInsertRequestRef = useRef(null);
 
-    useEffect(() => {
-        const request = data?.controlPointInsertRequest;
-        if (
-            !request?.requestId ||
-            request.edgeId !== id ||
-            handledInsertRequestRef.current === request.requestId
-        ) {
-            return;
-        }
+  useEffect(() => {
+    const request = data?.controlPointInsertRequest;
+    if (!request?.requestId || request.edgeId !== id || handledInsertRequestRef.current === request.requestId) {
+      return;
+    }
 
-        const absolutePoint = request.flowPosition;
-        if (
-            !absolutePoint ||
-            !Number.isFinite(Number(absolutePoint.x)) ||
-            !Number.isFinite(Number(absolutePoint.y))
-        ) {
-            return;
-        }
+    const absolutePoint = request.flowPosition;
+    if (!absolutePoint || !Number.isFinite(Number(absolutePoint.x)) || !Number.isFinite(Number(absolutePoint.y))) {
+      return;
+    }
 
-        handledInsertRequestRef.current = request.requestId;
-        addInitialControlPointAt(absolutePoint);
-    }, [
-        addInitialControlPointAt,
-        data?.controlPointInsertRequest,
-        id,
-    ]);
+    handledInsertRequestRef.current = request.requestId;
+    addInitialControlPointAt(absolutePoint);
+  }, [addInitialControlPointAt, data?.controlPointInsertRequest, id]);
 
-    const SmartTransitionEdge = data?.forceObstacleRouting
-        ? ForcedSmartTransitionEdge
-        : AutoSmartTransitionEdge;
-    const useLightweightBackgroundRouting = Boolean(
-        lightweightGestureRouting || (data?.lightweightBackgroundRouting && !selected)
-    );
+  const SmartTransitionEdge = data?.forceObstacleRouting ? ForcedSmartTransitionEdge : AutoSmartTransitionEdge;
+  const useLightweightBackgroundRouting = Boolean(
+    lightweightGestureRouting || (data?.lightweightBackgroundRouting && !selected),
+  );
 
-    return (
-        <>
-            {useLightweightBackgroundRouting ? (
-                <LightweightBackgroundTransitionEdge {...props} />
-            ) : (
-                <SmartTransitionEdge {...props} />
-            )}
+  return (
+    <>
+      {useLightweightBackgroundRouting ? (
+        <LightweightBackgroundTransitionEdge {...props} />
+      ) : (
+        <SmartTransitionEdge {...props} />
+      )}
 
-            <TransitionAnnotationBadges data={data} selected={selected} x={(sourceX + targetX) / 2} y={(sourceY + targetY) / 2} hasLabel={Boolean(props.label)} />
-            {selected && (
-                <EdgeLabelRenderer>
-                    <button
-                        type="button"
-                        className="nodrag nopan"
-                        title="Add control point"
-                        onClick={addInitialControlPoint}
-                        style={{
-                            position: "absolute",
-                            transform:
-                                `translate(-50%, -50%) ` +
-                                `translate(${(sourceX + targetX) / 2}px, ${(sourceY + targetY) / 2}px)`,
-                            width: ADD_POINT_SIZE,
-                            height: ADD_POINT_SIZE,
-                            padding: 0,
-                            borderRadius: "999px",
-                            border: "1px solid #64748b",
-                            background: "#111827",
-                            color: "#e2e8f0",
-                            fontSize: 14,
-                            lineHeight: 1,
-                            cursor: "pointer",
-                            pointerEvents: "all",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            zIndex: 1001,
-                        }}
-                    >
-                        +
-                    </button>
-                </EdgeLabelRenderer>
-            )}
-        </>
-    );
+      <TransitionAnnotationBadges
+        data={data}
+        selected={selected}
+        x={(sourceX + targetX) / 2}
+        y={(sourceY + targetY) / 2}
+        hasLabel={Boolean(props.label)}
+      />
+      {selected && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            className="nodrag nopan"
+            title="Add control point"
+            onClick={addInitialControlPoint}
+            style={{
+              position: "absolute",
+              transform:
+                `translate(-50%, -50%) ` + `translate(${(sourceX + targetX) / 2}px, ${(sourceY + targetY) / 2}px)`,
+              width: ADD_POINT_SIZE,
+              height: ADD_POINT_SIZE,
+              padding: 0,
+              borderRadius: "999px",
+              border: "1px solid #64748b",
+              background: "#111827",
+              color: "#e2e8f0",
+              fontSize: 14,
+              lineHeight: 1,
+              cursor: "pointer",
+              pointerEvents: "all",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 1001,
+            }}
+          >
+            +
+          </button>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  );
 }
 
 function EditableTransitionEdge(props) {
-    const hasManualControlPoints =
-        Array.isArray(props.data?.controlPoints) &&
-        props.data.controlPoints.length > 0;
+  const hasManualControlPoints = Array.isArray(props.data?.controlPoints) && props.data.controlPoints.length > 0;
 
-    return hasManualControlPoints ? (
-        <ManualEditableTransitionEdge {...props} />
-    ) : (
-        <AutoEditableTransitionEdge {...props} />
-    );
+  return hasManualControlPoints ? (
+    <ManualEditableTransitionEdge {...props} />
+  ) : (
+    <AutoEditableTransitionEdge {...props} />
+  );
 }
 
 // React Flow can re-render its edge layer for unrelated UI state changes.

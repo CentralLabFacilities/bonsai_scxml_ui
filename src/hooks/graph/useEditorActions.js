@@ -9,74 +9,72 @@ import { useEditorDataModelActions } from "./editorActions/useEditorDataModelAct
  * separate modules, while callers get one stable interface.
  */
 export function useEditorActions(options) {
-    const nodeActions = useEditorNodeActions({
-        nodes: options.nodes,
-        slotNodes: options.slotNodes,
-        setNodes: options.setNodes,
-        setSlotNodes: options.setSlotNodes,
-        setSelectedNodeId: options.setSelectedNodeId,
-        setRightPanelTab: options.setRightPanelTab,
-        setActiveTab: options.setActiveTab,
-        applyWorkflowCommand: options.applyWorkflowCommand,
-        syncInsertedParallelLaneStateAfterCommit:
-            options.syncInsertedParallelLaneStateAfterCommit,
-        syncStateEditorPositions: options.syncStateEditorPositions,
-        updateNodeInternals: options.updateNodeInternals,
-    });
+  const nodeActions = useEditorNodeActions({
+    nodes: options.nodes,
+    slotNodes: options.slotNodes,
+    setNodes: options.setNodes,
+    setSlotNodes: options.setSlotNodes,
+    setSelectedNodeId: options.setSelectedNodeId,
+    setRightPanelTab: options.setRightPanelTab,
+    setActiveTab: options.setActiveTab,
+    applyWorkflowCommand: options.applyWorkflowCommand,
+    syncInsertedParallelLaneStateAfterCommit: options.syncInsertedParallelLaneStateAfterCommit,
+    syncStateEditorPositions: options.syncStateEditorPositions,
+    updateNodeInternals: options.updateNodeInternals,
+  });
 
-    const slotActions = useEditorSlotActions({
-        nodes: options.nodes,
-        slotNodes: options.slotNodes,
-        manualSlots: options.manualSlots,
-        setNodes: options.setNodes,
-        setManualSlots: options.setManualSlots,
-        setSelectedNodeId: options.setSelectedNodeId,
-        checkSlotConnection: options.checkSlotConnection,
-        syncSlotsAfterCommit: options.syncSlotsAfterCommit,
-    });
+  const slotActions = useEditorSlotActions({
+    nodes: options.nodes,
+    slotNodes: options.slotNodes,
+    manualSlots: options.manualSlots,
+    setNodes: options.setNodes,
+    setManualSlots: options.setManualSlots,
+    setSelectedNodeId: options.setSelectedNodeId,
+    checkSlotConnection: options.checkSlotConnection,
+    syncSlotsAfterCommit: options.syncSlotsAfterCommit,
+  });
 
+  const nodeDataActions = useEditorNodeDataActions({
+    nodes: options.nodes,
+    getDocumentSnapshot: options.getDocumentSnapshot,
+    getActiveDocumentIdentity: options.getActiveDocumentIdentity,
+    valueVariables: options.valueVariables,
+    setNodes: options.setNodes,
+    setEdges: options.setEdges,
+    checkSlotConnection: options.checkSlotConnection,
+    applyWorkflowCommand: options.applyWorkflowCommand,
+    syncStateEditorPositions: options.syncStateEditorPositions,
+    syncStateParameters: options.syncStateParameters,
+    syncSlotsAfterCommit: options.syncSlotsAfterCommit,
+    updateEventsFromParameters: options.updateEventsFromParameters,
+  });
 
-    const nodeDataActions = useEditorNodeDataActions({
-        nodes: options.nodes,
-        getDocumentSnapshot: options.getDocumentSnapshot,
-        getActiveDocumentIdentity: options.getActiveDocumentIdentity,
-        valueVariables: options.valueVariables,
-        setNodes: options.setNodes,
-        setEdges: options.setEdges,
-        checkSlotConnection: options.checkSlotConnection,
-        applyWorkflowCommand: options.applyWorkflowCommand,
-        syncStateEditorPositions: options.syncStateEditorPositions,
-        syncStateParameters: options.syncStateParameters,
-        syncSlotsAfterCommit: options.syncSlotsAfterCommit,
-        updateEventsFromParameters: options.updateEventsFromParameters,
-    });
+  const dataModelActions = useEditorDataModelActions({
+    globalDataModel: options.globalDataModel,
+    setGlobalDataModel: options.setGlobalDataModel,
+    applyWorkflowCommand: options.applyWorkflowCommand,
+  });
 
-    const dataModelActions = useEditorDataModelActions({
-        globalDataModel: options.globalDataModel,
-        setGlobalDataModel: options.setGlobalDataModel,
-        applyWorkflowCommand: options.applyWorkflowCommand,
-    });
+  const transitionActions = useEditorTransitionActions({
+    nodes: options.nodes,
+    edges: options.edges,
+    slotNodes: options.slotNodes,
+    selectedNodeId: options.selectedNodeId,
+    setNodes: options.setNodes,
+    setEdges: options.setEdges,
+    setSlotNodes: options.setSlotNodes,
+    setSlotEdges: options.setSlotEdges,
+    setSelectedNodeId: options.setSelectedNodeId,
+    updateNodeInternals: options.updateNodeInternals,
+    syncTransitionsForSource: options.syncTransitionsForSource,
+    setControlPointInsertRequest: options.setControlPointInsertRequest,
+  });
 
-    const transitionActions = useEditorTransitionActions({
-        nodes: options.nodes,
-        edges: options.edges,
-        slotNodes: options.slotNodes,
-        selectedNodeId: options.selectedNodeId,
-        setNodes: options.setNodes,
-        setEdges: options.setEdges,
-        setSlotNodes: options.setSlotNodes,
-        setSlotEdges: options.setSlotEdges,
-        setSelectedNodeId: options.setSelectedNodeId,
-        updateNodeInternals: options.updateNodeInternals,
-        syncTransitionsForSource: options.syncTransitionsForSource,
-        setControlPointInsertRequest: options.setControlPointInsertRequest,
-    });
-
-    return {
-        ...nodeActions,
-        ...slotActions,
-        ...nodeDataActions,
-        ...dataModelActions,
-        ...transitionActions,
-    };
+  return {
+    ...nodeActions,
+    ...slotActions,
+    ...nodeDataActions,
+    ...dataModelActions,
+    ...transitionActions,
+  };
 }

@@ -6,8 +6,8 @@ export const toScxmlConditionOperator = (operator) => TO_WRITTEN[operator] || op
 export const toEditorConditionOperator = (operator) => TO_SYMBOL[operator] || operator;
 export const isEqualityOnlyConditionType = (type) => type === "String" || type === "Boolean";
 export function allowedConditionOperator(type, operator) {
-    const symbol = toEditorConditionOperator(operator);
-    return isEqualityOnlyConditionType(type) && symbol !== "==" && symbol !== "!=" ? "==" : symbol;
+  const symbol = toEditorConditionOperator(operator);
+  return isEqualityOnlyConditionType(type) && symbol !== "==" && symbol !== "!=" ? "==" : symbol;
 }
 
 /** Match a single comparison, preserving unstructured/legacy JEXL expressions. */

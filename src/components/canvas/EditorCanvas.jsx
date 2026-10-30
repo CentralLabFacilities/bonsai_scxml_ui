@@ -1,12 +1,6 @@
 import { memo, Profiler, useCallback, useEffect, useMemo, useRef } from "react";
 import { FiTrash2 } from "react-icons/fi";
-import {
-    Background,
-    ConnectionMode,
-    Controls,
-    ReactFlow,
-    getBezierPath,
-} from "@xyflow/react";
+import { Background, ConnectionMode, Controls, ReactFlow, getBezierPath } from "@xyflow/react";
 import { SmartEdgeProvider } from "@tisoap/react-flow-smart-edge";
 import { SkillNode, SubMachineNode, StateReferenceNode } from "../graph/StateNodes.jsx";
 import SlotNode from "../graph/SlotNode";
@@ -17,771 +11,792 @@ import ModeSwitcher from "./ModeSwitcher.jsx";
 import CanvasViewportPlacement from "./CanvasViewportPlacement.jsx";
 import RuntimeLogPlayer from "../inspector/RuntimeLogPlayer.jsx";
 import CanvasContextMenu from "./CanvasContextMenu.jsx";
-import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
+import {
+  getSlotConnectionColor,
+  getTransitionHighlightColor,
+  parseSlotConnectionHandle,
+} from "../../utils/editorGraph";
 import { boundaryTransitionKeys, buildBoundaryHelperIndex } from "../../utils/transitionBoundaryHighlight.js";
 import { traceResizeSnapshot } from "../../utils/resizeDiagnostics.js";
 import {
-    beginDragTrace, endDragTrace, traceDragCanvasGraph,
-    traceDragEvent, traceDragMovement, traceDragReactCommit,
-    traceDragComputation,
+  beginDragTrace,
+  endDragTrace,
+  traceDragCanvasGraph,
+  traceDragEvent,
+  traceDragMovement,
+  traceDragReactCommit,
+  traceDragComputation,
 } from "../../utils/dragDiagnostics.js";
 
-function EditorConnectionLine({ fromHandle, fromX, fromY, toX, toY, fromPosition, toPosition,
-    connectionLineStyle }) {
-    const handle = parseSlotConnectionHandle(fromHandle?.id);
-    const reverse = handle && (handle.origin === "slot" ? handle.access === "write" : handle.access === "read");
-    const [path] = getBezierPath(reverse
-        ? { sourceX: toX, sourceY: toY, sourcePosition: toPosition, targetX: fromX, targetY: fromY, targetPosition: fromPosition }
-        : { sourceX: fromX, sourceY: fromY, sourcePosition: fromPosition, targetX: toX, targetY: toY, targetPosition: toPosition });
-    const color = handle ? getSlotConnectionColor(handle.access, document.documentElement.hasAttribute("data-colorblind-mode")) : undefined;
-    return (
-        <g style={{ pointerEvents: "none" }}>
-            <path className="react-flow__connection-path" d={path} fill="none"
-                style={{ ...connectionLineStyle, ...(color ? { stroke: color, strokeWidth: 1.7, strokeDasharray: "5 5" } : {}) }} />
-        </g>
-    );
+function EditorConnectionLine({ fromHandle, fromX, fromY, toX, toY, fromPosition, toPosition, connectionLineStyle }) {
+  const handle = parseSlotConnectionHandle(fromHandle?.id);
+  const reverse = handle && (handle.origin === "slot" ? handle.access === "write" : handle.access === "read");
+  const [path] = getBezierPath(
+    reverse
+      ? {
+          sourceX: toX,
+          sourceY: toY,
+          sourcePosition: toPosition,
+          targetX: fromX,
+          targetY: fromY,
+          targetPosition: fromPosition,
+        }
+      : {
+          sourceX: fromX,
+          sourceY: fromY,
+          sourcePosition: fromPosition,
+          targetX: toX,
+          targetY: toY,
+          targetPosition: toPosition,
+        },
+  );
+  const color = handle
+    ? getSlotConnectionColor(handle.access, document.documentElement.hasAttribute("data-colorblind-mode"))
+    : undefined;
+  return (
+    <g style={{ pointerEvents: "none" }}>
+      <path
+        className="react-flow__connection-path"
+        d={path}
+        fill="none"
+        style={{
+          ...connectionLineStyle,
+          ...(color ? { stroke: color, strokeWidth: 1.7, strokeDasharray: "5 5" } : {}),
+        }}
+      />
+    </g>
+  );
 }
 
 const nodeTypes = {
-    custom: memo(SkillNode),
-    slot: memo(SlotNode),
-    submachine: memo(SubMachineNode),
-    parallel: memo(ParallelNode),
-    compound: memo(CompoundNode),
-    stateClone: memo(StateReferenceNode),
-    parallelLane: memo(ParallelLaneNode),
+  custom: memo(SkillNode),
+  slot: memo(SlotNode),
+  submachine: memo(SubMachineNode),
+  parallel: memo(ParallelNode),
+  compound: memo(CompoundNode),
+  stateClone: memo(StateReferenceNode),
+  parallelLane: memo(ParallelLaneNode),
 };
 
 const edgeTypes = {
-    smartTransition: EditableTransitionEdge,
+  smartTransition: EditableTransitionEdge,
 };
 
 const getHoverEdgeNodeIds = (edge) => {
-    const ids = [
-        edge?.source,
-        edge?.target,
-        edge?.data?.skillNodeId,
-        edge?.data?.slotNodeId,
-        edge?.data?.canonicalSlotNodeId,
-        edge?.data?.boundaryOriginalSource,
-        edge?.data?.boundaryOriginalTarget,
-        edge?.data?.compoundOriginalSource,
-        edge?.data?.compoundOriginalTarget,
-        edge?.data?.parallelOriginalSource,
-        edge?.data?.parallelOriginalTarget,
-    ];
+  const ids = [
+    edge?.source,
+    edge?.target,
+    edge?.data?.skillNodeId,
+    edge?.data?.slotNodeId,
+    edge?.data?.canonicalSlotNodeId,
+    edge?.data?.boundaryOriginalSource,
+    edge?.data?.boundaryOriginalTarget,
+    edge?.data?.compoundOriginalSource,
+    edge?.data?.compoundOriginalTarget,
+    edge?.data?.parallelOriginalSource,
+    edge?.data?.parallelOriginalTarget,
+  ];
 
-    if (Array.isArray(edge?.data?.boundaryOriginalSources)) {
-        edge.data.boundaryOriginalSources.forEach((source) => {
-            ids.push(source?.sourceId || source?.nodeId || source?.id);
-        });
-    }
+  if (Array.isArray(edge?.data?.boundaryOriginalSources)) {
+    edge.data.boundaryOriginalSources.forEach((source) => {
+      ids.push(source?.sourceId || source?.nodeId || source?.id);
+    });
+  }
 
-    return [...new Set(ids.filter(Boolean))];
+  return [...new Set(ids.filter(Boolean))];
 };
 
 const getHoverTransitionColor = (edge) => {
-    const semanticHandle =
-        edge?.data?.boundaryOriginalSourceHandle ||
-        edge?.data?.compoundOriginalSourceHandle ||
-        edge?.data?.parallelOriginalSourceHandle ||
-        edge?.sourceHandle ||
-        edge?.label;
-    return getTransitionHighlightColor(semanticHandle, document.documentElement.hasAttribute("data-colorblind-mode"));
+  const semanticHandle =
+    edge?.data?.boundaryOriginalSourceHandle ||
+    edge?.data?.compoundOriginalSourceHandle ||
+    edge?.data?.parallelOriginalSourceHandle ||
+    edge?.sourceHandle ||
+    edge?.label;
+  return getTransitionHighlightColor(semanticHandle, document.documentElement.hasAttribute("data-colorblind-mode"));
 };
 
 const escapeDataId = (value) =>
-    String(value ?? "")
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"');
+  String(value ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
 
 function FlowLifecycleProbe() {
-    useEffect(() => {
-        traceDragEvent('flow:mount');
-        return () => traceDragEvent('flow:unmount');
-    }, []);
-    return null;
+  useEffect(() => {
+    traceDragEvent("flow:mount");
+    return () => traceDragEvent("flow:unmount");
+  }, []);
+  return null;
 }
 
 export default function EditorCanvas({
-    activeMode,
-    setActiveMode,
-    showTransitionEdges,
-    showSlotEdges,
-    slotConnectionDrag,
-    showCodeViewButton = true,
-    colorblindMode = false,
-    nodes,
-    edges,
-    globalDataModel,
-    manualSlots,
-    visibleNodes,
-    visibleEdges,
-    documentKey,
-    canvasPlacement,
-    canvasPlacementReady,
-    getActiveDocumentIdentity,
-    beginCanvasPlacement,
-    completeCanvasPlacement,
-    releaseCanvasPlacement,
-    recordCanvasViewport,
-    smartRoutingNodes,
-    edgeFocusMode,
-    nodeFocusMode,
-    contextMenu,
-    setContextMenu,
-    handleSelectAction,
-    hasGraphClipboard,
-    isDraggingNode,
-    isOverTrash,
-    handleNodesChange,
-    handleVisibleEdgesChange,
-    onSelectionChange,
-    onConnect,
-    handleConnectStart,
-    handleConnectEnd,
-    onReconnect,
-    handleReconnectStart,
-    handleReconnectEnd,
-    isValidConnection,
-    handleEdgeClick,
-    handleEdgeDoubleClick,
-    handleNodeClick,
-    handleNodeDoubleClick,
-    handlePaneClick,
-    handleContextMenuOpen,
-    handleOpenSubMachine,
-    handleNodeDragStart,
-    handleNodeDrag,
-    handleNodeDragStop,
-    runtimePlayback,
-    runtimeCommanderOpen = false,
-    runtimeExpansionActive = false,
-    liveExecutionActive = false,
-    onOpenRuntimeCommander,
-    onLoadRuntimeLog,
-    onRuntimePlayPause,
-    onRuntimeRestart,
-    onRuntimePrevious,
-    onRuntimeNext,
-    onRuntimeSeek,
-    onRuntimeClear,
-    onRuntimeDelayChange,
+  activeMode,
+  setActiveMode,
+  showTransitionEdges,
+  showSlotEdges,
+  slotConnectionDrag,
+  showCodeViewButton = true,
+  colorblindMode = false,
+  nodes,
+  edges,
+  globalDataModel,
+  manualSlots,
+  visibleNodes,
+  visibleEdges,
+  documentKey,
+  canvasPlacement,
+  canvasPlacementReady,
+  getActiveDocumentIdentity,
+  beginCanvasPlacement,
+  completeCanvasPlacement,
+  releaseCanvasPlacement,
+  recordCanvasViewport,
+  smartRoutingNodes,
+  edgeFocusMode,
+  nodeFocusMode,
+  contextMenu,
+  setContextMenu,
+  handleSelectAction,
+  hasGraphClipboard,
+  isDraggingNode,
+  isOverTrash,
+  handleNodesChange,
+  handleVisibleEdgesChange,
+  onSelectionChange,
+  onConnect,
+  handleConnectStart,
+  handleConnectEnd,
+  onReconnect,
+  handleReconnectStart,
+  handleReconnectEnd,
+  isValidConnection,
+  handleEdgeClick,
+  handleEdgeDoubleClick,
+  handleNodeClick,
+  handleNodeDoubleClick,
+  handlePaneClick,
+  handleContextMenuOpen,
+  handleOpenSubMachine,
+  handleNodeDragStart,
+  handleNodeDrag,
+  handleNodeDragStop,
+  runtimePlayback,
+  runtimeCommanderOpen = false,
+  runtimeExpansionActive = false,
+  liveExecutionActive = false,
+  onOpenRuntimeCommander,
+  onLoadRuntimeLog,
+  onRuntimePlayPause,
+  onRuntimeRestart,
+  onRuntimePrevious,
+  onRuntimeNext,
+  onRuntimeSeek,
+  onRuntimeClear,
+  onRuntimeDelayChange,
 }) {
-    // React Flow's visibility culling performs geometry checks and can mount /
-    // unmount elements on every viewport frame. Counting edges here made fairly
-    // ordinary workflows with many transitions enter that expensive path. Keep
-    // the DOM stable unless the *node* count itself is genuinely very large;
-    // transition-heavy graphs are handled by the interaction edge fast paths.
-    const useViewportCulling = visibleNodes.length >= 600;
-    const viewportOwnerRef = useRef(null);
-    // Reversible benchmark: set bonsai:fastGestureRouting to "0" and reload
-    // to compare the exact same graph against normal routing during gestures.
-    const fastGestureRouting = typeof window === "undefined" ||
-        window.localStorage.getItem("bonsai:fastGestureRouting") !== "0";
-    const lightweightGestureRouting = Boolean(isDraggingNode && fastGestureRouting);
-    useEffect(() => {
-        traceDragEvent('canvas:mount');
-        return () => traceDragEvent('canvas:unmount');
-    }, []);
-    useEffect(() => {
-        traceDragCanvasGraph(documentKey, visibleNodes, visibleEdges, isDraggingNode);
-    }, [documentKey, visibleNodes, visibleEdges, isDraggingNode]);
-    const handleCanvasProfile = useCallback((id, phase, duration, baseDuration) => {
-        traceDragReactCommit(id, phase, duration, baseDuration);
-    }, []);
-    // Read-only: tell the resize trace what React Flow actually receives.
-    useEffect(() => traceResizeSnapshot('ReactFlow:visibleNodes', visibleNodes), [visibleNodes]);
+  // React Flow's visibility culling performs geometry checks and can mount /
+  // unmount elements on every viewport frame. Counting edges here made fairly
+  // ordinary workflows with many transitions enter that expensive path. Keep
+  // the DOM stable unless the *node* count itself is genuinely very large;
+  // transition-heavy graphs are handled by the interaction edge fast paths.
+  const useViewportCulling = visibleNodes.length >= 600;
+  const viewportOwnerRef = useRef(null);
+  // Reversible benchmark: set bonsai:fastGestureRouting to "0" and reload
+  // to compare the exact same graph against normal routing during gestures.
+  const fastGestureRouting =
+    typeof window === "undefined" || window.localStorage.getItem("bonsai:fastGestureRouting") !== "0";
+  const lightweightGestureRouting = Boolean(isDraggingNode && fastGestureRouting);
+  useEffect(() => {
+    traceDragEvent("canvas:mount");
+    return () => traceDragEvent("canvas:unmount");
+  }, []);
+  useEffect(() => {
+    traceDragCanvasGraph(documentKey, visibleNodes, visibleEdges, isDraggingNode);
+  }, [documentKey, visibleNodes, visibleEdges, isDraggingNode]);
+  const handleCanvasProfile = useCallback((id, phase, duration, baseDuration) => {
+    traceDragReactCommit(id, phase, duration, baseDuration);
+  }, []);
+  // Read-only: tell the resize trace what React Flow actually receives.
+  useEffect(() => traceResizeSnapshot("ReactFlow:visibleNodes", visibleNodes), [visibleNodes]);
 
-    // Canvas hover must not travel through App state. A React-state hover used
-    // to rebuild the display graph and rerender unrelated panels every time the
-    // pointer crossed a node or edge. Keep the semantic graph unchanged and
-    // paint hover directly onto the already-mounted React Flow elements.
-    const hoverDomMutationsRef = useRef([]);
-    // A drag is one continuous focus gesture. While held, pointerleave and
-    // React Flow's DOM/edge updates must not reset the dimmed context.
-    const dragHoverLockedRef = useRef(false);
-    const fastHoverOwnerRef = useRef(null);
-    const fastHoverObserverRef = useRef(null);
-    const incompatibleSlotHintRef = useRef(null);
+  // Canvas hover must not travel through App state. A React-state hover used
+  // to rebuild the display graph and rerender unrelated panels every time the
+  // pointer crossed a node or edge. Keep the semantic graph unchanged and
+  // paint hover directly onto the already-mounted React Flow elements.
+  const hoverDomMutationsRef = useRef([]);
+  // A drag is one continuous focus gesture. While held, pointerleave and
+  // React Flow's DOM/edge updates must not reset the dimmed context.
+  const dragHoverLockedRef = useRef(false);
+  const fastHoverOwnerRef = useRef(null);
+  const fastHoverObserverRef = useRef(null);
+  const incompatibleSlotHintRef = useRef(null);
 
-    // During a connection gesture React Flow captures pointer events, so
-    // onMouseEnter on an individual Handle is unreliable. Hit-test the actual
-    // element below the cursor instead. This is a transient DOM-only tooltip:
-    // no graph rebuilds or canvas React renders on every pointer move.
-    useEffect(() => {
-        const hint = incompatibleSlotHintRef.current;
-        if (!hint) return undefined;
-        const hide = () => {
-            hint.hidden = true;
-            hint.textContent = "";
-        };
-        hide();
-        if (!slotConnectionDrag?.active) return undefined;
+  // During a connection gesture React Flow captures pointer events, so
+  // onMouseEnter on an individual Handle is unreliable. Hit-test the actual
+  // element below the cursor instead. This is a transient DOM-only tooltip:
+  // no graph rebuilds or canvas React renders on every pointer move.
+  useEffect(() => {
+    const hint = incompatibleSlotHintRef.current;
+    if (!hint) return undefined;
+    const hide = () => {
+      hint.hidden = true;
+      hint.textContent = "";
+    };
+    hide();
+    if (!slotConnectionDrag?.active) return undefined;
 
-        const findIncompatibleHandle = (x, y) => {
-            const underPointer = document.elementFromPoint(x, y);
-            if (!underPointer) return null;
-            const direct = underPointer.closest?.(".react-flow__handle.slot-handle-incompatible[data-slot-incompatibility]");
-            if (direct) return direct;
-            // Visual handles are larger than the underlying 8-9px hit box.
-            // Include the rim so users don't have to hit a tiny exact pixel.
-            const nodeElement = underPointer.closest?.(".react-flow__node");
-            if (!nodeElement) return null;
-            for (const handle of nodeElement.querySelectorAll(
-                ".react-flow__handle.slot-handle-incompatible[data-slot-incompatibility]"
-            )) {
-                const rect = handle.getBoundingClientRect();
-                const centerX = rect.left + rect.width / 2;
-                const centerY = rect.top + rect.height / 2;
-                if (Math.hypot(centerX - x, centerY - y) <= 15) return handle;
-            }
-            return null;
-        };
-        const onPointerMove = (event) => {
-            const handle = findIncompatibleHandle(event.clientX, event.clientY);
-            const explanation = handle?.dataset.slotIncompatibility;
-            if (!explanation) {
-                if (!hint.hidden) hide();
-                return;
-            }
-            if (hint.textContent !== explanation) hint.textContent = explanation;
-            hint.hidden = false;
-            // Keep the message on-screen and away from the pointer/port.
-            hint.style.left = `${Math.max(12, Math.min(event.clientX + 20, window.innerWidth - 312))}px`;
-            hint.style.top = `${Math.max(12, Math.min(event.clientY + 20, window.innerHeight - hint.offsetHeight - 12))}px`;
-        };
-        document.addEventListener("pointermove", onPointerMove, true);
-        document.addEventListener("pointerup", hide, true);
-        document.addEventListener("pointercancel", hide, true);
-        window.addEventListener("blur", hide);
-        return () => {
-            document.removeEventListener("pointermove", onPointerMove, true);
-            document.removeEventListener("pointerup", hide, true);
-            document.removeEventListener("pointercancel", hide, true);
-            window.removeEventListener("blur", hide);
-            hide();
-        };
-    }, [slotConnectionDrag?.active, documentKey]);
+    const findIncompatibleHandle = (x, y) => {
+      const underPointer = document.elementFromPoint(x, y);
+      if (!underPointer) return null;
+      const direct = underPointer.closest?.(".react-flow__handle.slot-handle-incompatible[data-slot-incompatibility]");
+      if (direct) return direct;
+      // Visual handles are larger than the underlying 8-9px hit box.
+      // Include the rim so users don't have to hit a tiny exact pixel.
+      const nodeElement = underPointer.closest?.(".react-flow__node");
+      if (!nodeElement) return null;
+      for (const handle of nodeElement.querySelectorAll(
+        ".react-flow__handle.slot-handle-incompatible[data-slot-incompatibility]",
+      )) {
+        const rect = handle.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        if (Math.hypot(centerX - x, centerY - y) <= 15) return handle;
+      }
+      return null;
+    };
+    const onPointerMove = (event) => {
+      const handle = findIncompatibleHandle(event.clientX, event.clientY);
+      const explanation = handle?.dataset.slotIncompatibility;
+      if (!explanation) {
+        if (!hint.hidden) hide();
+        return;
+      }
+      if (hint.textContent !== explanation) hint.textContent = explanation;
+      hint.hidden = false;
+      // Keep the message on-screen and away from the pointer/port.
+      hint.style.left = `${Math.max(12, Math.min(event.clientX + 20, window.innerWidth - 312))}px`;
+      hint.style.top = `${Math.max(12, Math.min(event.clientY + 20, window.innerHeight - hint.offsetHeight - 12))}px`;
+    };
+    document.addEventListener("pointermove", onPointerMove, true);
+    document.addEventListener("pointerup", hide, true);
+    document.addEventListener("pointercancel", hide, true);
+    window.addEventListener("blur", hide);
+    return () => {
+      document.removeEventListener("pointermove", onPointerMove, true);
+      document.removeEventListener("pointerup", hide, true);
+      document.removeEventListener("pointercancel", hide, true);
+      window.removeEventListener("blur", hide);
+      hide();
+    };
+  }, [slotConnectionDrag?.active, documentKey]);
 
-    const hoverEdgeIndex = useMemo(() => {
-        const edgeById = new Map();
-        const edgeIdsByNodeId = new Map();
+  const hoverEdgeIndex = useMemo(() => {
+    const edgeById = new Map();
+    const edgeIdsByNodeId = new Map();
 
-        visibleEdges.forEach((edge) => {
-            edgeById.set(edge.id, edge);
-            getHoverEdgeNodeIds(edge).forEach((nodeId) => {
-                if (!edgeIdsByNodeId.has(nodeId)) {
-                    edgeIdsByNodeId.set(nodeId, []);
-                }
-                edgeIdsByNodeId.get(nodeId).push(edge.id);
-            });
-        });
-
-        return {
-            edgeById,
-            edgeIdsByNodeId,
-            boundaryHelperIdsByKey: buildBoundaryHelperIndex(visibleEdges),
-        };
-    }, [visibleEdges]);
-
-    const recordHoverClass = useCallback((element, className) => {
-        if (!element || element.classList.contains(className)) return;
-        element.classList.add(className);
-        hoverDomMutationsRef.current.push(() =>
-            element.classList.remove(className)
-        );
-    }, []);
-
-    const recordHoverStyle = useCallback((
-        element,
-        property,
-        value,
-    ) => {
-        if (!element) return;
-        const previousValue = element.style.getPropertyValue(property);
-        const previousPriority = element.style.getPropertyPriority(property);
-        element.style.setProperty(property, value);
-        hoverDomMutationsRef.current.push(() => {
-            // This helper is used only for canvas-owned CSS variables; never
-            // restore a React-owned edge stroke or selection style.
-            if (!element.isConnected || element.style.getPropertyValue(property) !== value) return;
-
-            if (previousValue) {
-                element.style.setProperty(
-                    property,
-                    previousValue,
-                    previousPriority
-                );
-            } else {
-                element.style.removeProperty(property);
-            }
-        });
-    }, []);
-
-    const clearFastHover = useCallback(() => {
-        if (dragHoverLockedRef.current) return;
-        fastHoverObserverRef.current?.disconnect();
-        fastHoverObserverRef.current = null;
-        fastHoverOwnerRef.current = null;
-        const mutations = hoverDomMutationsRef.current;
-        hoverDomMutationsRef.current = [];
-        for (let index = mutations.length - 1; index >= 0; index -= 1) {
-            mutations[index]();
+    visibleEdges.forEach((edge) => {
+      edgeById.set(edge.id, edge);
+      getHoverEdgeNodeIds(edge).forEach((nodeId) => {
+        if (!edgeIdsByNodeId.has(nodeId)) {
+          edgeIdsByNodeId.set(nodeId, []);
         }
-    }, []);
+        edgeIdsByNodeId.get(nodeId).push(edge.id);
+      });
+    });
 
-    // React Flow may remove or replace a hovered SVG/node without emitting
-    // mouseleave. Observe removal while a fast hover is active, instead of
-    // relying on another pointermove to eventually clean up the old paint.
-    const watchFastHoverOwner = useCallback((flowElement, owner) => {
-        if (!flowElement || !owner || !window.MutationObserver) return;
-        fastHoverObserverRef.current?.disconnect();
-        const observer = new MutationObserver(() => {
-            if (!owner.isConnected || !flowElement.contains(owner)) {
-                clearFastHover();
-            }
-        });
-        observer.observe(flowElement, { childList: true, subtree: true });
-        fastHoverObserverRef.current = observer;
-    }, [clearFastHover]);
+    return {
+      edgeById,
+      edgeIdsByNodeId,
+      boundaryHelperIdsByKey: buildBoundaryHelperIndex(visibleEdges),
+    };
+  }, [visibleEdges]);
 
-    const getFlowElement = useCallback((event) =>
-        event?.target?.closest?.(".react-flow") ||
-        document.querySelector(".react-flow"), []);
+  const recordHoverClass = useCallback((element, className) => {
+    if (!element || element.classList.contains(className)) return;
+    element.classList.add(className);
+    hoverDomMutationsRef.current.push(() => element.classList.remove(className));
+  }, []);
 
-    const getFlowNodeElement = useCallback((flowElement, nodeId) => {
-        if (!flowElement || !nodeId) return null;
-        return flowElement.querySelector(
-            `.react-flow__node[data-id="${escapeDataId(nodeId)}"]`
-        );
-    }, []);
+  const recordHoverStyle = useCallback((element, property, value) => {
+    if (!element) return;
+    const previousValue = element.style.getPropertyValue(property);
+    const previousPriority = element.style.getPropertyPriority(property);
+    element.style.setProperty(property, value);
+    hoverDomMutationsRef.current.push(() => {
+      // This helper is used only for canvas-owned CSS variables; never
+      // restore a React-owned edge stroke or selection style.
+      if (!element.isConnected || element.style.getPropertyValue(property) !== value) return;
 
-    const getFlowEdgeElement = useCallback((flowElement, edgeId) => {
-        if (!flowElement || !edgeId) return null;
-        return flowElement.querySelector(
-            `.react-flow__edge[data-id="${escapeDataId(edgeId)}"]`
-        );
-    }, []);
+      if (previousValue) {
+        element.style.setProperty(property, previousValue, previousPriority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    });
+  }, []);
 
-    const markFastHoverNode = useCallback((flowElement, nodeId, highlighted) => {
-        const nodeElement = getFlowNodeElement(flowElement, nodeId);
-        if (!nodeElement) return;
-        recordHoverClass(nodeElement, "editor-canvas-fast-node-context-visible");
-        if (highlighted) {
-            recordHoverClass(nodeElement, "editor-canvas-fast-hover-highlight");
-        }
-    }, [getFlowNodeElement, recordHoverClass]);
-
-    const markFastHoverEdge = useCallback((flowElement, edge) => {
-        const edgeElement = getFlowEdgeElement(flowElement, edge?.id);
-        if (!edgeElement) return;
-
-        recordHoverClass(edgeElement, "editor-canvas-fast-edge-context-visible");
-        recordHoverClass(edgeElement, "editor-canvas-fast-edge-focus-active");
-
-        // Preserve the moving-dash hover effect, but enable it directly on the
-        // one/few connected SVG groups instead of rebuilding React edge data.
-        if (edgeElement.classList.contains("editor-transition-edge")) {
-            recordHoverClass(edgeElement, "editor-canvas-fast-edge-animated");
-            recordHoverStyle(
-                edgeElement,
-                "--editor-canvas-hover-stroke",
-                getHoverTransitionColor(edge)
-            );
-        }
-    }, [getFlowEdgeElement, recordHoverClass, recordHoverStyle]);
-
-    const applyFastNodeHover = useCallback((event, node) => {
-        if (dragHoverLockedRef.current) return;
-        clearFastHover();
-        const flowElement = getFlowElement(event);
-        if (!flowElement || !node?.id) return;
-
-        fastHoverOwnerRef.current = getFlowNodeElement(flowElement, node.id);
-        watchFastHoverOwner(flowElement, fastHoverOwnerRef.current);
-        recordHoverClass(flowElement, "editor-canvas-fast-edge-focus-mode");
-        recordHoverClass(flowElement, "editor-canvas-fast-node-focus-mode");
-        markFastHoverNode(flowElement, node.id, true);
-
-        const originalNodeId = node.data?.cloneOfNodeId;
-        if (originalNodeId) {
-            // A reference hover has two different meanings: the reference itself
-            // is hovered, while the source is only the related target. Keep
-            // those states separate so their visual feedback can coexist with
-            // selection/problem styling without pretending both nodes are hovered.
-            markFastHoverNode(flowElement, originalNodeId, false);
-            recordHoverClass(
-                getFlowNodeElement(flowElement, originalNodeId),
-                "editor-canvas-fast-reference-target-highlight"
-            );
-        }
-
-        const connectedEdgeIds =
-            hoverEdgeIndex.edgeIdsByNodeId.get(node.id) || [];
-        connectedEdgeIds.forEach((edgeId) => {
-            const edge = hoverEdgeIndex.edgeById.get(edgeId);
-            if (!edge) return;
-            markFastHoverEdge(flowElement, edge);
-            boundaryTransitionKeys(edge).forEach((boundaryKey) => {
-                (hoverEdgeIndex.boundaryHelperIdsByKey.get(boundaryKey) || []).forEach((helperId) => {
-                    const helper = hoverEdgeIndex.edgeById.get(helperId);
-                    if (helper) markFastHoverEdge(flowElement, helper);
-                });
-            });
-            getHoverEdgeNodeIds(edge).forEach((nodeId) =>
-                markFastHoverNode(flowElement, nodeId, nodeId === node.id)
-            );
-        });
-    }, [
-        clearFastHover,
-        getFlowElement,
-        getFlowNodeElement,
-        hoverEdgeIndex,
-        markFastHoverEdge,
-        markFastHoverNode,
-        recordHoverClass,
-        watchFastHoverOwner,
-    ]);
-
-    const applyFastEdgeHover = useCallback((event, edge) => {
-        if (dragHoverLockedRef.current) return;
-        clearFastHover();
-        const flowElement = getFlowElement(event);
-        if (!flowElement || !edge?.id) return;
-
-        fastHoverOwnerRef.current = getFlowEdgeElement(flowElement, edge.id);
-        watchFastHoverOwner(flowElement, fastHoverOwnerRef.current);
-        recordHoverClass(flowElement, "editor-canvas-fast-edge-focus-mode");
-        recordHoverClass(flowElement, "editor-canvas-fast-node-focus-mode");
-
-        const renderedEdge = hoverEdgeIndex.edgeById.get(edge.id) || edge;
-        markFastHoverEdge(flowElement, renderedEdge);
-        boundaryTransitionKeys(renderedEdge).forEach((boundaryKey) => {
-            (hoverEdgeIndex.boundaryHelperIdsByKey.get(boundaryKey) || []).forEach((helperId) => {
-                const helper = hoverEdgeIndex.edgeById.get(helperId);
-                if (helper) markFastHoverEdge(flowElement, helper);
-            });
-        });
-        getHoverEdgeNodeIds(renderedEdge).forEach((nodeId) =>
-            markFastHoverNode(flowElement, nodeId, true)
-        );
-    }, [
-        clearFastHover,
-        getFlowElement,
-        getFlowEdgeElement,
-        hoverEdgeIndex,
-        markFastHoverEdge,
-        markFastHoverNode,
-        recordHoverClass,
-        watchFastHoverOwner,
-    ]);
-
-    // Release the drag focus on pointer release. React Flow may still be
-    // committing the final node position, so restore ordinary hover on the
-    // next frame, using whichever node/edge is *actually* under the pointer.
-    const releaseDragHover = useCallback((event) => {
-        if (!dragHoverLockedRef.current) return;
-        dragHoverLockedRef.current = false;
-        clearFastHover();
-        const x = event?.clientX;
-        const y = event?.clientY;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-        requestAnimationFrame(() => {
-            if (dragHoverLockedRef.current) return;
-            const hovered = document.elementFromPoint(x, y);
-            const nodeElement = hovered?.closest?.(".react-flow__node");
-            if (nodeElement) {
-                const node = visibleNodes.find((item) => item.id === nodeElement.getAttribute("data-id"));
-                if (node) applyFastNodeHover({ target: nodeElement }, node);
-                return;
-            }
-            const edgeElement = hovered?.closest?.(".react-flow__edge");
-            if (edgeElement) {
-                const edge = hoverEdgeIndex.edgeById.get(edgeElement.getAttribute("data-id"));
-                if (edge) applyFastEdgeHover({ target: edgeElement }, edge);
-            }
-        });
-    }, [applyFastEdgeHover, applyFastNodeHover, clearFastHover, hoverEdgeIndex, visibleNodes]);
-
-    // React Flow can remove a hovered edge during a document/viewport update
-    // without sending onEdgeMouseLeave. Clear any imperative hover on graph
-    // changes, pane movement, window blur and mouse departure from the canvas.
-    useEffect(() => () => {
-        dragHoverLockedRef.current = false;
-        clearFastHover();
-    }, [clearFastHover]);
-    useEffect(() => { clearFastHover(); }, [documentKey, activeMode, showTransitionEdges, showSlotEdges, colorblindMode, clearFastHover]);
-    useEffect(() => {
-        // Missing mouseleave (for instance when React Flow replaces an edge
-        // while the pointer is over it) must never leave DOM-only hover classes.
-        const clearIfPointerLeft = (event) => {
-            const owner = fastHoverOwnerRef.current;
-            if (!owner) return;
-            const underPointer = document.elementFromPoint(event.clientX, event.clientY);
-            if (!owner.isConnected || !underPointer || !owner.contains(underPointer)) {
-                clearFastHover();
-            }
-        };
-        document.addEventListener("pointermove", clearIfPointerLeft, true);
-        document.addEventListener("pointercancel", clearFastHover, true);
-        const clearWhenLeavingWindow = (event) => {
-            if (!event.relatedTarget) clearFastHover();
-        };
-        document.addEventListener("mouseout", clearWhenLeavingWindow, true);
-        return () => {
-            document.removeEventListener("pointermove", clearIfPointerLeft, true);
-            document.removeEventListener("pointercancel", clearFastHover, true);
-            document.removeEventListener("mouseout", clearWhenLeavingWindow, true);
-        };
-    }, [clearFastHover]);
-    useEffect(() => {
-        const cancelDragHover = () => {
-            dragHoverLockedRef.current = false;
-            clearFastHover();
-        };
-        window.addEventListener("blur", cancelDragHover);
-        document.addEventListener("pointercancel", cancelDragHover, true);
-        return () => {
-            window.removeEventListener("blur", cancelDragHover);
-            document.removeEventListener("pointercancel", cancelDragHover, true);
-        };
-    }, [clearFastHover]);
-
-    // Only update a paint-only class when zoom crosses the badge visibility
-    // threshold. No per-node viewport subscription or React rerender is needed.
-    const updateSlotTypeZoom = useCallback((zoom, flowElement = null) => {
-        if (!Number.isFinite(zoom)) return;
-        const element = flowElement || document.querySelector(".react-flow");
-        element?.classList.toggle("editor-slot-types-compact", zoom <= 0.5);
-    }, []);
-
-    // Viewport movement must not feed back into React state. A previous attempt
-    // used state in onMoveStart/onMoveEnd and could recurse through React Flow's
-    // lifecycle. Toggle a paint-only class directly on the mounted flow element
-    // instead. This lets CSS temporarily disable expensive SVG/node effects
-    // during pan/zoom without causing a React render.
-    const movingFlowElementRef = useRef(null);
-    const handleViewportMoveStart = useCallback((event) => {
-        clearFastHover();
-        const flowElement =
-            event?.target?.closest?.(".react-flow") ||
-            document.querySelector(".react-flow");
-        if (!flowElement) return;
-
-        movingFlowElementRef.current = flowElement;
-        flowElement.classList.add("editor-viewport-moving");
-    }, [clearFastHover]);
-
-    const handleViewportMoveEnd = useCallback((_, viewport) => {
-        movingFlowElementRef.current?.classList.remove("editor-viewport-moving");
-        movingFlowElementRef.current = null;
-        const owner = viewportOwnerRef.current;
-        if (owner) recordCanvasViewport(owner.identity, owner.instance, viewport);
-    }, [recordCanvasViewport]);
-
-    useEffect(
-        () => () => {
-            movingFlowElementRef.current?.classList.remove(
-                "editor-viewport-moving"
-            );
-        },
-        []
-    );
-
-    if (activeMode === "code") {
-        return (
-            <CodeView
-                nodes={nodes}
-                edges={edges}
-                globalDataModel={globalDataModel}
-                manualSlots={manualSlots}
-                activeMode={activeMode}
-                setActiveMode={setActiveMode}
-                showCodeViewButton={showCodeViewButton}
-            />
-        );
+  const clearFastHover = useCallback(() => {
+    if (dragHoverLockedRef.current) return;
+    fastHoverObserverRef.current?.disconnect();
+    fastHoverObserverRef.current = null;
+    fastHoverOwnerRef.current = null;
+    const mutations = hoverDomMutationsRef.current;
+    hoverDomMutationsRef.current = [];
+    for (let index = mutations.length - 1; index >= 0; index -= 1) {
+      mutations[index]();
     }
+  }, []);
 
+  // React Flow may remove or replace a hovered SVG/node without emitting
+  // mouseleave. Observe removal while a fast hover is active, instead of
+  // relying on another pointermove to eventually clean up the old paint.
+  const watchFastHoverOwner = useCallback(
+    (flowElement, owner) => {
+      if (!flowElement || !owner || !window.MutationObserver) return;
+      fastHoverObserverRef.current?.disconnect();
+      const observer = new MutationObserver(() => {
+        if (!owner.isConnected || !flowElement.contains(owner)) {
+          clearFastHover();
+        }
+      });
+      observer.observe(flowElement, { childList: true, subtree: true });
+      fastHoverObserverRef.current = observer;
+    },
+    [clearFastHover],
+  );
+
+  const getFlowElement = useCallback(
+    (event) => event?.target?.closest?.(".react-flow") || document.querySelector(".react-flow"),
+    [],
+  );
+
+  const getFlowNodeElement = useCallback((flowElement, nodeId) => {
+    if (!flowElement || !nodeId) return null;
+    return flowElement.querySelector(`.react-flow__node[data-id="${escapeDataId(nodeId)}"]`);
+  }, []);
+
+  const getFlowEdgeElement = useCallback((flowElement, edgeId) => {
+    if (!flowElement || !edgeId) return null;
+    return flowElement.querySelector(`.react-flow__edge[data-id="${escapeDataId(edgeId)}"]`);
+  }, []);
+
+  const markFastHoverNode = useCallback(
+    (flowElement, nodeId, highlighted) => {
+      const nodeElement = getFlowNodeElement(flowElement, nodeId);
+      if (!nodeElement) return;
+      recordHoverClass(nodeElement, "editor-canvas-fast-node-context-visible");
+      if (highlighted) {
+        recordHoverClass(nodeElement, "editor-canvas-fast-hover-highlight");
+      }
+    },
+    [getFlowNodeElement, recordHoverClass],
+  );
+
+  const markFastHoverEdge = useCallback(
+    (flowElement, edge) => {
+      const edgeElement = getFlowEdgeElement(flowElement, edge?.id);
+      if (!edgeElement) return;
+
+      recordHoverClass(edgeElement, "editor-canvas-fast-edge-context-visible");
+      recordHoverClass(edgeElement, "editor-canvas-fast-edge-focus-active");
+
+      // Preserve the moving-dash hover effect, but enable it directly on the
+      // one/few connected SVG groups instead of rebuilding React edge data.
+      if (edgeElement.classList.contains("editor-transition-edge")) {
+        recordHoverClass(edgeElement, "editor-canvas-fast-edge-animated");
+        recordHoverStyle(edgeElement, "--editor-canvas-hover-stroke", getHoverTransitionColor(edge));
+      }
+    },
+    [getFlowEdgeElement, recordHoverClass, recordHoverStyle],
+  );
+
+  const applyFastNodeHover = useCallback(
+    (event, node) => {
+      if (dragHoverLockedRef.current) return;
+      clearFastHover();
+      const flowElement = getFlowElement(event);
+      if (!flowElement || !node?.id) return;
+
+      fastHoverOwnerRef.current = getFlowNodeElement(flowElement, node.id);
+      watchFastHoverOwner(flowElement, fastHoverOwnerRef.current);
+      recordHoverClass(flowElement, "editor-canvas-fast-edge-focus-mode");
+      recordHoverClass(flowElement, "editor-canvas-fast-node-focus-mode");
+      markFastHoverNode(flowElement, node.id, true);
+
+      const originalNodeId = node.data?.cloneOfNodeId;
+      if (originalNodeId) {
+        // A reference hover has two different meanings: the reference itself
+        // is hovered, while the source is only the related target. Keep
+        // those states separate so their visual feedback can coexist with
+        // selection/problem styling without pretending both nodes are hovered.
+        markFastHoverNode(flowElement, originalNodeId, false);
+        recordHoverClass(
+          getFlowNodeElement(flowElement, originalNodeId),
+          "editor-canvas-fast-reference-target-highlight",
+        );
+      }
+
+      const connectedEdgeIds = hoverEdgeIndex.edgeIdsByNodeId.get(node.id) || [];
+      connectedEdgeIds.forEach((edgeId) => {
+        const edge = hoverEdgeIndex.edgeById.get(edgeId);
+        if (!edge) return;
+        markFastHoverEdge(flowElement, edge);
+        boundaryTransitionKeys(edge).forEach((boundaryKey) => {
+          (hoverEdgeIndex.boundaryHelperIdsByKey.get(boundaryKey) || []).forEach((helperId) => {
+            const helper = hoverEdgeIndex.edgeById.get(helperId);
+            if (helper) markFastHoverEdge(flowElement, helper);
+          });
+        });
+        getHoverEdgeNodeIds(edge).forEach((nodeId) => markFastHoverNode(flowElement, nodeId, nodeId === node.id));
+      });
+    },
+    [
+      clearFastHover,
+      getFlowElement,
+      getFlowNodeElement,
+      hoverEdgeIndex,
+      markFastHoverEdge,
+      markFastHoverNode,
+      recordHoverClass,
+      watchFastHoverOwner,
+    ],
+  );
+
+  const applyFastEdgeHover = useCallback(
+    (event, edge) => {
+      if (dragHoverLockedRef.current) return;
+      clearFastHover();
+      const flowElement = getFlowElement(event);
+      if (!flowElement || !edge?.id) return;
+
+      fastHoverOwnerRef.current = getFlowEdgeElement(flowElement, edge.id);
+      watchFastHoverOwner(flowElement, fastHoverOwnerRef.current);
+      recordHoverClass(flowElement, "editor-canvas-fast-edge-focus-mode");
+      recordHoverClass(flowElement, "editor-canvas-fast-node-focus-mode");
+
+      const renderedEdge = hoverEdgeIndex.edgeById.get(edge.id) || edge;
+      markFastHoverEdge(flowElement, renderedEdge);
+      boundaryTransitionKeys(renderedEdge).forEach((boundaryKey) => {
+        (hoverEdgeIndex.boundaryHelperIdsByKey.get(boundaryKey) || []).forEach((helperId) => {
+          const helper = hoverEdgeIndex.edgeById.get(helperId);
+          if (helper) markFastHoverEdge(flowElement, helper);
+        });
+      });
+      getHoverEdgeNodeIds(renderedEdge).forEach((nodeId) => markFastHoverNode(flowElement, nodeId, true));
+    },
+    [
+      clearFastHover,
+      getFlowElement,
+      getFlowEdgeElement,
+      hoverEdgeIndex,
+      markFastHoverEdge,
+      markFastHoverNode,
+      recordHoverClass,
+      watchFastHoverOwner,
+    ],
+  );
+
+  // Release the drag focus on pointer release. React Flow may still be
+  // committing the final node position, so restore ordinary hover on the
+  // next frame, using whichever node/edge is *actually* under the pointer.
+  const releaseDragHover = useCallback(
+    (event) => {
+      if (!dragHoverLockedRef.current) return;
+      dragHoverLockedRef.current = false;
+      clearFastHover();
+      const x = event?.clientX;
+      const y = event?.clientY;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      requestAnimationFrame(() => {
+        if (dragHoverLockedRef.current) return;
+        const hovered = document.elementFromPoint(x, y);
+        const nodeElement = hovered?.closest?.(".react-flow__node");
+        if (nodeElement) {
+          const node = visibleNodes.find((item) => item.id === nodeElement.getAttribute("data-id"));
+          if (node) applyFastNodeHover({ target: nodeElement }, node);
+          return;
+        }
+        const edgeElement = hovered?.closest?.(".react-flow__edge");
+        if (edgeElement) {
+          const edge = hoverEdgeIndex.edgeById.get(edgeElement.getAttribute("data-id"));
+          if (edge) applyFastEdgeHover({ target: edgeElement }, edge);
+        }
+      });
+    },
+    [applyFastEdgeHover, applyFastNodeHover, clearFastHover, hoverEdgeIndex, visibleNodes],
+  );
+
+  // React Flow can remove a hovered edge during a document/viewport update
+  // without sending onEdgeMouseLeave. Clear any imperative hover on graph
+  // changes, pane movement, window blur and mouse departure from the canvas.
+  useEffect(
+    () => () => {
+      dragHoverLockedRef.current = false;
+      clearFastHover();
+    },
+    [clearFastHover],
+  );
+  useEffect(() => {
+    clearFastHover();
+  }, [documentKey, activeMode, showTransitionEdges, showSlotEdges, colorblindMode, clearFastHover]);
+  useEffect(() => {
+    // Missing mouseleave (for instance when React Flow replaces an edge
+    // while the pointer is over it) must never leave DOM-only hover classes.
+    const clearIfPointerLeft = (event) => {
+      const owner = fastHoverOwnerRef.current;
+      if (!owner) return;
+      const underPointer = document.elementFromPoint(event.clientX, event.clientY);
+      if (!owner.isConnected || !underPointer || !owner.contains(underPointer)) {
+        clearFastHover();
+      }
+    };
+    document.addEventListener("pointermove", clearIfPointerLeft, true);
+    document.addEventListener("pointercancel", clearFastHover, true);
+    const clearWhenLeavingWindow = (event) => {
+      if (!event.relatedTarget) clearFastHover();
+    };
+    document.addEventListener("mouseout", clearWhenLeavingWindow, true);
+    return () => {
+      document.removeEventListener("pointermove", clearIfPointerLeft, true);
+      document.removeEventListener("pointercancel", clearFastHover, true);
+      document.removeEventListener("mouseout", clearWhenLeavingWindow, true);
+    };
+  }, [clearFastHover]);
+  useEffect(() => {
+    const cancelDragHover = () => {
+      dragHoverLockedRef.current = false;
+      clearFastHover();
+    };
+    window.addEventListener("blur", cancelDragHover);
+    document.addEventListener("pointercancel", cancelDragHover, true);
+    return () => {
+      window.removeEventListener("blur", cancelDragHover);
+      document.removeEventListener("pointercancel", cancelDragHover, true);
+    };
+  }, [clearFastHover]);
+
+  // Only update a paint-only class when zoom crosses the badge visibility
+  // threshold. No per-node viewport subscription or React rerender is needed.
+  const updateSlotTypeZoom = useCallback((zoom, flowElement = null) => {
+    if (!Number.isFinite(zoom)) return;
+    const element = flowElement || document.querySelector(".react-flow");
+    element?.classList.toggle("editor-slot-types-compact", zoom <= 0.5);
+  }, []);
+
+  // Viewport movement must not feed back into React state. A previous attempt
+  // used state in onMoveStart/onMoveEnd and could recurse through React Flow's
+  // lifecycle. Toggle a paint-only class directly on the mounted flow element
+  // instead. This lets CSS temporarily disable expensive SVG/node effects
+  // during pan/zoom without causing a React render.
+  const movingFlowElementRef = useRef(null);
+  const handleViewportMoveStart = useCallback(
+    (event) => {
+      clearFastHover();
+      const flowElement = event?.target?.closest?.(".react-flow") || document.querySelector(".react-flow");
+      if (!flowElement) return;
+
+      movingFlowElementRef.current = flowElement;
+      flowElement.classList.add("editor-viewport-moving");
+    },
+    [clearFastHover],
+  );
+
+  const handleViewportMoveEnd = useCallback(
+    (_, viewport) => {
+      movingFlowElementRef.current?.classList.remove("editor-viewport-moving");
+      movingFlowElementRef.current = null;
+      const owner = viewportOwnerRef.current;
+      if (owner) recordCanvasViewport(owner.identity, owner.instance, viewport);
+    },
+    [recordCanvasViewport],
+  );
+
+  useEffect(
+    () => () => {
+      movingFlowElementRef.current?.classList.remove("editor-viewport-moving");
+    },
+    [],
+  );
+
+  if (activeMode === "code") {
     return (
-        <>
-            <div className="editor-canvas-toolbar">
-                <ModeSwitcher activeMode={activeMode} setActiveMode={setActiveMode}
-                    showCodeViewButton={showCodeViewButton} />
-            </div>
-
-            <RuntimeLogPlayer
-                runtimePlayback={runtimePlayback}
-                isRunPanelOpen={runtimeCommanderOpen}
-                onOpenRuntimeCommander={onOpenRuntimeCommander}
-                isDraggingNode={isDraggingNode}
-                onLoadRuntimeLog={onLoadRuntimeLog}
-                onRuntimePlayPause={onRuntimePlayPause}
-                onRuntimeRestart={onRuntimeRestart}
-                onRuntimePrevious={onRuntimePrevious}
-                onRuntimeNext={onRuntimeNext}
-                onRuntimeSeek={onRuntimeSeek}
-                onRuntimeClear={onRuntimeClear}
-                onRuntimeDelayChange={onRuntimeDelayChange}
-            />
-
-            {isDraggingNode && (
-                <div
-                    className={`trash-bin-dropzone ${isOverTrash ? "drag-over" : ""}`}
-                >
-                    <FiTrash2 className="trash-icon" />
-                    <span>Drop here to delete</span>
-                </div>
-            )}
-
-            <div
-                ref={incompatibleSlotHintRef}
-                className="slot-connection-incompatibility-tooltip"
-                role="status"
-                aria-live="polite"
-                hidden
-            />
-
-            <CanvasContextMenu
-                contextMenu={contextMenu}
-                activeMode={activeMode}
-                hasGraphClipboard={hasGraphClipboard}
-                handleSelectAction={handleSelectAction}
-                onClose={() => setContextMenu(null)}
-            />
-
-
-            <Profiler id="BonsaiCanvas" onRender={handleCanvasProfile}>
-            <SmartEdgeProvider nodes={smartRoutingNodes}>
-                <GestureRoutingContext.Provider value={lightweightGestureRouting}>
-                <ReactFlow
-                    key={documentKey}
-                    defaultViewport={canvasPlacement.viewport || undefined}
-                    data-viewport-ready="false"
-                    className={
-                        [
-                            (!showTransitionEdges || activeMode === "slots") &&
-                                "editor-transitions-context-only",
-                            !showSlotEdges && "editor-slots-context-only",
-                            edgeFocusMode && "editor-edge-focus-mode",
-                            nodeFocusMode && "editor-node-focus-mode",
-                            (runtimePlayback?.loaded || liveExecutionActive) && "runtime-log-focus-mode",
-                            isDraggingNode && "editor-node-dragging",
-                        ]
-                            .filter(Boolean)
-                            .join(" ") || undefined
-                    }
-                    nodes={visibleNodes}
-                    edges={visibleEdges}
-                    // An unknown camera needs every visible node measured,
-                    // including nodes outside the provisional viewport. Resume
-                    // ordinary large-graph culling after that one initial fit.
-                    onlyRenderVisibleElements={useViewportCulling &&
-                        (!canvasPlacement.fitOptions || canvasPlacementReady)}
-                    onNodesChange={(changes) => {
-                        // Synthetic React Flow measurements of an expanded live
-                        // presentation must never leak into the saved graph.
-                        const edits = runtimeExpansionActive
-                            ? changes.filter((change) => change.type !== "dimensions")
-                            : changes;
-                        if (edits.length) handleNodesChange(edits);
-                    }}
-                    onEdgesChange={handleVisibleEdgesChange}
-                    onSelectionChange={onSelectionChange}
-                    onConnect={onConnect}
-                    onConnectStart={handleConnectStart}
-                    onConnectEnd={handleConnectEnd}
-                    onReconnect={onReconnect}
-                    onReconnectStart={handleReconnectStart}
-                    onReconnectEnd={handleReconnectEnd}
-                    edgesReconnectable
-                    isValidConnection={isValidConnection}
-                    connectionMode={ConnectionMode.Loose}
-                    connectionLineComponent={EditorConnectionLine}
-                    onEdgeClick={handleEdgeClick}
-                    onEdgeDoubleClick={handleEdgeDoubleClick}
-                    onEdgeContextMenu={(event, edge) =>
-                        handleContextMenuOpen(event, null, edge)
-                    }
-                    nodeTypes={nodeTypes}
-                    edgeTypes={edgeTypes}
-                    onNodeClick={handleNodeClick}
-                    onNodeMouseEnter={applyFastNodeHover}
-                    onNodeMouseLeave={clearFastHover}
-                    onEdgeMouseEnter={applyFastEdgeHover}
-                    onEdgeMouseLeave={clearFastHover}
-                    onPointerLeave={clearFastHover}
-                    onPaneClick={handlePaneClick}
-                    onPaneContextMenu={(event) => handleContextMenuOpen(event)}
-                    onNodeContextMenu={(event, node) =>
-                        handleContextMenuOpen(event, node)
-                    }
-                    multiSelectionKeyCode={["Shift", "Control", "Meta"]}
-                    // Left-drag is reserved for box selection. Pan the viewport
-                    // with either the middle or right mouse button.
-                    selectionOnDrag
-                    selectionKeyCode={null}
-                    panOnDrag={[1, 2]}
-                    // Trackpad behavior: two-finger scrolling pans the viewport.
-                    // Trackpad/wheel zoom is disabled; use the React Flow zoom
-                    // controls instead.
-                    zoomOnScroll={true}
-                    zoomOnPinch={true}
-                    deleteKeyCode={["Delete"]}
-                    minZoom={0.08}
-                    onNodeDoubleClick={handleNodeDoubleClick}
-                    onNodeDragStart={(event, node, draggedNodes) => {
-                        // Capture the picked node's context once, then hold it
-                        // steady even when the cursor crosses empty canvas.
-                        applyFastNodeHover(event, node);
-                        dragHoverLockedRef.current = true;
-                        fastHoverObserverRef.current?.disconnect();
-                        fastHoverObserverRef.current = null;
-                        beginDragTrace(event, node, { documentKey, nodes: visibleNodes.length, edges: visibleEdges.length });
-                        traceDragComputation('handler:onNodeDragStart', () =>
-                            handleNodeDragStart(event, node, draggedNodes));
-                    }}
-                    onNodeDrag={(event, node, draggedNodes) => {
-                        traceDragMovement(node);
-                        traceDragComputation('handler:onNodeDrag', () =>
-                            handleNodeDrag(event, node, draggedNodes));
-                    }}
-                    onNodeDragStop={(event, node, draggedNodes) => {
-                        traceDragEvent('drag:stop-handler:start');
-                        try {
-                            traceDragComputation('handler:onNodeDragStop', () =>
-                                handleNodeDragStop(event, node, draggedNodes));
-                        }
-                        finally {
-                            releaseDragHover(event);
-                            traceDragEvent('drag:stop-handler:return');
-                            endDragTrace(node);
-                        }
-                    }}
-                    onMoveStart={handleViewportMoveStart}
-                    onMove={(_, viewport) => updateSlotTypeZoom(viewport.zoom, movingFlowElementRef.current)}
-                    onMoveEnd={handleViewportMoveEnd}
-                    onInit={(instance) => {
-                        traceDragEvent('flow:init');
-                        updateSlotTypeZoom(instance.getZoom());
-                    }}
-                >
-                    <FlowLifecycleProbe />
-                    <CanvasViewportPlacement
-                        placement={canvasPlacement}
-                        getActiveDocumentIdentity={getActiveDocumentIdentity}
-                        nodes={visibleNodes}
-                        ownerRef={viewportOwnerRef}
-                        beginPlacement={beginCanvasPlacement}
-                        completePlacement={completeCanvasPlacement}
-                        releasePlacement={releaseCanvasPlacement}
-                    />
-                    <Background />
-                    <Controls position={runtimePlayback?.loaded || liveExecutionActive ? "bottom-right" : "bottom-left"} />
-                </ReactFlow>
-                </GestureRoutingContext.Provider>
-            </SmartEdgeProvider>
-            </Profiler>
-        </>
+      <CodeView
+        nodes={nodes}
+        edges={edges}
+        globalDataModel={globalDataModel}
+        manualSlots={manualSlots}
+        activeMode={activeMode}
+        setActiveMode={setActiveMode}
+        showCodeViewButton={showCodeViewButton}
+      />
     );
+  }
+
+  return (
+    <>
+      <div className="editor-canvas-toolbar">
+        <ModeSwitcher activeMode={activeMode} setActiveMode={setActiveMode} showCodeViewButton={showCodeViewButton} />
+      </div>
+
+      <RuntimeLogPlayer
+        runtimePlayback={runtimePlayback}
+        isRunPanelOpen={runtimeCommanderOpen}
+        onOpenRuntimeCommander={onOpenRuntimeCommander}
+        isDraggingNode={isDraggingNode}
+        onLoadRuntimeLog={onLoadRuntimeLog}
+        onRuntimePlayPause={onRuntimePlayPause}
+        onRuntimeRestart={onRuntimeRestart}
+        onRuntimePrevious={onRuntimePrevious}
+        onRuntimeNext={onRuntimeNext}
+        onRuntimeSeek={onRuntimeSeek}
+        onRuntimeClear={onRuntimeClear}
+        onRuntimeDelayChange={onRuntimeDelayChange}
+      />
+
+      {isDraggingNode && (
+        <div className={`trash-bin-dropzone ${isOverTrash ? "drag-over" : ""}`}>
+          <FiTrash2 className="trash-icon" />
+          <span>Drop here to delete</span>
+        </div>
+      )}
+
+      <div
+        ref={incompatibleSlotHintRef}
+        className="slot-connection-incompatibility-tooltip"
+        role="status"
+        aria-live="polite"
+        hidden
+      />
+
+      <CanvasContextMenu
+        contextMenu={contextMenu}
+        activeMode={activeMode}
+        hasGraphClipboard={hasGraphClipboard}
+        handleSelectAction={handleSelectAction}
+        onClose={() => setContextMenu(null)}
+      />
+
+      <Profiler id="BonsaiCanvas" onRender={handleCanvasProfile}>
+        <SmartEdgeProvider nodes={smartRoutingNodes}>
+          <GestureRoutingContext.Provider value={lightweightGestureRouting}>
+            <ReactFlow
+              key={documentKey}
+              defaultViewport={canvasPlacement.viewport || undefined}
+              data-viewport-ready="false"
+              className={
+                [
+                  (!showTransitionEdges || activeMode === "slots") && "editor-transitions-context-only",
+                  !showSlotEdges && "editor-slots-context-only",
+                  edgeFocusMode && "editor-edge-focus-mode",
+                  nodeFocusMode && "editor-node-focus-mode",
+                  (runtimePlayback?.loaded || liveExecutionActive) && "runtime-log-focus-mode",
+                  isDraggingNode && "editor-node-dragging",
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              nodes={visibleNodes}
+              edges={visibleEdges}
+              // An unknown camera needs every visible node measured,
+              // including nodes outside the provisional viewport. Resume
+              // ordinary large-graph culling after that one initial fit.
+              onlyRenderVisibleElements={useViewportCulling && (!canvasPlacement.fitOptions || canvasPlacementReady)}
+              onNodesChange={(changes) => {
+                // Synthetic React Flow measurements of an expanded live
+                // presentation must never leak into the saved graph.
+                const edits = runtimeExpansionActive
+                  ? changes.filter((change) => change.type !== "dimensions")
+                  : changes;
+                if (edits.length) handleNodesChange(edits);
+              }}
+              onEdgesChange={handleVisibleEdgesChange}
+              onSelectionChange={onSelectionChange}
+              onConnect={onConnect}
+              onConnectStart={handleConnectStart}
+              onConnectEnd={handleConnectEnd}
+              onReconnect={onReconnect}
+              onReconnectStart={handleReconnectStart}
+              onReconnectEnd={handleReconnectEnd}
+              edgesReconnectable
+              isValidConnection={isValidConnection}
+              connectionMode={ConnectionMode.Loose}
+              connectionLineComponent={EditorConnectionLine}
+              onEdgeClick={handleEdgeClick}
+              onEdgeDoubleClick={handleEdgeDoubleClick}
+              onEdgeContextMenu={(event, edge) => handleContextMenuOpen(event, null, edge)}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              onNodeClick={handleNodeClick}
+              onNodeMouseEnter={applyFastNodeHover}
+              onNodeMouseLeave={clearFastHover}
+              onEdgeMouseEnter={applyFastEdgeHover}
+              onEdgeMouseLeave={clearFastHover}
+              onPointerLeave={clearFastHover}
+              onPaneClick={handlePaneClick}
+              onPaneContextMenu={(event) => handleContextMenuOpen(event)}
+              onNodeContextMenu={(event, node) => handleContextMenuOpen(event, node)}
+              multiSelectionKeyCode={["Shift", "Control", "Meta"]}
+              // Left-drag is reserved for box selection. Pan the viewport
+              // with either the middle or right mouse button.
+              selectionOnDrag
+              selectionKeyCode={null}
+              panOnDrag={[1, 2]}
+              // Trackpad behavior: two-finger scrolling pans the viewport.
+              // Trackpad/wheel zoom is disabled; use the React Flow zoom
+              // controls instead.
+              zoomOnScroll={true}
+              zoomOnPinch={true}
+              deleteKeyCode={["Delete"]}
+              minZoom={0.08}
+              onNodeDoubleClick={handleNodeDoubleClick}
+              onNodeDragStart={(event, node, draggedNodes) => {
+                // Capture the picked node's context once, then hold it
+                // steady even when the cursor crosses empty canvas.
+                applyFastNodeHover(event, node);
+                dragHoverLockedRef.current = true;
+                fastHoverObserverRef.current?.disconnect();
+                fastHoverObserverRef.current = null;
+                beginDragTrace(event, node, { documentKey, nodes: visibleNodes.length, edges: visibleEdges.length });
+                traceDragComputation("handler:onNodeDragStart", () => handleNodeDragStart(event, node, draggedNodes));
+              }}
+              onNodeDrag={(event, node, draggedNodes) => {
+                traceDragMovement(node);
+                traceDragComputation("handler:onNodeDrag", () => handleNodeDrag(event, node, draggedNodes));
+              }}
+              onNodeDragStop={(event, node, draggedNodes) => {
+                traceDragEvent("drag:stop-handler:start");
+                try {
+                  traceDragComputation("handler:onNodeDragStop", () => handleNodeDragStop(event, node, draggedNodes));
+                } finally {
+                  releaseDragHover(event);
+                  traceDragEvent("drag:stop-handler:return");
+                  endDragTrace(node);
+                }
+              }}
+              onMoveStart={handleViewportMoveStart}
+              onMove={(_, viewport) => updateSlotTypeZoom(viewport.zoom, movingFlowElementRef.current)}
+              onMoveEnd={handleViewportMoveEnd}
+              onInit={(instance) => {
+                traceDragEvent("flow:init");
+                updateSlotTypeZoom(instance.getZoom());
+              }}
+            >
+              <FlowLifecycleProbe />
+              <CanvasViewportPlacement
+                placement={canvasPlacement}
+                getActiveDocumentIdentity={getActiveDocumentIdentity}
+                nodes={visibleNodes}
+                ownerRef={viewportOwnerRef}
+                beginPlacement={beginCanvasPlacement}
+                completePlacement={completeCanvasPlacement}
+                releasePlacement={releaseCanvasPlacement}
+              />
+              <Background />
+              <Controls position={runtimePlayback?.loaded || liveExecutionActive ? "bottom-right" : "bottom-left"} />
+            </ReactFlow>
+          </GestureRoutingContext.Provider>
+        </SmartEdgeProvider>
+      </Profiler>
+    </>
+  );
 }

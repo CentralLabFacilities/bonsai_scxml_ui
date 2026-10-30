@@ -1,127 +1,118 @@
 import { measureContainerTask } from "./containerPerf.js";
-import {
-    COMPOUND_PADDING_X,
-    getCompoundExitGutterWidth,
-    getNodeSize,
-} from "./editorGeometry.js";
+import { COMPOUND_PADDING_X, getCompoundExitGutterWidth, getNodeSize } from "./editorGeometry.js";
 import { createEditorNodeIndex } from "./editorGraph.js";
 import { getCollapsedBoundaryLayout, getContainerExitEvents } from "./containerState.js";
 import { findContainerEventSources } from "./parallelTransitionSources.js";
 
 const sourceIdOf = (edge) =>
-    edge?.data?.boundaryOriginalSource ||
-    edge?.data?.compoundOriginalSource ||
-    edge?.data?.parallelOriginalSource ||
-    edge?.source;
+  edge?.data?.boundaryOriginalSource ||
+  edge?.data?.compoundOriginalSource ||
+  edge?.data?.parallelOriginalSource ||
+  edge?.source;
 
 const sourceHandleOf = (edge) =>
-    edge?.data?.boundaryOriginalSourceHandle ||
-    edge?.data?.compoundOriginalSourceHandle ||
-    edge?.data?.parallelOriginalSourceHandle ||
-    edge?.sourceHandle ||
-    edge?.label ||
-    "success";
-
+  edge?.data?.boundaryOriginalSourceHandle ||
+  edge?.data?.compoundOriginalSourceHandle ||
+  edge?.data?.parallelOriginalSourceHandle ||
+  edge?.sourceHandle ||
+  edge?.label ||
+  "success";
 
 const sourceEntriesOf = (edge) => {
-    const storedSources = Array.isArray(edge?.data?.boundaryOriginalSources)
-        ? edge.data.boundaryOriginalSources
-              .map((entry) => ({
-                  sourceId: String(entry?.sourceId || ""),
-                  sourceHandle: String(entry?.sourceHandle || ""),
-              }))
-              .filter((entry) => entry.sourceId && entry.sourceHandle)
-        : [];
+  const storedSources = Array.isArray(edge?.data?.boundaryOriginalSources)
+    ? edge.data.boundaryOriginalSources
+        .map((entry) => ({
+          sourceId: String(entry?.sourceId || ""),
+          sourceHandle: String(entry?.sourceHandle || ""),
+        }))
+        .filter((entry) => entry.sourceId && entry.sourceHandle)
+    : [];
 
-    if (storedSources.length > 0) return storedSources;
+  if (storedSources.length > 0) return storedSources;
 
-    return [
-        {
-            sourceId: sourceIdOf(edge),
-            sourceHandle: String(sourceHandleOf(edge)),
-        },
-    ];
+  return [
+    {
+      sourceId: sourceIdOf(edge),
+      sourceHandle: String(sourceHandleOf(edge)),
+    },
+  ];
 };
 
 const semanticTargetIdOf = (edge) =>
-    edge?.data?.boundaryOriginalTarget ||
-    edge?.data?.compoundOriginalTarget ||
-    edge?.data?.parallelOriginalTarget ||
-    edge?.target;
+  edge?.data?.boundaryOriginalTarget ||
+  edge?.data?.compoundOriginalTarget ||
+  edge?.data?.parallelOriginalTarget ||
+  edge?.target;
 
 const getExitedBoundaries = (sourceNode, targetNode, graphIndex) => {
-    if (!sourceNode || !targetNode || !graphIndex) return [];
+  if (!sourceNode || !targetNode || !graphIndex) return [];
 
-    const steps = [];
-    const visited = new Set();
-    const seenParallelIds = new Set();
-    const targetAncestorIds = graphIndex.getAncestorIds(targetNode);
-    let parentId = sourceNode.parentId;
+  const steps = [];
+  const visited = new Set();
+  const seenParallelIds = new Set();
+  const targetAncestorIds = graphIndex.getAncestorIds(targetNode);
+  let parentId = sourceNode.parentId;
 
-    const targetIsInside = (container) =>
-        targetNode.id === container.id || targetAncestorIds.has(container.id);
+  const targetIsInside = (container) => targetNode.id === container.id || targetAncestorIds.has(container.id);
 
-    while (parentId && !visited.has(parentId)) {
-        visited.add(parentId);
-        const parent = graphIndex.byId.get(parentId);
-        if (!parent) break;
+  while (parentId && !visited.has(parentId)) {
+    visited.add(parentId);
+    const parent = graphIndex.byId.get(parentId);
+    if (!parent) break;
 
-        if (parent.type === "compound") {
-            // The automatically managed Compound inside a Parallel lane is
-            // structural only. The visible lane is the actual transition
-            // boundary, so routing through both would duplicate the same exit.
-            if (parent.data?.autoParallelLaneCompound) {
-                parentId = parent.parentId;
-                continue;
-            }
-            if (!targetIsInside(parent)) {
-                steps.push({ kind: "compound", anchor: parent, container: parent });
-            }
-        } else if (parent.type === "parallelLane") {
-            const parallel = graphIndex.byId.get(parent.parentId);
-            if (
-                parallel?.type === "parallel" &&
-                !seenParallelIds.has(parallel.id)
-            ) {
-                seenParallelIds.add(parallel.id);
-                if (!targetIsInside(parallel)) {
-                    steps.push({ kind: "parallel", anchor: parent, container: parallel });
-                }
-            }
-        } else if (parent.type === "parallel") {
-            seenParallelIds.add(parent.id);
-        }
-
+    if (parent.type === "compound") {
+      // The automatically managed Compound inside a Parallel lane is
+      // structural only. The visible lane is the actual transition
+      // boundary, so routing through both would duplicate the same exit.
+      if (parent.data?.autoParallelLaneCompound) {
         parentId = parent.parentId;
+        continue;
+      }
+      if (!targetIsInside(parent)) {
+        steps.push({ kind: "compound", anchor: parent, container: parent });
+      }
+    } else if (parent.type === "parallelLane") {
+      const parallel = graphIndex.byId.get(parent.parentId);
+      if (parallel?.type === "parallel" && !seenParallelIds.has(parallel.id)) {
+        seenParallelIds.add(parallel.id);
+        if (!targetIsInside(parallel)) {
+          steps.push({ kind: "parallel", anchor: parent, container: parallel });
+        }
+      }
+    } else if (parent.type === "parallel") {
+      seenParallelIds.add(parent.id);
     }
 
-    return steps;
+    parentId = parent.parentId;
+  }
+
+  return steps;
 };
 
 const stripSourceBoundaryData = (data = {}) => {
-    const next = { ...data };
-    [
-        "boundaryOriginalSource",
-        "boundaryOriginalSourceHandle",
-        "boundaryOriginalSources",
-        "boundaryExitId",
-        "compoundOriginalSource",
-        "compoundOriginalSourceHandle",
-        "compoundExitId",
-        "parallelOriginalSource",
-        "parallelOriginalSourceHandle",
-        "parallelExitId",
-        "boundaryInternalEdge",
-        "compoundInternalEdge",
-        "parallelInternalEdge",
-        "boundaryKind",
-    ].forEach((key) => delete next[key]);
-    return next;
+  const next = { ...data };
+  [
+    "boundaryOriginalSource",
+    "boundaryOriginalSourceHandle",
+    "boundaryOriginalSources",
+    "boundaryExitId",
+    "compoundOriginalSource",
+    "compoundOriginalSourceHandle",
+    "compoundExitId",
+    "parallelOriginalSource",
+    "parallelOriginalSourceHandle",
+    "parallelExitId",
+    "boundaryInternalEdge",
+    "compoundInternalEdge",
+    "parallelInternalEdge",
+    "boundaryKind",
+  ].forEach((key) => delete next[key]);
+  return next;
 };
 
 const makeSelfLoopControlPoints = () => [
-    { id: `cp-${crypto.randomUUID()}`, anchor: "source", dx: 76, dy: -92 },
-    { id: `cp-${crypto.randomUUID()}`, anchor: "target", dx: -76, dy: -92 },
+  { id: `cp-${crypto.randomUUID()}`, anchor: "source", dx: 76, dy: -92 },
+  { id: `cp-${crypto.randomUUID()}`, anchor: "target", dx: -76, dy: -92 },
 ];
 
 /**
@@ -130,444 +121,425 @@ const makeSelfLoopControlPoints = () => [
  * follow the new containment hierarchy.
  */
 const rebuildBoundaryTransitionsImpl = (sourceNodes = [], sourceEdges = []) => {
-    // Preserve untouched node objects. Cloning EVERY node after editing ONE
-    // transition forced React Flow to rerender every Compound/Parallel (each
-    // of which can own a large, nested subtree).
-    const nodes = [...sourceNodes];
-    const indexById = new Map(nodes.map((node, index) => [node.id, index]));
-    const graphIndex = createEditorNodeIndex(nodes);
-    const { byId } = graphIndex;
-    const mutableIds = new Set();
-    const writableNode = (id) => {
-        const index = indexById.get(id);
-        if (index == null) return null;
-        if (!mutableIds.has(id)) {
-            const old = nodes[index];
-            const copy = {
-                ...old,
-                data: { ...(old.data || {}) },
-                style: { ...(old.style || {}) },
-            };
-            nodes[index] = copy;
-            byId.set(id, copy);
-            mutableIds.add(id);
-        }
-        return nodes[index];
-    };
-    // Event handles share the same boundary path within this fixed hierarchy.
-    const exitedBoundariesBySource = new Map();
-    const getSourceSteps = (sourceId, targetNode) => {
-        let byTarget = exitedBoundariesBySource.get(sourceId);
-        if (!byTarget) {
-            byTarget = new Map();
-            exitedBoundariesBySource.set(sourceId, byTarget);
-        }
-        if (!byTarget.has(targetNode.id)) {
-            byTarget.set(
-                targetNode.id,
-                getExitedBoundaries(byId.get(sourceId), targetNode, graphIndex)
-            );
-        }
-        return byTarget.get(targetNode.id);
-    };
+  // Preserve untouched node objects. Cloning EVERY node after editing ONE
+  // transition forced React Flow to rerender every Compound/Parallel (each
+  // of which can own a large, nested subtree).
+  const nodes = [...sourceNodes];
+  const indexById = new Map(nodes.map((node, index) => [node.id, index]));
+  const graphIndex = createEditorNodeIndex(nodes);
+  const { byId } = graphIndex;
+  const mutableIds = new Set();
+  const writableNode = (id) => {
+    const index = indexById.get(id);
+    if (index == null) return null;
+    if (!mutableIds.has(id)) {
+      const old = nodes[index];
+      const copy = {
+        ...old,
+        data: { ...(old.data || {}) },
+        style: { ...(old.style || {}) },
+      };
+      nodes[index] = copy;
+      byId.set(id, copy);
+      mutableIds.add(id);
+    }
+    return nodes[index];
+  };
+  // Event handles share the same boundary path within this fixed hierarchy.
+  const exitedBoundariesBySource = new Map();
+  const getSourceSteps = (sourceId, targetNode) => {
+    let byTarget = exitedBoundariesBySource.get(sourceId);
+    if (!byTarget) {
+      byTarget = new Map();
+      exitedBoundariesBySource.set(sourceId, byTarget);
+    }
+    if (!byTarget.has(targetNode.id)) {
+      byTarget.set(targetNode.id, getExitedBoundaries(byId.get(sourceId), targetNode, graphIndex));
+    }
+    return byTarget.get(targetNode.id);
+  };
 
-    // Remove only managed boundary events. API-defined normal skill events and
-    // genuine container-level events remain untouched.
-    nodes.forEach((node) => {
-        if (!["compound", "parallel", "parallelLane"].includes(node.type)) return;
-        const existing = node.data?.events || [];
-        const events = node.type === "parallelLane"
-            ? []
-            : existing.filter(
-                (event) => !event?.editorDirectParallelEvent &&
-                    !(event?.sourceNodeId && event?.transitionHandleId)
-            );
-        if (events.length !== existing.length) {
-            writableNode(node.id).data.events = events;
-        }
+  // Remove only managed boundary events. API-defined normal skill events and
+  // genuine container-level events remain untouched.
+  nodes.forEach((node) => {
+    if (!["compound", "parallel", "parallelLane"].includes(node.type)) return;
+    const existing = node.data?.events || [];
+    const events =
+      node.type === "parallelLane"
+        ? []
+        : existing.filter(
+            (event) => !event?.editorDirectParallelEvent && !(event?.sourceNodeId && event?.transitionHandleId),
+          );
+    if (events.length !== existing.length) {
+      writableNode(node.id).data.events = events;
+    }
+  });
+
+  const semanticEdges = (sourceEdges || [])
+    .filter(
+      (edge) =>
+        !edge.data?.boundaryInternalEdge &&
+        !edge.data?.compoundInternalEdge &&
+        !edge.data?.parallelInternalEdge &&
+        !String(edge.id || "").startsWith("edge-internal-boundary-"),
+    )
+    .map((edge) => {
+      const sourceEntries = sourceEntriesOf(edge);
+      return {
+        edge,
+        sourceEntries,
+        sourceId: sourceEntries[0]?.sourceId || edge.source,
+        sourceHandle: sourceEntries[0]?.sourceHandle || String(edge.sourceHandle || edge.label || "success"),
+        semanticTargetId: semanticTargetIdOf(edge),
+      };
     });
 
-    const semanticEdges = (sourceEdges || [])
-        .filter(
-            (edge) =>
-                !edge.data?.boundaryInternalEdge &&
-                !edge.data?.compoundInternalEdge &&
-                !edge.data?.parallelInternalEdge &&
-                !String(edge.id || "").startsWith("edge-internal-boundary-")
-        )
-        .map((edge) => {
-            const sourceEntries = sourceEntriesOf(edge);
-            return {
-                edge,
-                sourceEntries,
-                sourceId: sourceEntries[0]?.sourceId || edge.source,
-                sourceHandle:
-                    sourceEntries[0]?.sourceHandle ||
-                    String(edge.sourceHandle || edge.label || "success"),
-                semanticTargetId: semanticTargetIdOf(edge),
-            };
-        });
+  // Direct, unqualified event descriptors belong on the Parallel itself.
+  // Derive their visible source ports from canonical edges every time, so
+  // deleting an edge also removes its handle (including edge-context delete).
+  const directParallelPortIds = new Map();
+  semanticEdges.forEach(({ edge, sourceId, sourceHandle }) => {
+    const owner = byId.get(sourceId);
+    if (owner?.type !== "parallel" || !byId.has(edge.target)) return;
+    if (!directParallelPortIds.has(owner.id)) directParallelPortIds.set(owner.id, new Map());
+    const ports = directParallelPortIds.get(owner.id);
+    if (!ports.has(sourceHandle))
+      ports.set(sourceHandle, {
+        id: sourceHandle,
+        name: String(edge.data?.boundaryImportedRawEvent || sourceHandle),
+        rawEvent: String(edge.data?.boundaryImportedRawEvent || sourceHandle),
+        target: edge.target,
+        editorDirectParallelEvent: true,
+        sourceNodeId: owner.id,
+        transitionHandleId: sourceHandle,
+      });
+  });
+  directParallelPortIds.forEach((ports, ownerId) => {
+    const owner = writableNode(ownerId);
+    if (owner) owner.data.events = [...(owner.data?.events || []), ...ports.values()];
+  });
 
-    // Direct, unqualified event descriptors belong on the Parallel itself.
-    // Derive their visible source ports from canonical edges every time, so
-    // deleting an edge also removes its handle (including edge-context delete).
-    const directParallelPortIds = new Map();
-    semanticEdges.forEach(({ edge, sourceId, sourceHandle }) => {
-        const owner = byId.get(sourceId);
-        if (owner?.type !== "parallel" || !byId.has(edge.target)) return;
-        if (!directParallelPortIds.has(owner.id)) directParallelPortIds.set(owner.id, new Map());
-        const ports = directParallelPortIds.get(owner.id);
-        if (!ports.has(sourceHandle)) ports.set(sourceHandle, {
-            id: sourceHandle,
-            name: String(edge.data?.boundaryImportedRawEvent || sourceHandle),
-            rawEvent: String(edge.data?.boundaryImportedRawEvent || sourceHandle),
-            target: edge.target,
-            editorDirectParallelEvent: true,
-            sourceNodeId: owner.id,
-            transitionHandleId: sourceHandle,
-        });
-    });
-    directParallelPortIds.forEach((ports, ownerId) => {
-        const owner = writableNode(ownerId);
-        if (owner) owner.data.events = [...(owner.data?.events || []), ...ports.values()];
-    });
+  const parallelSourcesCache = new Map();
+  const nextEdges = [];
+  const helperKeys = new Set();
+  const boundaryEventsByNode = new Map();
+  const updateBoundaryEvent = (anchor, event) => {
+    if (!boundaryEventsByNode.has(anchor.id)) {
+      boundaryEventsByNode.set(anchor.id, new Map());
+    }
+    const map = boundaryEventsByNode.get(anchor.id);
+    if (!map.has(event.id)) map.set(event.id, { ...event, editorBoundarySynthetic: true });
+  };
 
-    const parallelSourcesCache = new Map();
-    const nextEdges = [];
-    const helperKeys = new Set();
-    const boundaryEventsByNode = new Map();
-    const updateBoundaryEvent = (anchor, event) => {
-        if (!boundaryEventsByNode.has(anchor.id)) {
-            boundaryEventsByNode.set(anchor.id, new Map());
-        }
-        const map = boundaryEventsByNode.get(anchor.id);
-        if (!map.has(event.id)) map.set(event.id, { ...event, editorBoundarySynthetic: true });
-    };
+  semanticEdges.forEach(({ edge, sourceEntries, sourceId, sourceHandle, semanticTargetId }) => {
+    const semanticTargetNode = byId.get(semanticTargetId);
+    let validSources = sourceEntries.filter((entry) => byId.has(entry.sourceId));
+    const primarySource = validSources[0];
+    const sourceNode = primarySource ? byId.get(primarySource.sourceId) : null;
 
-    semanticEdges.forEach(
-        ({ edge, sourceEntries, sourceId, sourceHandle, semanticTargetId }) => {
-            const semanticTargetNode = byId.get(semanticTargetId);
-            let validSources = sourceEntries.filter((entry) => byId.has(entry.sourceId));
-            const primarySource = validSources[0];
-            const sourceNode = primarySource ? byId.get(primarySource.sourceId) : null;
+    if (!sourceNode || !semanticTargetNode) {
+      nextEdges.push(edge);
+      return;
+    }
 
-            if (!sourceNode || !semanticTargetNode) {
-                nextEdges.push(edge);
-                return;
-            }
-
-            // A shared external exit is shown from every matching skill in
-            // its enclosing Compound, just as it already is for a Parallel.
-            // Choose the closest crossed container: do not accidentally pull
-            // unrelated Wait skills from an outer container into a nested one.
-            // These helpers are presentation only, not additional SCXML edges.
-            const sourceSteps = getSourceSteps(sourceNode.id, semanticTargetNode);
-            const sharedStep = sourceSteps.find((step) =>
-                step.kind === "compound" || step.kind === "parallel"
-            );
-            if (sharedStep) {
-                const owner = byId.get(sharedStep.container.id);
-                const sourceName = String(
-                    sourceNode.data?.fullSkillName || sourceNode.data?.label || sourceNode.id
-                ).split('#')[0].split('.').pop();
-                const rawEvent = String(edge.data?.boundaryImportedRawEvent || '').trim() ||
-                    `${sourceName}.${primarySource.sourceHandle}`;
-                const cacheKey = `${owner.id}\u0000${rawEvent}`;
-                if (!parallelSourcesCache.has(cacheKey)) {
-                    parallelSourcesCache.set(cacheKey, findContainerEventSources({
-                        owner, rawEvent, nodes, index: graphIndex,
-                    }));
-                }
-                const sharedSources = parallelSourcesCache.get(cacheKey);
-                if (sharedSources.length > 0) {
-                    const combined = new Map();
-                    // Preserve the original source and keep it as primary for
-                    // deterministic outer-edge placement and stable IDs.
-                    [primarySource, ...sharedSources].forEach((entry) => {
-                        if (!entry || !byId.has(entry.sourceId)) return;
-                        const key = `${entry.sourceId}|${entry.sourceHandle}`;
-                        if (!combined.has(key)) combined.set(key, entry);
-                    });
-                    validSources = [...combined.values()];
-                }
-            }
-
-            // Project wildcard/imported handles that are not in a skill API
-            // as display-only handles. Never create a semantic transition on
-            // the skill itself as a side effect of visualization.
-            validSources.forEach(({ sourceId, sourceHandle }) => {
-                const skill = byId.get(sourceId);
-                if (!skill || !['custom', 'submachine'].includes(skill.type)) return;
-                if ((skill.data?.events || []).some((event) => String(event.id) === sourceHandle)) return;
-                const writable = writableNode(sourceId);
-                writable.data.events = [...(writable.data.events || []), {
-                    id: sourceHandle, name: sourceHandle, target: null,
-                    editorBoundarySynthetic: true,
-                }];
-            });
-
-            const cleanData = stripSourceBoundaryData(edge.data || {});
-            const sourcePaths = validSources.map((entry) => ({
-                ...entry,
-                steps: getSourceSteps(entry.sourceId, semanticTargetNode),
-            }));
-            const hasBoundaryStep = sourcePaths.some((path) => path.steps.length > 0);
-
-            if (!hasBoundaryStep) {
-                nextEdges.push({
-                    ...edge,
-                    source: sourceId,
-                    sourceHandle,
-                    label: sourceHandle,
-                    data: {
-                        ...cleanData,
-                        ...(sourceId === semanticTargetId && !cleanData.controlPoints
-                            ? { controlPoints: makeSelfLoopControlPoints() }
-                            : {}),
-                    },
-                });
-                return;
-            }
-
-            const importedRawEvent = String(
-                edge.data?.boundaryImportedRawEvent || ""
-            ).trim();
-            const baseName =
-                sourceNode.data?.label ||
-                String(sourceNode.data?.fullSkillName || "state")
-                    .split("#")[0]
-                    .split(".")
-                    .pop();
-            const exitLabel = importedRawEvent || `${baseName}.${sourceHandle}`;
-            const exitId =
-                String(edge.data?.boundaryExitId || "").trim() ||
-                `${sourceId}-${sourceHandle}`;
-            const crossedKinds = new Set();
-            let finalSourceId = sourceId;
-            let finalSourceHandle = sourceHandle;
-
-            sourcePaths.forEach((path, pathIndex) => {
-                let currentSourceId = path.sourceId;
-                let currentSourceHandle = path.sourceHandle;
-
-                path.steps.forEach((step) => {
-                    crossedKinds.add(step.kind);
-                    updateBoundaryEvent(step.anchor, {
-                        id: exitId,
-                        name: exitLabel,
-                        rawEvent: exitLabel,
-                        target: edge.target,
-                        sourceNodeId: sourceId,
-                        transitionHandleId: sourceHandle,
-                        ...(validSources.length > 1
-                            ? {
-                                sourceNodeIds: validSources.map((entry) => entry.sourceId),
-                                transitionHandleIds: validSources.map(
-                                    (entry) => entry.sourceHandle
-                                ),
-                            }
-                            : {}),
-                    });
-
-                    const helperKey =
-                        `${currentSourceId}|${currentSourceHandle}|` +
-                        `${step.anchor.id}|${exitId}`;
-                    if (!helperKeys.has(helperKey)) {
-                        helperKeys.add(helperKey);
-                        nextEdges.push({
-                            // Stable helper identity avoids rerender/undo churn
-                            // when an unchanged semantic edge is reprojected.
-                            id: `edge-internal-boundary-${encodeURIComponent(helperKey)}`,
-                            source: currentSourceId,
-                            target: step.anchor.id,
-                            sourceHandle: currentSourceHandle,
-                            targetHandle: `target-${exitId}`,
-                            type: "smoothstep",
-                            selectable: false,
-                            focusable: false,
-                            style: {
-                                // The helper is solid and neutral at rest.
-                                // Hover and selection style it like its outer transition.
-                                strokeWidth: 1.5,
-                            },
-                            data: {
-                                boundaryInternalEdge: true,
-                                boundaryKind: step.kind,
-                                boundaryExitId: exitId,
-                                boundaryOriginalSource: path.sourceId,
-                                boundaryOriginalSourceHandle: path.sourceHandle,
-                                // A second matching skill/lane shows the same
-                                // enclosing SCXML transition, but does not own it.
-                                // This flag affects presentation only.
-                                ...(pathIndex > 0 ? {
-                                    implicitSharedExit: true,
-                                    sharedExitOriginSourceId: primarySource.sourceId,
-                                    sharedExitOriginSourceHandle: primarySource.sourceHandle,
-                                } : {}),
-                                ...(step.kind === "compound"
-                                    ? {
-                                        compoundInternalEdge: true,
-                                        compoundExitId: exitId,
-                                    }
-                                    : {
-                                        parallelInternalEdge: true,
-                                        parallelExitId: exitId,
-                                    }),
-                            },
-                        });
-                    }
-
-                    currentSourceId = step.anchor.id;
-                    currentSourceHandle = exitId;
-                });
-
-                if (pathIndex === 0) {
-                    finalSourceId = currentSourceId;
-                    finalSourceHandle = currentSourceHandle;
-                }
-            });
-
-            nextEdges.push({
-                ...edge,
-                source: finalSourceId,
-                sourceHandle: finalSourceHandle,
-                label: sourceHandle,
-                type: "smartTransition",
-                data: {
-                    ...cleanData,
-                    boundaryOriginalSource: sourceId,
-                    boundaryOriginalSourceHandle: sourceHandle,
-                    ...(validSources.length > 1
-                        ? { boundaryOriginalSources: validSources }
-                        : {}),
-                    ...(importedRawEvent
-                        ? { boundaryImportedRawEvent: importedRawEvent }
-                        : {}),
-                    boundaryExitId: exitId,
-                    ...(crossedKinds.has("compound")
-                        ? {
-                            compoundOriginalSource: sourceId,
-                            compoundOriginalSourceHandle: sourceHandle,
-                            compoundExitId: exitId,
-                        }
-                        : {}),
-                    ...(crossedKinds.has("parallel")
-                        ? {
-                            parallelOriginalSource: sourceId,
-                            parallelOriginalSourceHandle: sourceHandle,
-                            parallelExitId: exitId,
-                        }
-                        : {}),
-                },
-            });
-        }
-    );
-
-    boundaryEventsByNode.forEach((eventsById, nodeId) => {
-        const node = writableNode(nodeId);
-        if (!node) return;
-        const events = [...(node.data?.events || []), ...eventsById.values()];
-        node.data.events = events;
-
-        if (node.type === "compound") {
-            const childrenRight = graphIndex
-                .getChildren(node.id)
-                .reduce((right, child) => {
-                    const size = getNodeSize(child);
-                    return Math.max(
-                        right,
-                        Number(child.position?.x || 0) + size.width
-                    );
-                }, COMPOUND_PADDING_X);
-            const requiredWidth =
-                childrenRight +
-                COMPOUND_PADDING_X +
-                getCompoundExitGutterWidth(events);
-            const width = Math.max(getNodeSize(node).width, requiredWidth);
-            node.width = width;
-            node.style = { ...(node.style || {}), width };
-        }
-    });
-
-    // Source handles created solely for an imported wildcard/shared boundary
-    // must disappear when their last transition disappears. Otherwise skills
-    // accumulate ghost exit tokens after repeated edits or undo/redo.
-    const activeSourceHandles = new Set();
-    nextEdges.filter((edge) => !isBoundaryHelperEdge(edge)).forEach((edge) => {
-        sourceEntriesOf(edge).forEach(({ sourceId, sourceHandle }) =>
-            activeSourceHandles.add(sourceKeyOf(sourceId, sourceHandle))
+    // A shared external exit is shown from every matching skill in
+    // its enclosing Compound, just as it already is for a Parallel.
+    // Choose the closest crossed container: do not accidentally pull
+    // unrelated Wait skills from an outer container into a nested one.
+    // These helpers are presentation only, not additional SCXML edges.
+    const sourceSteps = getSourceSteps(sourceNode.id, semanticTargetNode);
+    const sharedStep = sourceSteps.find((step) => step.kind === "compound" || step.kind === "parallel");
+    if (sharedStep) {
+      const owner = byId.get(sharedStep.container.id);
+      const sourceName = String(sourceNode.data?.fullSkillName || sourceNode.data?.label || sourceNode.id)
+        .split("#")[0]
+        .split(".")
+        .pop();
+      const rawEvent =
+        String(edge.data?.boundaryImportedRawEvent || "").trim() || `${sourceName}.${primarySource.sourceHandle}`;
+      const cacheKey = `${owner.id}\u0000${rawEvent}`;
+      if (!parallelSourcesCache.has(cacheKey)) {
+        parallelSourcesCache.set(
+          cacheKey,
+          findContainerEventSources({
+            owner,
+            rawEvent,
+            nodes,
+            index: graphIndex,
+          }),
         );
-    });
-    nodes.forEach((node) => {
-        if (!['custom', 'submachine'].includes(node.type)) return;
-        const events = node.data?.events || [];
-        const retained = events.filter((event) => !event.editorBoundarySynthetic ||
-            activeSourceHandles.has(sourceKeyOf(node.id, event.id)));
-        if (retained.length !== events.length) writableNode(node.id).data.events = retained;
+      }
+      const sharedSources = parallelSourcesCache.get(cacheKey);
+      if (sharedSources.length > 0) {
+        const combined = new Map();
+        // Preserve the original source and keep it as primary for
+        // deterministic outer-edge placement and stable IDs.
+        [primarySource, ...sharedSources].forEach((entry) => {
+          if (!entry || !byId.has(entry.sourceId)) return;
+          const key = `${entry.sourceId}|${entry.sourceHandle}`;
+          if (!combined.has(key)) combined.set(key, entry);
+        });
+        validSources = [...combined.values()];
+      }
+    }
+
+    // Project wildcard/imported handles that are not in a skill API
+    // as display-only handles. Never create a semantic transition on
+    // the skill itself as a side effect of visualization.
+    validSources.forEach(({ sourceId, sourceHandle }) => {
+      const skill = byId.get(sourceId);
+      if (!skill || !["custom", "submachine"].includes(skill.type)) return;
+      if ((skill.data?.events || []).some((event) => String(event.id) === sourceHandle)) return;
+      const writable = writableNode(sourceId);
+      writable.data.events = [
+        ...(writable.data.events || []),
+        {
+          id: sourceHandle,
+          name: sourceHandle,
+          target: null,
+          editorBoundarySynthetic: true,
+        },
+      ];
     });
 
-    // Synthetic exits can be added while a container is collapsed. Keep its
-    // on-screen frame tall enough without changing the stored expanded size.
-    nodes.forEach((node) => {
-        if (!node.data?.isCollapsed || !["compound", "parallel"].includes(node.type)) return;
-        const height = getCollapsedBoundaryLayout(
-            getContainerExitEvents(node.data, node.type)
-        ).height;
-        if (getNodeSize(node).height === height) return;
-        const writable = writableNode(node.id);
-        writable.height = height;
-        writable.style.height = height;
+    const cleanData = stripSourceBoundaryData(edge.data || {});
+    const sourcePaths = validSources.map((entry) => ({
+      ...entry,
+      steps: getSourceSteps(entry.sourceId, semanticTargetNode),
+    }));
+    const hasBoundaryStep = sourcePaths.some((path) => path.steps.length > 0);
+
+    if (!hasBoundaryStep) {
+      nextEdges.push({
+        ...edge,
+        source: sourceId,
+        sourceHandle,
+        label: sourceHandle,
+        data: {
+          ...cleanData,
+          ...(sourceId === semanticTargetId && !cleanData.controlPoints
+            ? { controlPoints: makeSelfLoopControlPoints() }
+            : {}),
+        },
+      });
+      return;
+    }
+
+    const importedRawEvent = String(edge.data?.boundaryImportedRawEvent || "").trim();
+    const baseName =
+      sourceNode.data?.label ||
+      String(sourceNode.data?.fullSkillName || "state")
+        .split("#")[0]
+        .split(".")
+        .pop();
+    const exitLabel = importedRawEvent || `${baseName}.${sourceHandle}`;
+    const exitId = String(edge.data?.boundaryExitId || "").trim() || `${sourceId}-${sourceHandle}`;
+    const crossedKinds = new Set();
+    let finalSourceId = sourceId;
+    let finalSourceHandle = sourceHandle;
+
+    sourcePaths.forEach((path, pathIndex) => {
+      let currentSourceId = path.sourceId;
+      let currentSourceHandle = path.sourceHandle;
+
+      path.steps.forEach((step) => {
+        crossedKinds.add(step.kind);
+        updateBoundaryEvent(step.anchor, {
+          id: exitId,
+          name: exitLabel,
+          rawEvent: exitLabel,
+          target: edge.target,
+          sourceNodeId: sourceId,
+          transitionHandleId: sourceHandle,
+          ...(validSources.length > 1
+            ? {
+                sourceNodeIds: validSources.map((entry) => entry.sourceId),
+                transitionHandleIds: validSources.map((entry) => entry.sourceHandle),
+              }
+            : {}),
+        });
+
+        const helperKey = `${currentSourceId}|${currentSourceHandle}|` + `${step.anchor.id}|${exitId}`;
+        if (!helperKeys.has(helperKey)) {
+          helperKeys.add(helperKey);
+          nextEdges.push({
+            // Stable helper identity avoids rerender/undo churn
+            // when an unchanged semantic edge is reprojected.
+            id: `edge-internal-boundary-${encodeURIComponent(helperKey)}`,
+            source: currentSourceId,
+            target: step.anchor.id,
+            sourceHandle: currentSourceHandle,
+            targetHandle: `target-${exitId}`,
+            type: "smoothstep",
+            selectable: false,
+            focusable: false,
+            style: {
+              // The helper is solid and neutral at rest.
+              // Hover and selection style it like its outer transition.
+              strokeWidth: 1.5,
+            },
+            data: {
+              boundaryInternalEdge: true,
+              boundaryKind: step.kind,
+              boundaryExitId: exitId,
+              boundaryOriginalSource: path.sourceId,
+              boundaryOriginalSourceHandle: path.sourceHandle,
+              // A second matching skill/lane shows the same
+              // enclosing SCXML transition, but does not own it.
+              // This flag affects presentation only.
+              ...(pathIndex > 0
+                ? {
+                    implicitSharedExit: true,
+                    sharedExitOriginSourceId: primarySource.sourceId,
+                    sharedExitOriginSourceHandle: primarySource.sourceHandle,
+                  }
+                : {}),
+              ...(step.kind === "compound"
+                ? {
+                    compoundInternalEdge: true,
+                    compoundExitId: exitId,
+                  }
+                : {
+                    parallelInternalEdge: true,
+                    parallelExitId: exitId,
+                  }),
+            },
+          });
+        }
+
+        currentSourceId = step.anchor.id;
+        currentSourceHandle = exitId;
+      });
+
+      if (pathIndex === 0) {
+        finalSourceId = currentSourceId;
+        finalSourceHandle = currentSourceHandle;
+      }
     });
 
-    return { nodes, edges: nextEdges };
+    nextEdges.push({
+      ...edge,
+      source: finalSourceId,
+      sourceHandle: finalSourceHandle,
+      label: sourceHandle,
+      type: "smartTransition",
+      data: {
+        ...cleanData,
+        boundaryOriginalSource: sourceId,
+        boundaryOriginalSourceHandle: sourceHandle,
+        ...(validSources.length > 1 ? { boundaryOriginalSources: validSources } : {}),
+        ...(importedRawEvent ? { boundaryImportedRawEvent: importedRawEvent } : {}),
+        boundaryExitId: exitId,
+        ...(crossedKinds.has("compound")
+          ? {
+              compoundOriginalSource: sourceId,
+              compoundOriginalSourceHandle: sourceHandle,
+              compoundExitId: exitId,
+            }
+          : {}),
+        ...(crossedKinds.has("parallel")
+          ? {
+              parallelOriginalSource: sourceId,
+              parallelOriginalSourceHandle: sourceHandle,
+              parallelExitId: exitId,
+            }
+          : {}),
+      },
+    });
+  });
+
+  boundaryEventsByNode.forEach((eventsById, nodeId) => {
+    const node = writableNode(nodeId);
+    if (!node) return;
+    const events = [...(node.data?.events || []), ...eventsById.values()];
+    node.data.events = events;
+
+    if (node.type === "compound") {
+      const childrenRight = graphIndex.getChildren(node.id).reduce((right, child) => {
+        const size = getNodeSize(child);
+        return Math.max(right, Number(child.position?.x || 0) + size.width);
+      }, COMPOUND_PADDING_X);
+      const requiredWidth = childrenRight + COMPOUND_PADDING_X + getCompoundExitGutterWidth(events);
+      const width = Math.max(getNodeSize(node).width, requiredWidth);
+      node.width = width;
+      node.style = { ...(node.style || {}), width };
+    }
+  });
+
+  // Source handles created solely for an imported wildcard/shared boundary
+  // must disappear when their last transition disappears. Otherwise skills
+  // accumulate ghost exit tokens after repeated edits or undo/redo.
+  const activeSourceHandles = new Set();
+  nextEdges
+    .filter((edge) => !isBoundaryHelperEdge(edge))
+    .forEach((edge) => {
+      sourceEntriesOf(edge).forEach(({ sourceId, sourceHandle }) =>
+        activeSourceHandles.add(sourceKeyOf(sourceId, sourceHandle)),
+      );
+    });
+  nodes.forEach((node) => {
+    if (!["custom", "submachine"].includes(node.type)) return;
+    const events = node.data?.events || [];
+    const retained = events.filter(
+      (event) => !event.editorBoundarySynthetic || activeSourceHandles.has(sourceKeyOf(node.id, event.id)),
+    );
+    if (retained.length !== events.length) writableNode(node.id).data.events = retained;
+  });
+
+  // Synthetic exits can be added while a container is collapsed. Keep its
+  // on-screen frame tall enough without changing the stored expanded size.
+  nodes.forEach((node) => {
+    if (!node.data?.isCollapsed || !["compound", "parallel"].includes(node.type)) return;
+    const height = getCollapsedBoundaryLayout(getContainerExitEvents(node.data, node.type)).height;
+    if (getNodeSize(node).height === height) return;
+    const writable = writableNode(node.id);
+    writable.height = height;
+    writable.style.height = height;
+  });
+
+  return { nodes, edges: nextEdges };
 };
 
 export const rebuildBoundaryTransitions = (sourceNodes = [], sourceEdges = []) =>
-    measureContainerTask(
-        "rebuild all boundary transitions",
-        () => rebuildBoundaryTransitionsImpl(sourceNodes, sourceEdges),
-        { nodes: sourceNodes.length, edges: sourceEdges.length }
-    );
+  measureContainerTask(
+    "rebuild all boundary transitions",
+    () => rebuildBoundaryTransitionsImpl(sourceNodes, sourceEdges),
+    { nodes: sourceNodes.length, edges: sourceEdges.length },
+  );
 
 const isBoundaryHelperEdge = (edge) =>
-    Boolean(
-        edge?.data?.boundaryInternalEdge ||
-        edge?.data?.compoundInternalEdge ||
-        edge?.data?.parallelInternalEdge ||
-        String(edge?.id || "").startsWith("edge-internal-boundary-")
-    );
+  Boolean(
+    edge?.data?.boundaryInternalEdge ||
+    edge?.data?.compoundInternalEdge ||
+    edge?.data?.parallelInternalEdge ||
+    String(edge?.id || "").startsWith("edge-internal-boundary-"),
+  );
 
-const isManagedBoundaryEvent = (event) =>
-    Boolean(event?.sourceNodeId && event?.transitionHandleId);
+const isManagedBoundaryEvent = (event) => Boolean(event?.sourceNodeId && event?.transitionHandleId);
 
-const sourceKeyOf = (sourceId, sourceHandle) =>
-    `${String(sourceId || "")}|${String(sourceHandle || "")}`;
+const sourceKeyOf = (sourceId, sourceHandle) => `${String(sourceId || "")}|${String(sourceHandle || "")}`;
 
 const eventSourceEntriesOf = (event) => {
-    const sourceIds = Array.isArray(event?.sourceNodeIds)
-        ? event.sourceNodeIds.map(String)
-        : [];
-    const handles = Array.isArray(event?.transitionHandleIds)
-        ? event.transitionHandleIds.map(String)
-        : [];
+  const sourceIds = Array.isArray(event?.sourceNodeIds) ? event.sourceNodeIds.map(String) : [];
+  const handles = Array.isArray(event?.transitionHandleIds) ? event.transitionHandleIds.map(String) : [];
 
-    if (sourceIds.length > 0 && sourceIds.length === handles.length) {
-        return sourceIds.map((sourceId, index) => ({
-            sourceId,
-            sourceHandle: handles[index],
-        }));
-    }
+  if (sourceIds.length > 0 && sourceIds.length === handles.length) {
+    return sourceIds.map((sourceId, index) => ({
+      sourceId,
+      sourceHandle: handles[index],
+    }));
+  }
 
-    if (event?.sourceNodeId && event?.transitionHandleId) {
-        return [
-            {
-                sourceId: String(event.sourceNodeId),
-                sourceHandle: String(event.transitionHandleId),
-            },
-        ];
-    }
+  if (event?.sourceNodeId && event?.transitionHandleId) {
+    return [
+      {
+        sourceId: String(event.sourceNodeId),
+        sourceHandle: String(event.transitionHandleId),
+      },
+    ];
+  }
 
-    return [];
+  return [];
 };
 
 /**
@@ -582,267 +554,231 @@ const eventSourceEntriesOf = (event) => {
  * structurally reuses every unrelated node/edge.
  */
 const rebuildBoundaryTransitionsIncrementalImpl = (
-    sourceNodes = [],
-    sourceEdges = [],
-    {
-        previousEdges = [],
-        changedEdgeIds = [],
-        sourceIds = [],
-        sourceKeys = [],
-    } = {}
+  sourceNodes = [],
+  sourceEdges = [],
+  { previousEdges = [], changedEdgeIds = [], sourceIds = [], sourceKeys = [] } = {},
 ) => {
-    const selectedSourceIds = new Set(
-        (sourceIds || []).filter(Boolean).map((value) => String(value))
-    );
-    const selectedSourceKeys = new Set(
-        (sourceKeys || [])
-            .map((entry) => {
-                if (typeof entry === "string") return entry;
-                if (!entry?.sourceId || entry?.sourceHandle == null) return "";
-                return sourceKeyOf(entry.sourceId, entry.sourceHandle);
-            })
-            .filter(Boolean)
-    );
-    const changedIds = new Set(
-        (changedEdgeIds || []).filter(Boolean).map((value) => String(value))
-    );
+  const selectedSourceIds = new Set((sourceIds || []).filter(Boolean).map((value) => String(value)));
+  const selectedSourceKeys = new Set(
+    (sourceKeys || [])
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (!entry?.sourceId || entry?.sourceHandle == null) return "";
+        return sourceKeyOf(entry.sourceId, entry.sourceHandle);
+      })
+      .filter(Boolean),
+  );
+  const changedIds = new Set((changedEdgeIds || []).filter(Boolean).map((value) => String(value)));
 
-    const collectChangedEdgeSources = (edges) => {
-        if (changedIds.size === 0) return;
-        (edges || []).forEach((edge) => {
-            if (!changedIds.has(String(edge?.id || ""))) return;
-            sourceEntriesOf(edge).forEach((entry) => {
-                if (!entry?.sourceId || entry?.sourceHandle == null) return;
-                selectedSourceKeys.add(
-                    sourceKeyOf(entry.sourceId, entry.sourceHandle)
-                );
-            });
-        });
-    };
-
-    collectChangedEdgeSources(previousEdges);
-    collectChangedEdgeSources(sourceEdges);
-
-    // Direct event descriptors live on the Parallel's own border. Unlike
-    // ordinary skill exits, their source ports are derived from the complete
-    // semantic edge set, so a deletion must invalidate the owner's ports.
-    // This is an infrequent operation; use the authoritative full rebuild.
-    const directOwnerIds = new Set((sourceNodes || [])
-        .filter(node => node.type === "parallel")
-        .map(node => node.id));
-    const hasChangedDirectParallelEdge = [...(previousEdges || []), ...(sourceEdges || [])]
-        .some(edge => !isBoundaryHelperEdge(edge) &&
-            (directOwnerIds.has(edge.source) || directOwnerIds.has(edge.data?.boundaryEventOwnerId)) &&
-            (changedIds.has(String(edge.id)) || selectedSourceIds.has(edge.source) ||
-                selectedSourceKeys.has(sourceKeyOf(edge.source, edge.sourceHandle))));
-    if (hasChangedDirectParallelEdge) {
-        const rebuilt = rebuildBoundaryTransitions(sourceNodes, sourceEdges);
-        return { ...rebuilt, affectedNodeIds: [...directOwnerIds] };
-    }
-
-    const matchesSourceEntry = (entry) => {
-        if (!entry?.sourceId || entry?.sourceHandle == null) return false;
-        const sourceId = String(entry.sourceId);
-        return (
-            selectedSourceIds.has(sourceId) ||
-            selectedSourceKeys.has(sourceKeyOf(sourceId, entry.sourceHandle))
-        );
-    };
-
-    const matchesSemanticEdge = (edge) =>
-        !isBoundaryHelperEdge(edge) && sourceEntriesOf(edge).some(matchesSourceEntry);
-
-    const matchesHelperEdge = (edge) => {
-        if (!isBoundaryHelperEdge(edge)) return false;
-        return matchesSourceEntry({
-            sourceId:
-                edge?.data?.boundaryOriginalSource ||
-                edge?.data?.compoundOriginalSource ||
-                edge?.data?.parallelOriginalSource,
-            sourceHandle:
-                edge?.data?.boundaryOriginalSourceHandle ||
-                edge?.data?.compoundOriginalSourceHandle ||
-                edge?.data?.parallelOriginalSourceHandle,
-        });
-    };
-
-    const matchesManagedEvent = (event) =>
-        isManagedBoundaryEvent(event) &&
-        eventSourceEntriesOf(event).some(matchesSourceEntry);
-
-    // If the caller did not provide enough information to identify a logical
-    // transition source, prefer correctness and fall back to the full rebuild.
-    if (selectedSourceIds.size === 0 && selectedSourceKeys.size === 0) {
-        const rebuilt = rebuildBoundaryTransitions(sourceNodes, sourceEdges);
-        return {
-            ...rebuilt,
-            affectedNodeIds: rebuilt.nodes
-                .filter(
-                    (node) =>
-                        node.type === "compound" || node.type === "parallelLane"
-                )
-                .map((node) => node.id),
-        };
-    }
-
-    const affectedNodeIds = new Set();
-    const cleanedNodes = (sourceNodes || []).map((node) => {
-        if (node.type !== "compound" && node.type !== "parallelLane") {
-            return node;
-        }
-
-        const events = node.data?.events || [];
-        const nextEvents = events.filter((event) => !matchesManagedEvent(event));
-        if (nextEvents.length === events.length) return node;
-
-        affectedNodeIds.add(node.id);
-        return {
-            ...node,
-            data: {
-                ...(node.data || {}),
-                events: nextEvents,
-            },
-        };
+  const collectChangedEdgeSources = (edges) => {
+    if (changedIds.size === 0) return;
+    (edges || []).forEach((edge) => {
+      if (!changedIds.has(String(edge?.id || ""))) return;
+      sourceEntriesOf(edge).forEach((entry) => {
+        if (!entry?.sourceId || entry?.sourceHandle == null) return;
+        selectedSourceKeys.add(sourceKeyOf(entry.sourceId, entry.sourceHandle));
+      });
     });
+  };
 
-    const selectedSemanticEdges = (sourceEdges || []).filter(matchesSemanticEdge);
+  collectChangedEdgeSources(previousEdges);
+  collectChangedEdgeSources(sourceEdges);
 
-    // Reuse the well-tested full routing logic for only the changed semantic
-    // transitions. Its O(nodes) setup remains cheap compared with rerouting the
-    // complete transition graph, while all expensive per-edge boundary work is
-    // now proportional to the edited source only.
-    const partial =
-        selectedSemanticEdges.length > 0
-            ? rebuildBoundaryTransitions(sourceNodes, selectedSemanticEdges)
-            : { nodes: [], edges: [] };
+  // Direct event descriptors live on the Parallel's own border. Unlike
+  // ordinary skill exits, their source ports are derived from the complete
+  // semantic edge set, so a deletion must invalidate the owner's ports.
+  // This is an infrequent operation; use the authoritative full rebuild.
+  const directOwnerIds = new Set((sourceNodes || []).filter((node) => node.type === "parallel").map((node) => node.id));
+  const hasChangedDirectParallelEdge = [...(previousEdges || []), ...(sourceEdges || [])].some(
+    (edge) =>
+      !isBoundaryHelperEdge(edge) &&
+      (directOwnerIds.has(edge.source) || directOwnerIds.has(edge.data?.boundaryEventOwnerId)) &&
+      (changedIds.has(String(edge.id)) ||
+        selectedSourceIds.has(edge.source) ||
+        selectedSourceKeys.has(sourceKeyOf(edge.source, edge.sourceHandle))),
+  );
+  if (hasChangedDirectParallelEdge) {
+    const rebuilt = rebuildBoundaryTransitions(sourceNodes, sourceEdges);
+    return { ...rebuilt, affectedNodeIds: [...directOwnerIds] };
+  }
 
-    const partialNodeById = new Map(
-        (partial.nodes || []).map((node) => [node.id, node])
-    );
+  const matchesSourceEntry = (entry) => {
+    if (!entry?.sourceId || entry?.sourceHandle == null) return false;
+    const sourceId = String(entry.sourceId);
+    return selectedSourceIds.has(sourceId) || selectedSourceKeys.has(sourceKeyOf(sourceId, entry.sourceHandle));
+  };
 
-    // Incremental projection must also publish source-handle additions. The
-    // previous implementation merged only container nodes, so a generated
-    // wildcard helper could point at a nonexistent skill port.
-    const liveSourceHandles = new Set();
-    (sourceEdges || []).filter((edge) => !isBoundaryHelperEdge(edge)).forEach((edge) => {
-        sourceEntriesOf(edge).forEach(({ sourceId, sourceHandle }) =>
-            liveSourceHandles.add(sourceKeyOf(sourceId, sourceHandle))
-        );
+  const matchesSemanticEdge = (edge) => !isBoundaryHelperEdge(edge) && sourceEntriesOf(edge).some(matchesSourceEntry);
+
+  const matchesHelperEdge = (edge) => {
+    if (!isBoundaryHelperEdge(edge)) return false;
+    return matchesSourceEntry({
+      sourceId:
+        edge?.data?.boundaryOriginalSource || edge?.data?.compoundOriginalSource || edge?.data?.parallelOriginalSource,
+      sourceHandle:
+        edge?.data?.boundaryOriginalSourceHandle ||
+        edge?.data?.compoundOriginalSourceHandle ||
+        edge?.data?.parallelOriginalSourceHandle,
     });
-    const mergedNodes = cleanedNodes.map((node) => {
-        if (node.type === 'custom' || node.type === 'submachine') {
-            const previous = node.data?.events || [];
-            const live = previous.filter((event) => !event.editorBoundarySynthetic ||
-                liveSourceHandles.has(sourceKeyOf(node.id, event.id)));
-            const sourcePortEvents = (partialNodeById.get(node.id)?.data?.events || [])
-                .filter((event) => event.editorBoundarySynthetic);
-            const known = new Set(live.map((event) => String(event.id)));
-            for (const port of sourcePortEvents) {
-                if (!known.has(String(port.id))) {
-                    live.push(port);
-                    known.add(String(port.id));
-                }
-            }
-            if (live.length === previous.length && live.every((event, i) => event === previous[i])) return node;
-            affectedNodeIds.add(node.id);
-            return { ...node, data: { ...(node.data || {}), events: live } };
-        }
-        if (node.type !== "compound" && node.type !== "parallelLane") {
-            return node;
-        }
+  };
 
-        const partialNode = partialNodeById.get(node.id);
-        if (!partialNode) return node;
+  const matchesManagedEvent = (event) =>
+    isManagedBoundaryEvent(event) && eventSourceEntriesOf(event).some(matchesSourceEntry);
 
-        const generatedEvents = (partialNode.data?.events || []).filter(
-            matchesManagedEvent
-        );
-        if (generatedEvents.length === 0) return node;
-
-        const eventsById = new Map(
-            (node.data?.events || []).map((event) => [event.id, event])
-        );
-        generatedEvents.forEach((event) => eventsById.set(event.id, event));
-        affectedNodeIds.add(node.id);
-
-        const partialWidth = Number(partialNode.style?.width) || 0;
-        const currentWidth = getNodeSize(node).width;
-        const width = Math.max(currentWidth, partialWidth);
-        const merged = {
-            ...node,
-            data: {
-                ...(node.data || {}),
-                events: [...eventsById.values()],
-            },
-            ...(width > currentWidth
-                ? {
-                    width,
-                    style: { ...(node.style || {}), width },
-                }
-                : {}),
-        };
-        if (merged.data.isCollapsed) {
-            const height = getCollapsedBoundaryLayout(
-                getContainerExitEvents(merged.data, merged.type)
-            ).height;
-            return {
-                ...merged,
-                height,
-                style: { ...(merged.style || {}), height },
-            };
-        }
-        return merged;
-    });
-
-    const affectedIndexes = [];
-    const retainedEdges = [];
-    (sourceEdges || []).forEach((edge, index) => {
-        if (matchesSemanticEdge(edge) || matchesHelperEdge(edge)) {
-            affectedIndexes.push(index);
-            return;
-        }
-        retainedEdges.push({ edge, index });
-    });
-
-    const insertionIndex =
-        affectedIndexes.length > 0
-            ? Math.min(...affectedIndexes)
-            : sourceEdges.length;
-    const before = retainedEdges
-        .filter(({ index }) => index < insertionIndex)
-        .map(({ edge }) => edge);
-    const after = retainedEdges
-        .filter(({ index }) => index >= insertionIndex)
-        .map(({ edge }) => edge);
-
-    const sizedNodes = mergedNodes.map((node) => {
-        if (!node.data?.isCollapsed || !["compound", "parallel"].includes(node.type)) return node;
-        const height = getCollapsedBoundaryLayout(getContainerExitEvents(node.data, node.type)).height;
-        if (getNodeSize(node).height === height) return node;
-        return { ...node, height, style: { ...(node.style || {}), height } };
-    });
-
+  // If the caller did not provide enough information to identify a logical
+  // transition source, prefer correctness and fall back to the full rebuild.
+  if (selectedSourceIds.size === 0 && selectedSourceKeys.size === 0) {
+    const rebuilt = rebuildBoundaryTransitions(sourceNodes, sourceEdges);
     return {
-        nodes: sizedNodes,
-        edges: [...before, ...(partial.edges || []), ...after],
-        affectedNodeIds: [...affectedNodeIds],
+      ...rebuilt,
+      affectedNodeIds: rebuilt.nodes
+        .filter((node) => node.type === "compound" || node.type === "parallelLane")
+        .map((node) => node.id),
     };
+  }
+
+  const affectedNodeIds = new Set();
+  const cleanedNodes = (sourceNodes || []).map((node) => {
+    if (node.type !== "compound" && node.type !== "parallelLane") {
+      return node;
+    }
+
+    const events = node.data?.events || [];
+    const nextEvents = events.filter((event) => !matchesManagedEvent(event));
+    if (nextEvents.length === events.length) return node;
+
+    affectedNodeIds.add(node.id);
+    return {
+      ...node,
+      data: {
+        ...(node.data || {}),
+        events: nextEvents,
+      },
+    };
+  });
+
+  const selectedSemanticEdges = (sourceEdges || []).filter(matchesSemanticEdge);
+
+  // Reuse the well-tested full routing logic for only the changed semantic
+  // transitions. Its O(nodes) setup remains cheap compared with rerouting the
+  // complete transition graph, while all expensive per-edge boundary work is
+  // now proportional to the edited source only.
+  const partial =
+    selectedSemanticEdges.length > 0
+      ? rebuildBoundaryTransitions(sourceNodes, selectedSemanticEdges)
+      : { nodes: [], edges: [] };
+
+  const partialNodeById = new Map((partial.nodes || []).map((node) => [node.id, node]));
+
+  // Incremental projection must also publish source-handle additions. The
+  // previous implementation merged only container nodes, so a generated
+  // wildcard helper could point at a nonexistent skill port.
+  const liveSourceHandles = new Set();
+  (sourceEdges || [])
+    .filter((edge) => !isBoundaryHelperEdge(edge))
+    .forEach((edge) => {
+      sourceEntriesOf(edge).forEach(({ sourceId, sourceHandle }) =>
+        liveSourceHandles.add(sourceKeyOf(sourceId, sourceHandle)),
+      );
+    });
+  const mergedNodes = cleanedNodes.map((node) => {
+    if (node.type === "custom" || node.type === "submachine") {
+      const previous = node.data?.events || [];
+      const live = previous.filter(
+        (event) => !event.editorBoundarySynthetic || liveSourceHandles.has(sourceKeyOf(node.id, event.id)),
+      );
+      const sourcePortEvents = (partialNodeById.get(node.id)?.data?.events || []).filter(
+        (event) => event.editorBoundarySynthetic,
+      );
+      const known = new Set(live.map((event) => String(event.id)));
+      for (const port of sourcePortEvents) {
+        if (!known.has(String(port.id))) {
+          live.push(port);
+          known.add(String(port.id));
+        }
+      }
+      if (live.length === previous.length && live.every((event, i) => event === previous[i])) return node;
+      affectedNodeIds.add(node.id);
+      return { ...node, data: { ...(node.data || {}), events: live } };
+    }
+    if (node.type !== "compound" && node.type !== "parallelLane") {
+      return node;
+    }
+
+    const partialNode = partialNodeById.get(node.id);
+    if (!partialNode) return node;
+
+    const generatedEvents = (partialNode.data?.events || []).filter(matchesManagedEvent);
+    if (generatedEvents.length === 0) return node;
+
+    const eventsById = new Map((node.data?.events || []).map((event) => [event.id, event]));
+    generatedEvents.forEach((event) => eventsById.set(event.id, event));
+    affectedNodeIds.add(node.id);
+
+    const partialWidth = Number(partialNode.style?.width) || 0;
+    const currentWidth = getNodeSize(node).width;
+    const width = Math.max(currentWidth, partialWidth);
+    const merged = {
+      ...node,
+      data: {
+        ...(node.data || {}),
+        events: [...eventsById.values()],
+      },
+      ...(width > currentWidth
+        ? {
+            width,
+            style: { ...(node.style || {}), width },
+          }
+        : {}),
+    };
+    if (merged.data.isCollapsed) {
+      const height = getCollapsedBoundaryLayout(getContainerExitEvents(merged.data, merged.type)).height;
+      return {
+        ...merged,
+        height,
+        style: { ...(merged.style || {}), height },
+      };
+    }
+    return merged;
+  });
+
+  const affectedIndexes = [];
+  const retainedEdges = [];
+  (sourceEdges || []).forEach((edge, index) => {
+    if (matchesSemanticEdge(edge) || matchesHelperEdge(edge)) {
+      affectedIndexes.push(index);
+      return;
+    }
+    retainedEdges.push({ edge, index });
+  });
+
+  const insertionIndex = affectedIndexes.length > 0 ? Math.min(...affectedIndexes) : sourceEdges.length;
+  const before = retainedEdges.filter(({ index }) => index < insertionIndex).map(({ edge }) => edge);
+  const after = retainedEdges.filter(({ index }) => index >= insertionIndex).map(({ edge }) => edge);
+
+  const sizedNodes = mergedNodes.map((node) => {
+    if (!node.data?.isCollapsed || !["compound", "parallel"].includes(node.type)) return node;
+    const height = getCollapsedBoundaryLayout(getContainerExitEvents(node.data, node.type)).height;
+    if (getNodeSize(node).height === height) return node;
+    return { ...node, height, style: { ...(node.style || {}), height } };
+  });
+
+  return {
+    nodes: sizedNodes,
+    edges: [...before, ...(partial.edges || []), ...after],
+    affectedNodeIds: [...affectedNodeIds],
+  };
 };
 
-
-export const rebuildBoundaryTransitionsIncremental = (
-    sourceNodes = [],
-    sourceEdges = [],
-    options = {}
-) =>
-    measureContainerTask(
-        "rebuild boundary transitions incrementally",
-        () => rebuildBoundaryTransitionsIncrementalImpl(sourceNodes, sourceEdges, options),
-        {
-            nodes: sourceNodes.length,
-            edges: sourceEdges.length,
-            changedEdges: options?.changedEdgeIds?.length || 0,
-            sourceIds: options?.sourceIds?.length || 0,
-            sourceKeys: options?.sourceKeys?.length || 0,
-        }
-    );
+export const rebuildBoundaryTransitionsIncremental = (sourceNodes = [], sourceEdges = [], options = {}) =>
+  measureContainerTask(
+    "rebuild boundary transitions incrementally",
+    () => rebuildBoundaryTransitionsIncrementalImpl(sourceNodes, sourceEdges, options),
+    {
+      nodes: sourceNodes.length,
+      edges: sourceEdges.length,
+      changedEdges: options?.changedEdgeIds?.length || 0,
+      sourceIds: options?.sourceIds?.length || 0,
+      sourceKeys: options?.sourceKeys?.length || 0,
+    },
+  );

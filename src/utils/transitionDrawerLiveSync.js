@@ -6,12 +6,15 @@ import { getTransitionScope } from "./transitionScopes.js";
  * regenerate incomplete local transitions, which belong to the editor.
  */
 export function appendPublishedGraphTransitions(draft, candidates, previousGraphIds, currentGraphIds) {
-    const known = new Set(draft.map(item => String(item.edgeId || item.transitionId)));
-    const additions = candidates.filter(item =>
-        item.edgeId && currentGraphIds.has(item.edgeId) &&
-        !previousGraphIds.has(item.edgeId) && !known.has(String(item.edgeId))
-    );
-    return additions.length ? [...draft, ...additions] : draft;
+  const known = new Set(draft.map((item) => String(item.edgeId || item.transitionId)));
+  const additions = candidates.filter(
+    (item) =>
+      item.edgeId &&
+      currentGraphIds.has(item.edgeId) &&
+      !previousGraphIds.has(item.edgeId) &&
+      !known.has(String(item.edgeId)),
+  );
+  return additions.length ? [...draft, ...additions] : draft;
 }
 
 /**
@@ -20,38 +23,40 @@ export function appendPublishedGraphTransitions(draft, candidates, previousGraph
  * to drawerCommit as individual transitions from the selected skill.
  */
 export const getSharedContainerExitsForSkill = (sourceId, nodes, edges) => {
-    const byId = new Map(nodes.map(node => [node.id, node]));
-    return edges.flatMap(edge => {
-        if (edge?.data?.boundaryInternalEdge || edge?.data?.compoundInternalEdge ||
-            edge?.data?.parallelInternalEdge) return [];
-        const sources = Array.isArray(edge?.data?.boundaryOriginalSources)
-            ? edge.data.boundaryOriginalSources : [];
-        if (sources.length < 2 || sources[0]?.sourceId === sourceId) return [];
-        const matching = sources.find(entry => entry?.sourceId === sourceId);
-        if (!matching) return [];
-        const scope = getTransitionScope(sourceId, edge.target, nodes);
-        if (!scope || !['compound', 'parallel'].includes(scope.nodeType)) return [];
-        const target = byId.get(edge.target);
-        return [{
-            edgeId: edge.id,
-            event: String(matching.sourceHandle || edge?.sourceHandle || "success"),
-            target: edge.target,
-            targetLabel: target?.data?.label || target?.data?.fullSkillName || edge.target,
-            scopeId: scope.id,
-            scopeLabel: scope.label,
-            scopeType: scope.nodeType,
-            originSourceId: sources[0].sourceId,
-            originSourceHandle: sources[0].sourceHandle,
-            originSourceName: (() => {
-                const origin = byId.get(sources[0].sourceId);
-                const fullName = String(origin?.data?.fullSkillName || "");
-                return fullName.split(".").pop() ||
-                    origin?.data?.label || sources[0].sourceId;
-            })(),
-            assignments: Array.isArray(edge.data?.assignments)
-                ? edge.data.assignments : edge.data?.assign?.location ? [edge.data.assign] : [],
-            cond: String(edge.data?.cond || ''),
-        }];
-    });
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return edges.flatMap((edge) => {
+    if (edge?.data?.boundaryInternalEdge || edge?.data?.compoundInternalEdge || edge?.data?.parallelInternalEdge)
+      return [];
+    const sources = Array.isArray(edge?.data?.boundaryOriginalSources) ? edge.data.boundaryOriginalSources : [];
+    if (sources.length < 2 || sources[0]?.sourceId === sourceId) return [];
+    const matching = sources.find((entry) => entry?.sourceId === sourceId);
+    if (!matching) return [];
+    const scope = getTransitionScope(sourceId, edge.target, nodes);
+    if (!scope || !["compound", "parallel"].includes(scope.nodeType)) return [];
+    const target = byId.get(edge.target);
+    return [
+      {
+        edgeId: edge.id,
+        event: String(matching.sourceHandle || edge?.sourceHandle || "success"),
+        target: edge.target,
+        targetLabel: target?.data?.label || target?.data?.fullSkillName || edge.target,
+        scopeId: scope.id,
+        scopeLabel: scope.label,
+        scopeType: scope.nodeType,
+        originSourceId: sources[0].sourceId,
+        originSourceHandle: sources[0].sourceHandle,
+        originSourceName: (() => {
+          const origin = byId.get(sources[0].sourceId);
+          const fullName = String(origin?.data?.fullSkillName || "");
+          return fullName.split(".").pop() || origin?.data?.label || sources[0].sourceId;
+        })(),
+        assignments: Array.isArray(edge.data?.assignments)
+          ? edge.data.assignments
+          : edge.data?.assign?.location
+            ? [edge.data.assign]
+            : [],
+        cond: String(edge.data?.cond || ""),
+      },
+    ];
+  });
 };
-

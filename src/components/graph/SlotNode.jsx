@@ -4,165 +4,145 @@ import { ConnectionHandle } from "./NodeChrome.jsx";
 import { getSlotHandleDragFeedback, getSlotTypeStyle } from "../../utils/slotVisuals";
 
 function SlotNode({ id, data, selected = false }) {
-    const displayPath = data.path || data.label || "Undefined slot";
-    const normalizedPath = displayPath.startsWith("/")
-        ? displayPath
-        : `/${displayPath}`;
-    const slotType = data.slotType || "Unknown";
-    const isSlotClone = Boolean(data.isSlotClone);
-    const referenceId = isSlotClone
-        ? String(data.editorInstanceId || id || "").trim()
-        : "";
+  const displayPath = data.path || data.label || "Undefined slot";
+  const normalizedPath = displayPath.startsWith("/") ? displayPath : `/${displayPath}`;
+  const slotType = data.slotType || "Unknown";
+  const isSlotClone = Boolean(data.isSlotClone);
+  const referenceId = isSlotClone ? String(data.editorInstanceId || id || "").trim() : "";
 
-    // Two different inheritance directions must stay visible independently:
-    // 1) current workflow declares <inheritSlot> -> inherited from its parent
-    // 2) sourced child declares <inheritSlot> -> required by that child
-    // `currentMachineInherited` is the authoritative flag when present.
-    // This prevents a child machine's inheritSlot metadata from being shown as
-    // though the current machine itself declared <inheritSlot>.
-    const isInheritedFromParent =
-        data.currentMachineInherited !== undefined
-            ? Boolean(data.currentMachineInherited)
-            : Boolean(data.inherited || data.slotKind === "inheritSlot");
-    const childRequirements = Array.isArray(data.requiredByChildren)
-        ? data.requiredByChildren
-        : [];
-    const isRequiredByChild = Boolean(
-        data.requiredByChild || childRequirements.length > 0
-    );
+  // Two different inheritance directions must stay visible independently:
+  // 1) current workflow declares <inheritSlot> -> inherited from its parent
+  // 2) sourced child declares <inheritSlot> -> required by that child
+  // `currentMachineInherited` is the authoritative flag when present.
+  // This prevents a child machine's inheritSlot metadata from being shown as
+  // though the current machine itself declared <inheritSlot>.
+  const isInheritedFromParent =
+    data.currentMachineInherited !== undefined
+      ? Boolean(data.currentMachineInherited)
+      : Boolean(data.inherited || data.slotKind === "inheritSlot");
+  const childRequirements = Array.isArray(data.requiredByChildren) ? data.requiredByChildren : [];
+  const isRequiredByChild = Boolean(data.requiredByChild || childRequirements.length > 0);
 
-    const requiredByLabels = [
-        ...new Set(
-            childRequirements
-                .map((entry) => entry?.childLabel)
-                .filter(Boolean)
-        ),
-    ];
+  const requiredByLabels = [...new Set(childRequirements.map((entry) => entry?.childLabel).filter(Boolean))];
 
-    const childRequirementTitle =
-        requiredByLabels.length > 0
-            ? `Sub-state machine <inheritSlot>: ${requiredByLabels.join(", ")}`
-            : "A sub-state machine declares this slot as <inheritSlot>.";
+  const childRequirementTitle =
+    requiredByLabels.length > 0
+      ? `Sub-state machine <inheritSlot>: ${requiredByLabels.join(", ")}`
+      : "A sub-state machine declares this slot as <inheritSlot>.";
 
-    const writeHandleId = "slot-node-write";
-    const readHandleId = "slot-node-read";
-    const writeFeedback = getSlotHandleDragFeedback({
-        drag: data.slotConnectionDrag, nodeId: id, handleId: writeHandleId,
-        access: "write", origin: "slot", slotType,
-    });
-    const readFeedback = getSlotHandleDragFeedback({
-        drag: data.slotConnectionDrag, nodeId: id, handleId: readHandleId,
-        access: "read", origin: "slot", slotType,
-    });
-    const runtimeSlotValue = data.runtimeSlotValueMeta || null;
-    const runtimeValueText = runtimeSlotValue
-        ? runtimeSlotValue.value === ""
-            ? '""'
-            : String(runtimeSlotValue.value)
-        : "";
+  const writeHandleId = "slot-node-write";
+  const readHandleId = "slot-node-read";
+  const writeFeedback = getSlotHandleDragFeedback({
+    drag: data.slotConnectionDrag,
+    nodeId: id,
+    handleId: writeHandleId,
+    access: "write",
+    origin: "slot",
+    slotType,
+  });
+  const readFeedback = getSlotHandleDragFeedback({
+    drag: data.slotConnectionDrag,
+    nodeId: id,
+    handleId: readHandleId,
+    access: "read",
+    origin: "slot",
+    slotType,
+  });
+  const runtimeSlotValue = data.runtimeSlotValueMeta || null;
+  const runtimeValueText = runtimeSlotValue
+    ? runtimeSlotValue.value === ""
+      ? '""'
+      : String(runtimeSlotValue.value)
+    : "";
 
-    return (
-        <div
-            className={`slot-node ${
-                isInheritedFromParent ? "slot-node-inherited" : ""
-            } ${
-                isRequiredByChild ? "slot-node-child-required" : ""
-            } ${isSlotClone ? "slot-node-reference" : ""} ${selected ? "selected-slot-node" : ""}`}
-            style={getSlotTypeStyle(slotType)}
-        >
-            <ConnectionHandle
-                id={writeHandleId}
-                type="target"
-                isConnectableStart={true}
-                isConnectableEnd={true}
-                position={Position.Top}
-                style={{ left: "35%" }}
-                className={`source-handle slot-node-handle slot-node-write-handle ${writeFeedback.className}`}
-                data-slot-incompatibility={writeFeedback.reason || undefined}
-                title={writeFeedback.reason || `Write into slot ${normalizedPath}`}
-                aria-label={writeFeedback.reason || `Write into slot ${normalizedPath}`}
-            />
+  return (
+    <div
+      className={`slot-node ${isInheritedFromParent ? "slot-node-inherited" : ""} ${
+        isRequiredByChild ? "slot-node-child-required" : ""
+      } ${isSlotClone ? "slot-node-reference" : ""} ${selected ? "selected-slot-node" : ""}`}
+      style={getSlotTypeStyle(slotType)}
+    >
+      <ConnectionHandle
+        id={writeHandleId}
+        type="target"
+        isConnectableStart={true}
+        isConnectableEnd={true}
+        position={Position.Top}
+        style={{ left: "35%" }}
+        className={`source-handle slot-node-handle slot-node-write-handle ${writeFeedback.className}`}
+        data-slot-incompatibility={writeFeedback.reason || undefined}
+        title={writeFeedback.reason || `Write into slot ${normalizedPath}`}
+        aria-label={writeFeedback.reason || `Write into slot ${normalizedPath}`}
+      />
 
-            <ConnectionHandle
-                id={readHandleId}
-                type="source"
-                isConnectableStart={true}
-                isConnectableEnd={true}
-                position={Position.Top}
-                style={{ left: "65%" }}
-                className={`source-handle slot-node-handle slot-node-read-handle ${readFeedback.className}`}
-                data-slot-incompatibility={readFeedback.reason || undefined}
-                title={readFeedback.reason || `Read from slot ${normalizedPath}`}
-                aria-label={readFeedback.reason || `Read from slot ${normalizedPath}`}
-            />
+      <ConnectionHandle
+        id={readHandleId}
+        type="source"
+        isConnectableStart={true}
+        isConnectableEnd={true}
+        position={Position.Top}
+        style={{ left: "65%" }}
+        className={`source-handle slot-node-handle slot-node-read-handle ${readFeedback.className}`}
+        data-slot-incompatibility={readFeedback.reason || undefined}
+        title={readFeedback.reason || `Read from slot ${normalizedPath}`}
+        aria-label={readFeedback.reason || `Read from slot ${normalizedPath}`}
+      />
 
-            <div className="slot-node-header">
-                <div
-                    className="slot-node-kind"
-                    style={isInheritedFromParent ? { color: "#f59e0b" } : undefined}
-                >
-                    <FiDatabase
-                        size={11}
-                        aria-hidden="true"
-                        style={isInheritedFromParent ? { color: "#f59e0b" } : undefined}
-                    />
-                    <span>{isInheritedFromParent ? "INHERIT SLOT" : "SLOT"}</span>
-                    {isSlotClone && (
-                        <span
-                            className="slot-node-clone-badge"
-                            title={referenceId ? `Reference ID: ${referenceId}` : "Reference"}
-                        >
-                            {referenceId ? `REF · ${referenceId}` : "REFERENCE"}
-                        </span>
-                    )}
-                </div>
-                <div className="slot-node-type" title={slotType}>
-                    {slotType}
-                </div>
-            </div>
-
-            <div className="slot-node-path" title={normalizedPath}>
-                {normalizedPath}
-            </div>
-
-            {runtimeSlotValue && (
-                <div className="slot-node-runtime-value"
-                    title={`Observed at ${runtimeSlotValue.timestamp || "runtime"}${runtimeSlotValue.stale ? " · Stale" : ""}`}>
-                    <span className="slot-node-runtime-value-label">Value</span>
-                    <code>{runtimeValueText}</code>
-                </div>
-            )}
-
-            <div className="slot-node-access-guide" aria-hidden="true">
-                <div className="slot-node-access slot-node-access-write">
-                    <span className="slot-node-access-dot" />
-                    <span>Write</span>
-                </div>
-                <div className="slot-node-access slot-node-access-read">
-                    <span className="slot-node-access-dot" />
-                    <span>Read</span>
-                </div>
-            </div>
-
-            {isRequiredByChild && (
-                <div className="slot-node-provenance">
-                    {isRequiredByChild && (
-                        <div
-                            className="slot-node-provenance-badge slot-node-provenance-child"
-                            title={childRequirementTitle}
-                        >
-                            {requiredByLabels.length === 1
-                                ? `Inherited by sub-state: ${requiredByLabels[0]}`
-                                : requiredByLabels.length > 1
-                                    ? `Inherited by ${requiredByLabels.length} sub-states`
-                                    : "Inherited by sub-state"}
-                        </div>
-                    )}
-
-                </div>
-            )}
+      <div className="slot-node-header">
+        <div className="slot-node-kind" style={isInheritedFromParent ? { color: "#f59e0b" } : undefined}>
+          <FiDatabase size={11} aria-hidden="true" style={isInheritedFromParent ? { color: "#f59e0b" } : undefined} />
+          <span>{isInheritedFromParent ? "INHERIT SLOT" : "SLOT"}</span>
+          {isSlotClone && (
+            <span className="slot-node-clone-badge" title={referenceId ? `Reference ID: ${referenceId}` : "Reference"}>
+              {referenceId ? `REF · ${referenceId}` : "REFERENCE"}
+            </span>
+          )}
         </div>
-    );
+        <div className="slot-node-type" title={slotType}>
+          {slotType}
+        </div>
+      </div>
+
+      <div className="slot-node-path" title={normalizedPath}>
+        {normalizedPath}
+      </div>
+
+      {runtimeSlotValue && (
+        <div
+          className="slot-node-runtime-value"
+          title={`Observed at ${runtimeSlotValue.timestamp || "runtime"}${runtimeSlotValue.stale ? " · Stale" : ""}`}
+        >
+          <span className="slot-node-runtime-value-label">Value</span>
+          <code>{runtimeValueText}</code>
+        </div>
+      )}
+
+      <div className="slot-node-access-guide" aria-hidden="true">
+        <div className="slot-node-access slot-node-access-write">
+          <span className="slot-node-access-dot" />
+          <span>Write</span>
+        </div>
+        <div className="slot-node-access slot-node-access-read">
+          <span className="slot-node-access-dot" />
+          <span>Read</span>
+        </div>
+      </div>
+
+      {isRequiredByChild && (
+        <div className="slot-node-provenance">
+          {isRequiredByChild && (
+            <div className="slot-node-provenance-badge slot-node-provenance-child" title={childRequirementTitle}>
+              {requiredByLabels.length === 1
+                ? `Inherited by sub-state: ${requiredByLabels[0]}`
+                : requiredByLabels.length > 1
+                  ? `Inherited by ${requiredByLabels.length} sub-states`
+                  : "Inherited by sub-state"}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default SlotNode;

@@ -7,69 +7,73 @@
 const text = (value) => String(value ?? "").trim();
 
 export const getExportedStateName = (node) =>
-    text(node?.data?.fullSkillName) || text(node?.data?.label) || text(node?.id);
+  text(node?.data?.fullSkillName) || text(node?.data?.label) || text(node?.id);
 
 export const isEditorOnlyInstanceName = (node) => {
-    if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) return false;
-    const skill = text(node?.data?.fullSkillName).split("#")[0].split(".").pop().toLowerCase();
-    return ["nop", "fatal", "end"].includes(skill);
+  if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) return false;
+  const skill = text(node?.data?.fullSkillName).split("#")[0].split(".").pop().toLowerCase();
+  return ["nop", "fatal", "end"].includes(skill);
 };
 
 export const proposedExportedStateName = (node, requestedName) => {
-    const next = text(requestedName);
-    if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) {
-        return next || text(node.id);
-    }
-    const base = text(node?.data?.fullSkillName).split("#")[0] || text(node?.data?.label);
-    return next ? `${base}#${next}` : base;
+  const next = text(requestedName);
+  if (["compound", "parallel", "parallelLane", "submachine"].includes(node?.type)) {
+    return next || text(node.id);
+  }
+  const base = text(node?.data?.fullSkillName).split("#")[0] || text(node?.data?.label);
+  return next ? `${base}#${next}` : base;
 };
 
 export function validateStateRename(nodes, nodeId, requestedName) {
-    const node = nodes.find((entry) => entry.id === nodeId);
-    if (!node) return "State not found.";
-    if (node.data?.isSkillClone || node.data?.isStateClone) return "References cannot be renamed.";
+  const node = nodes.find((entry) => entry.id === nodeId);
+  if (!node) return "State not found.";
+  if (node.data?.isSkillClone || node.data?.isStateClone) return "References cannot be renamed.";
 
-    if (node.type === "submachine" && text(requestedName).includes("#")) {
-        return "Behavior names cannot contain #.";
+  if (node.type === "submachine" && text(requestedName).includes("#")) {
+    return "Behavior names cannot contain #.";
+  }
+  const editorOnly = isEditorOnlyInstanceName(node);
+  const proposed = editorOnly ? text(requestedName) : proposedExportedStateName(node, requestedName);
+  // End/Nop/Fatal instance suffixes are optional editor metadata, not
+  // SCXML identities. Clearing the suffix is therefore always allowed.
+  if (editorOnly && !proposed) return null;
+  if (!proposed) return "A state must have a name.";
+
+  const collision = nodes.some((other) => {
+    if (other.id === nodeId || other.type === "slot" || other.data?.isSkillClone || other.data?.isStateClone)
+      return false;
+    if (editorOnly) {
+      return (
+        isEditorOnlyInstanceName(other) &&
+        text(other.data?.fullSkillName).split("#")[0] === text(node.data?.fullSkillName).split("#")[0] &&
+        proposed === text(other.data?.editorInstanceId)
+      );
     }
-    const editorOnly = isEditorOnlyInstanceName(node);
-    const proposed = editorOnly
-        ? text(requestedName)
-        : proposedExportedStateName(node, requestedName);
-    // End/Nop/Fatal instance suffixes are optional editor metadata, not
-    // SCXML identities. Clearing the suffix is therefore always allowed.
-    if (editorOnly && !proposed) return null;
-    if (!proposed) return "A state must have a name.";
-
-    const collision = nodes.some((other) => {
-        if (other.id === nodeId || other.type === "slot" ||
-            other.data?.isSkillClone || other.data?.isStateClone) return false;
-        if (editorOnly) {
-            return isEditorOnlyInstanceName(other) &&
-                text(other.data?.fullSkillName).split("#")[0] ===
-                    text(node.data?.fullSkillName).split("#")[0] &&
-                proposed === text(other.data?.editorInstanceId);
-        }
-        return getExportedStateName(other) === proposed;
-    });
-    return collision ? `The state name "${proposed}" is already in use.` : null;
+    return getExportedStateName(other) === proposed;
+  });
+  return collision ? `The state name "${proposed}" is already in use.` : null;
 }
-
 
 /** Avoid sending duplicate child-machine SCXML ids to the live engine. */
 export function findDuplicateSubmachineStateName(nodes = []) {
-    const seen = new Map();
-    for (const node of nodes) {
-        if (!node || node.type === "slot" || node.type === "parallelLane" ||
-            node.data?.isSkillClone || node.data?.isStateClone ||
-            isEditorOnlyInstanceName(node)) continue;
-        const name = getExportedStateName(node);
-        if (!name) continue;
-        const previous = seen.get(name);
-        if (previous && (node.type === "submachine" || previous.type === "submachine")) {
-            return name;
-        }
-        if (!previous) seen.set(name, node);
+  const seen = new Map();
+  for (const node of nodes) {
+    if (
+      !node ||
+      node.type === "slot" ||
+      node.type === "parallelLane" ||
+      node.data?.isSkillClone ||
+      node.data?.isStateClone ||
+      isEditorOnlyInstanceName(node)
+    )
+      continue;
+    const name = getExportedStateName(node);
+    if (!name) continue;
+    const previous = seen.get(name);
+    if (previous && (node.type === "submachine" || previous.type === "submachine")) {
+      return name;
     }
-    return null;
+    if (!previous) seen.set(name, node);
+  }
+  return null;
 }

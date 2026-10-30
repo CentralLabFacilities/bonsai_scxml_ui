@@ -1,40 +1,40 @@
 const SKILL_LIBRARY_PROPS = [
-    "searchText",
-    "setSearchText",
-    "activeFilter",
-    "setActiveFilter",
-    "packages",
-    "selectedPackage",
-    "setSelectedPackage",
-    "searchedSkills",
-    "packageSkills",
-    "filteredSkills",
-    "isSearchingDescriptions",
-    "subPackages",
-    "selectedSubPackage",
-    "setSelectedSubPackage",
-    "directSkills",
-    "activeLibraryTab",
-    "onLibraryTabChange",
-    "onReloadSkills",
-    "isReloadingSkills",
-    "refreshVersion",
-    "fetchSkillData",
-    "onAddSkill",
-    "canAddSkill",
-    "skillLibraryStatus",
-    "skillLibraryError",
-    "hasLoadedSkills",
-    "skillCount",
+  "searchText",
+  "setSearchText",
+  "activeFilter",
+  "setActiveFilter",
+  "packages",
+  "selectedPackage",
+  "setSelectedPackage",
+  "searchedSkills",
+  "packageSkills",
+  "filteredSkills",
+  "isSearchingDescriptions",
+  "subPackages",
+  "selectedSubPackage",
+  "setSelectedSubPackage",
+  "directSkills",
+  "activeLibraryTab",
+  "onLibraryTabChange",
+  "onReloadSkills",
+  "isReloadingSkills",
+  "refreshVersion",
+  "fetchSkillData",
+  "onAddSkill",
+  "canAddSkill",
+  "skillLibraryStatus",
+  "skillLibraryError",
+  "hasLoadedSkills",
+  "skillCount",
 ];
 
 export const areSkillLibraryPropsEqual = (previous, next) =>
-    SKILL_LIBRARY_PROPS.every((key) => previous[key] === next[key]);
+  SKILL_LIBRARY_PROPS.every((key) => previous[key] === next[key]);
 
 export const areBehaviorLibraryPropsEqual = (previous, next) =>
-    previous.directories === next.directories &&
-    previous.activeLibraryTab === next.activeLibraryTab &&
-    previous.onDirectoriesChange === next.onDirectoriesChange &&
-    previous.onOpenBehavior === next.onOpenBehavior &&
-    previous.onRefresh === next.onRefresh &&
-    previous.onLibraryTabChange === next.onLibraryTabChange;
+  previous.directories === next.directories &&
+  previous.activeLibraryTab === next.activeLibraryTab &&
+  previous.onDirectoriesChange === next.onDirectoriesChange &&
+  previous.onOpenBehavior === next.onOpenBehavior &&
+  previous.onRefresh === next.onRefresh &&
+  previous.onLibraryTabChange === next.onLibraryTabChange;

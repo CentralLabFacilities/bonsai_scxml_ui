@@ -1,508 +1,487 @@
 import { COMPARISON_PATTERN, toEditorConditionOperator, toScxmlConditionOperator } from "./conditionOperators.js";
 export const VALUE_TYPES = Object.freeze({
-    INTEGER: "Integer",
-    DOUBLE: "Double",
-    BOOLEAN: "Boolean",
-    STRING: "String",
+  INTEGER: "Integer",
+  DOUBLE: "Double",
+  BOOLEAN: "Boolean",
+  STRING: "String",
 });
 
 const INTEGER_PATTERN = /^[+-]?\d+$/;
 const DOUBLE_PATTERN = /^[+-]?(?:(?:\d+\.\d*|\d*\.\d+)(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+)$/;
 
 export function normalizeValueType(type) {
-    const normalized = String(type || "").trim().toLowerCase();
+  const normalized = String(type || "")
+    .trim()
+    .toLowerCase();
 
-    if (["integer", "int", "long", "short"].includes(normalized)) {
-        return VALUE_TYPES.INTEGER;
-    }
+  if (["integer", "int", "long", "short"].includes(normalized)) {
+    return VALUE_TYPES.INTEGER;
+  }
 
-    if (["double", "float", "number", "decimal"].includes(normalized)) {
-        return VALUE_TYPES.DOUBLE;
-    }
+  if (["double", "float", "number", "decimal"].includes(normalized)) {
+    return VALUE_TYPES.DOUBLE;
+  }
 
-    if (["boolean", "bool"].includes(normalized)) {
-        return VALUE_TYPES.BOOLEAN;
-    }
+  if (["boolean", "bool"].includes(normalized)) {
+    return VALUE_TYPES.BOOLEAN;
+  }
 
-    if (["string", "text", "char", "character"].includes(normalized)) {
-        return VALUE_TYPES.STRING;
-    }
+  if (["string", "text", "char", "character"].includes(normalized)) {
+    return VALUE_TYPES.STRING;
+  }
 
-    return null;
+  return null;
 }
 
 export function inferLiteralValueType(value) {
-    const trimmed = String(value ?? "").trim();
+  const trimmed = String(value ?? "").trim();
 
-    if (/^(true|false)$/i.test(trimmed)) {
-        return VALUE_TYPES.BOOLEAN;
-    }
+  if (/^(true|false)$/i.test(trimmed)) {
+    return VALUE_TYPES.BOOLEAN;
+  }
 
-    if (INTEGER_PATTERN.test(trimmed)) {
-        return VALUE_TYPES.INTEGER;
-    }
+  if (INTEGER_PATTERN.test(trimmed)) {
+    return VALUE_TYPES.INTEGER;
+  }
 
-    // JEXL/Java Double.NaN is a numeric literal, not an unquoted String.
-    // Keep the canonical case for round-tripping the SCXML expression.
-    if (trimmed === "NaN" || DOUBLE_PATTERN.test(trimmed)) {
-        return VALUE_TYPES.DOUBLE;
-    }
+  // JEXL/Java Double.NaN is a numeric literal, not an unquoted String.
+  // Keep the canonical case for round-tripping the SCXML expression.
+  if (trimmed === "NaN" || DOUBLE_PATTERN.test(trimmed)) {
+    return VALUE_TYPES.DOUBLE;
+  }
 
-    return VALUE_TYPES.STRING;
+  return VALUE_TYPES.STRING;
 }
 
 function isEntireQuotedLiteral(value) {
-    const text = String(value ?? "").trim();
-    const quote = text[0];
-    if ((quote !== "'" && quote !== '"') || text.length < 2) return false;
-    for (let i = 1; i < text.length; i += 1) {
-        if (text[i] === "\\") {
-            i += 1;
-        } else if (text[i] === quote) {
-            return i === text.length - 1;
-        }
+  const text = String(value ?? "").trim();
+  const quote = text[0];
+  if ((quote !== "'" && quote !== '"') || text.length < 2) return false;
+  for (let i = 1; i < text.length; i += 1) {
+    if (text[i] === "\\") {
+      i += 1;
+    } else if (text[i] === quote) {
+      return i === text.length - 1;
     }
-    return false;
+  }
+  return false;
 }
 
 function quoteStringValue(value) {
-    let text = String(value ?? "").trim();
+  let text = String(value ?? "").trim();
 
-    if (
-        (text.startsWith("'") && text.endsWith("'") && text.length >= 2) ||
-        (text.startsWith('"') && text.endsWith('"') && text.length >= 2)
-    ) {
-        text = text.slice(1, -1);
-    }
+  if (
+    (text.startsWith("'") && text.endsWith("'") && text.length >= 2) ||
+    (text.startsWith('"') && text.endsWith('"') && text.length >= 2)
+  ) {
+    text = text.slice(1, -1);
+  }
 
-    const escaped = text
-        .replaceAll("\\", "\\\\")
-        .replaceAll("'", "\\'");
+  const escaped = text.replaceAll("\\", "\\\\").replaceAll("'", "\\'");
 
-    return `'${escaped}'`;
+  return `'${escaped}'`;
 }
 
 export function normalizeDatamodelValue(value) {
-    const trimmed = String(value ?? "").trim();
-    const type = inferLiteralValueType(trimmed);
+  const trimmed = String(value ?? "").trim();
+  const type = inferLiteralValueType(trimmed);
 
-    if (type === VALUE_TYPES.STRING) {
-        return quoteStringValue(trimmed);
-    }
+  if (type === VALUE_TYPES.STRING) {
+    return quoteStringValue(trimmed);
+  }
 
-    if (type === VALUE_TYPES.BOOLEAN) {
-        return trimmed.toLowerCase();
-    }
+  if (type === VALUE_TYPES.BOOLEAN) {
+    return trimmed.toLowerCase();
+  }
 
-    return trimmed;
+  return trimmed;
 }
 
 export function getVariableType(variable) {
-    if (!variable) return null;
+  if (!variable) return null;
 
-    const declaredType = normalizeValueType(
-        variable.valueType || variable.type
-    );
+  const declaredType = normalizeValueType(variable.valueType || variable.type);
 
-    if (declaredType) return declaredType;
+  if (declaredType) return declaredType;
 
-    return inferLiteralValueType(variable.expr ?? variable.value ?? "");
+  return inferLiteralValueType(variable.expr ?? variable.value ?? "");
 }
 
 export function getReferenceName(value) {
-    const trimmed = String(value ?? "").trim();
+  const trimmed = String(value ?? "").trim();
 
-    if (!trimmed.startsWith("@") || trimmed.length < 2) {
-        return null;
-    }
+  if (!trimmed.startsWith("@") || trimmed.length < 2) {
+    return null;
+  }
 
-    const name = trimmed.slice(1);
+  const name = trimmed.slice(1);
 
-    if (/\s/.test(name)) {
-        return null;
-    }
+  if (/\s/.test(name)) {
+    return null;
+  }
 
-    return name;
+  return name;
 }
 
 export function isValueTypeCompatible(valueType, expectedType) {
-    const normalizedValueType = normalizeValueType(valueType) || valueType || null;
-    const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
+  const normalizedValueType = normalizeValueType(valueType) || valueType || null;
+  const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
 
-    if (!normalizedExpectedType) return true;
-    if (!normalizedValueType) return false;
-    if (normalizedValueType === normalizedExpectedType) return true;
+  if (!normalizedExpectedType) return true;
+  if (!normalizedValueType) return false;
+  if (normalizedValueType === normalizedExpectedType) return true;
 
-    // Integer values can be assigned to Double targets, but not vice versa.
-    return (
-        normalizedExpectedType === VALUE_TYPES.DOUBLE &&
-        normalizedValueType === VALUE_TYPES.INTEGER
-    );
+  // Integer values can be assigned to Double targets, but not vice versa.
+  return normalizedExpectedType === VALUE_TYPES.DOUBLE && normalizedValueType === VALUE_TYPES.INTEGER;
 }
 
 export function getCompatibleVariables(variables, expectedType, excludeId = null) {
-    const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
+  const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
 
-    return (Array.isArray(variables) ? variables : [])
-        .filter((variable) => variable?.id && variable.id !== excludeId)
-        .filter((variable) => {
-            if (!normalizedExpectedType) return true;
-            return isValueTypeCompatible(
-                getVariableType(variable),
-                normalizedExpectedType
-            );
-        });
+  return (Array.isArray(variables) ? variables : [])
+    .filter((variable) => variable?.id && variable.id !== excludeId)
+    .filter((variable) => {
+      if (!normalizedExpectedType) return true;
+      return isValueTypeCompatible(getVariableType(variable), normalizedExpectedType);
+    });
 }
 
-export function normalizeTypedValue(
-    value,
-    expectedType,
-    variables = [],
-    { allowEmpty = true } = {}
-) {
-    const trimmed = String(value ?? "").trim();
-    const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
+export function normalizeTypedValue(value, expectedType, variables = [], { allowEmpty = true } = {}) {
+  const trimmed = String(value ?? "").trim();
+  const normalizedExpectedType = normalizeValueType(expectedType) || expectedType || null;
 
-    if (!trimmed) {
-        if (allowEmpty) {
-            return { valid: true, value: "", type: normalizedExpectedType };
-        }
-
-        return {
-            valid: false,
-            value: trimmed,
-            type: normalizedExpectedType,
-            error: "A value is required.",
-        };
-    }
-
-    // An explicit @ is an editor-only marker for a variable reference.
-    // Never let an attempted reference fall through to String handling,
-    // otherwise values such as @foo (or a partial @ while typing) can be
-    // normalized into quoted string literals.
-    const hasReferenceMarker = trimmed.startsWith("@");
-    const referenceName = getReferenceName(trimmed);
-
-    if (hasReferenceMarker && !referenceName) {
-        return {
-            valid: false,
-            value: trimmed,
-            type: normalizedExpectedType,
-            error: "Select or enter a valid variable reference after @.",
-        };
-    }
-
-    if (referenceName) {
-        const referencedVariable = (Array.isArray(variables) ? variables : []).find(
-            (variable) => variable?.id === referenceName
-        );
-
-        if (!referencedVariable) {
-            return {
-                valid: false,
-                value: trimmed,
-                type: normalizedExpectedType,
-                error: `Unknown parameter “${referenceName}”.`,
-            };
-        }
-
-        const referencedType = getVariableType(referencedVariable);
-
-        if (
-            normalizedExpectedType &&
-            !isValueTypeCompatible(referencedType, normalizedExpectedType)
-        ) {
-            return {
-                valid: false,
-                value: trimmed,
-                type: normalizedExpectedType,
-                error: `${referenceName} is ${referencedType}, but ${normalizedExpectedType} is required.`,
-            };
-        }
-
-        return {
-            valid: true,
-            value: `@${referenceName}`,
-            type: referencedType,
-        };
-    }
-
-    const literalType = inferLiteralValueType(trimmed);
-
-    if (
-        normalizedExpectedType &&
-        !isValueTypeCompatible(literalType, normalizedExpectedType)
-    ) {
-        const acceptedTypes =
-            normalizedExpectedType === VALUE_TYPES.DOUBLE
-                ? "Double or Integer"
-                : normalizedExpectedType;
-
-        return {
-            valid: false,
-            value: trimmed,
-            type: normalizedExpectedType,
-            error: `${normalizedExpectedType} requires a ${acceptedTypes} literal or parameter.`,
-        };
-    }
-
-    const effectiveType = normalizedExpectedType || literalType;
-
-    if (effectiveType === VALUE_TYPES.STRING) {
-        return {
-            valid: true,
-            value: quoteStringValue(trimmed),
-            type: VALUE_TYPES.STRING,
-        };
-    }
-
-    if (effectiveType === VALUE_TYPES.BOOLEAN) {
-        return {
-            valid: true,
-            value: trimmed.toLowerCase(),
-            type: VALUE_TYPES.BOOLEAN,
-        };
+  if (!trimmed) {
+    if (allowEmpty) {
+      return { valid: true, value: "", type: normalizedExpectedType };
     }
 
     return {
-        valid: true,
-        value: trimmed,
-        type: effectiveType,
+      valid: false,
+      value: trimmed,
+      type: normalizedExpectedType,
+      error: "A value is required.",
     };
+  }
+
+  // An explicit @ is an editor-only marker for a variable reference.
+  // Never let an attempted reference fall through to String handling,
+  // otherwise values such as @foo (or a partial @ while typing) can be
+  // normalized into quoted string literals.
+  const hasReferenceMarker = trimmed.startsWith("@");
+  const referenceName = getReferenceName(trimmed);
+
+  if (hasReferenceMarker && !referenceName) {
+    return {
+      valid: false,
+      value: trimmed,
+      type: normalizedExpectedType,
+      error: "Select or enter a valid variable reference after @.",
+    };
+  }
+
+  if (referenceName) {
+    const referencedVariable = (Array.isArray(variables) ? variables : []).find(
+      (variable) => variable?.id === referenceName,
+    );
+
+    if (!referencedVariable) {
+      return {
+        valid: false,
+        value: trimmed,
+        type: normalizedExpectedType,
+        error: `Unknown parameter “${referenceName}”.`,
+      };
+    }
+
+    const referencedType = getVariableType(referencedVariable);
+
+    if (normalizedExpectedType && !isValueTypeCompatible(referencedType, normalizedExpectedType)) {
+      return {
+        valid: false,
+        value: trimmed,
+        type: normalizedExpectedType,
+        error: `${referenceName} is ${referencedType}, but ${normalizedExpectedType} is required.`,
+      };
+    }
+
+    return {
+      valid: true,
+      value: `@${referenceName}`,
+      type: referencedType,
+    };
+  }
+
+  const literalType = inferLiteralValueType(trimmed);
+
+  if (normalizedExpectedType && !isValueTypeCompatible(literalType, normalizedExpectedType)) {
+    const acceptedTypes = normalizedExpectedType === VALUE_TYPES.DOUBLE ? "Double or Integer" : normalizedExpectedType;
+
+    return {
+      valid: false,
+      value: trimmed,
+      type: normalizedExpectedType,
+      error: `${normalizedExpectedType} requires a ${acceptedTypes} literal or parameter.`,
+    };
+  }
+
+  const effectiveType = normalizedExpectedType || literalType;
+
+  if (effectiveType === VALUE_TYPES.STRING) {
+    return {
+      valid: true,
+      value: quoteStringValue(trimmed),
+      type: VALUE_TYPES.STRING,
+    };
+  }
+
+  if (effectiveType === VALUE_TYPES.BOOLEAN) {
+    return {
+      valid: true,
+      value: trimmed.toLowerCase(),
+      type: VALUE_TYPES.BOOLEAN,
+    };
+  }
+
+  return {
+    valid: true,
+    value: trimmed,
+    type: effectiveType,
+  };
 }
 
-export function serializeEditorValueForScxml(
-    value,
-    { preserveReferenceMarker = false } = {}
-) {
-    const trimmed = String(value ?? "").trim();
+export function serializeEditorValueForScxml(value, { preserveReferenceMarker = false } = {}) {
+  const trimmed = String(value ?? "").trim();
 
-    if (!trimmed) return "";
+  if (!trimmed) return "";
 
-    const referenceName = getReferenceName(trimmed);
-    if (referenceName) {
-        return preserveReferenceMarker ? `@${referenceName}` : referenceName;
-    }
+  const referenceName = getReferenceName(trimmed);
+  if (referenceName) {
+    return preserveReferenceMarker ? `@${referenceName}` : referenceName;
+  }
 
-    const literalType = inferLiteralValueType(trimmed);
+  const literalType = inferLiteralValueType(trimmed);
 
-    if (literalType === VALUE_TYPES.BOOLEAN) {
-        return trimmed.toLowerCase();
-    }
+  if (literalType === VALUE_TYPES.BOOLEAN) {
+    return trimmed.toLowerCase();
+  }
 
-    if (
-        literalType === VALUE_TYPES.INTEGER ||
-        literalType === VALUE_TYPES.DOUBLE
-    ) {
-        return trimmed;
-    }
+  if (literalType === VALUE_TYPES.INTEGER || literalType === VALUE_TYPES.DOUBLE) {
+    return trimmed;
+  }
 
-    // A value without the editor-only @ marker is a literal string.
-    return quoteStringValue(trimmed);
+  // A value without the editor-only @ marker is a literal string.
+  return quoteStringValue(trimmed);
 }
 
 export function deserializeScxmlValueForEditor(value) {
-    const trimmed = String(value ?? "").trim();
+  const trimmed = String(value ?? "").trim();
 
-    if (!trimmed) return "";
-    if (getReferenceName(trimmed)) return trimmed;
+  if (!trimmed) return "";
+  if (getReferenceName(trimmed)) return trimmed;
 
-    if (
-        (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2) ||
-        (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2)
-    ) {
-        return quoteStringValue(trimmed);
-    }
+  if (
+    (trimmed.startsWith("'") && trimmed.endsWith("'") && trimmed.length >= 2) ||
+    (trimmed.startsWith('"') && trimmed.endsWith('"') && trimmed.length >= 2)
+  ) {
+    return quoteStringValue(trimmed);
+  }
 
-    const literalType = inferLiteralValueType(trimmed);
-    if (
-        literalType === VALUE_TYPES.INTEGER ||
-        literalType === VALUE_TYPES.DOUBLE ||
-        literalType === VALUE_TYPES.BOOLEAN
-    ) {
-        return literalType === VALUE_TYPES.BOOLEAN
-            ? trimmed.toLowerCase()
-            : trimmed;
-    }
+  const literalType = inferLiteralValueType(trimmed);
+  if (
+    literalType === VALUE_TYPES.INTEGER ||
+    literalType === VALUE_TYPES.DOUBLE ||
+    literalType === VALUE_TYPES.BOOLEAN
+  ) {
+    return literalType === VALUE_TYPES.BOOLEAN ? trimmed.toLowerCase() : trimmed;
+  }
 
-    // Outside a state's skill-parameter datamodel, a bare SCXML identifier
-    // represents a variable reference. The UI adds @ purely as a visual marker.
-    if (/^[A-Za-z_#][A-Za-z0-9_:#.-]*$/.test(trimmed)) {
-        return `@${trimmed}`;
-    }
+  // Outside a state's skill-parameter datamodel, a bare SCXML identifier
+  // represents a variable reference. The UI adds @ purely as a visual marker.
+  if (/^[A-Za-z_#][A-Za-z0-9_:#.-]*$/.test(trimmed)) {
+    return `@${trimmed}`;
+  }
 
-    return trimmed;
+  return trimmed;
 }
 
 export function deserializeStateDatamodelValueForEditor(value) {
-    const trimmed = String(value ?? "").trim();
+  const trimmed = String(value ?? "").trim();
 
-    if (!trimmed) return "";
-    if (getReferenceName(trimmed)) return trimmed;
+  if (!trimmed) return "";
+  if (getReferenceName(trimmed)) return trimmed;
 
-    const literalType = inferLiteralValueType(trimmed);
-    if (literalType === VALUE_TYPES.STRING) {
-        // The state datamodel is the one SCXML context where @ is retained for
-        // variable references. Without @, textual input is therefore a string.
-        return quoteStringValue(trimmed);
-    }
+  const literalType = inferLiteralValueType(trimmed);
+  if (literalType === VALUE_TYPES.STRING) {
+    // The state datamodel is the one SCXML context where @ is retained for
+    // variable references. Without @, textual input is therefore a string.
+    return quoteStringValue(trimmed);
+  }
 
-    return literalType === VALUE_TYPES.BOOLEAN
-        ? trimmed.toLowerCase()
-        : trimmed;
+  return literalType === VALUE_TYPES.BOOLEAN ? trimmed.toLowerCase() : trimmed;
 }
 
 // Free-form conditions may contain several operations. Handle operators only
 // outside quoted strings; treating everything after the first comparison as a
 // single value would turn `count > 1 && '@text'` into a new string literal.
 function mapUnquotedConditionText(expression, transform) {
-    let result = "";
-    let buffer = "";
-    let quote = null;
-    const flush = () => {
-        result += transform(buffer);
-        buffer = "";
-    };
-    for (let i = 0; i < expression.length; i += 1) {
-        const char = expression[i];
-        if (quote) {
-            result += char;
-            if (char === "\\" && i + 1 < expression.length) {
-                result += expression[++i];
-            } else if (char === quote) {
-                quote = null;
-            }
-        } else if (char === "'" || char === '"') {
-            flush();
-            quote = char;
-            result += char;
-        } else {
-            buffer += char;
-        }
+  let result = "";
+  let buffer = "";
+  let quote = null;
+  const flush = () => {
+    result += transform(buffer);
+    buffer = "";
+  };
+  for (let i = 0; i < expression.length; i += 1) {
+    const char = expression[i];
+    if (quote) {
+      result += char;
+      if (char === "\\" && i + 1 < expression.length) {
+        result += expression[++i];
+      } else if (char === quote) {
+        quote = null;
+      }
+    } else if (char === "'" || char === '"') {
+      flush();
+      quote = char;
+      result += char;
+    } else {
+      buffer += char;
     }
-    flush();
-    return result;
+  }
+  flush();
+  return result;
 }
 
 const hasUnquotedBooleanJoin = (expression) =>
-    mapUnquotedConditionText(expression, (part) =>
-        /(?:&&|\|\||\b(?:and|or)\b)/.test(part) ? "JOIN" : ""
-    ).includes("JOIN");
+  mapUnquotedConditionText(expression, (part) => (/(?:&&|\|\||\b(?:and|or)\b)/.test(part) ? "JOIN" : "")).includes(
+    "JOIN",
+  );
 
 const mapUnquotedRelationalOperators = (expression, direction) =>
-    mapUnquotedConditionText(expression, (part) => direction === "scxml"
-        ? part.replace(/>=|<=|>|</g, (operator) => toScxmlConditionOperator(operator))
-        : part.replace(/\b(?:ge|le|gt|lt)\b/g, (operator) => toEditorConditionOperator(operator)));
+  mapUnquotedConditionText(expression, (part) =>
+    direction === "scxml"
+      ? part.replace(/>=|<=|>|</g, (operator) => toScxmlConditionOperator(operator))
+      : part.replace(/\b(?:ge|le|gt|lt)\b/g, (operator) => toEditorConditionOperator(operator)),
+  );
 
 export function serializeEditorConditionForScxml(condition) {
-    const trimmed = String(condition ?? "").trim();
-    if (!trimmed) return "";
+  const trimmed = String(condition ?? "").trim();
+  if (!trimmed) return "";
 
-    // A wholly quoted value is literal JEXL text. Neither @ markers nor
-    // symbolic comparison operators within it may be rewritten.
-    if (isEntireQuotedLiteral(trimmed)) return trimmed;
+  // A wholly quoted value is literal JEXL text. Neither @ markers nor
+  // symbolic comparison operators within it may be rewritten.
+  if (isEntireQuotedLiteral(trimmed)) return trimmed;
 
-    if (hasUnquotedBooleanJoin(trimmed)) {
-        return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
-    }
+  if (hasUnquotedBooleanJoin(trimmed)) {
+    return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
+  }
 
-    const match = trimmed.match(COMPARISON_PATTERN);
-    if (!match) {
-        // Reuse the quote-aware token walker so @ is removed only outside
-        // quoted spans, including in legacy/free-form conditions.
-        return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
-    }
+  const match = trimmed.match(COMPARISON_PATTERN);
+  if (!match) {
+    // Reuse the quote-aware token walker so @ is removed only outside
+    // quoted spans, including in legacy/free-form conditions.
+    return mapUnquotedRelationalOperators(serializeEditorAssignmentForScxml(trimmed), "scxml");
+  }
 
-    const [, rawLeft, operator, rawRight] = match;
-    const left = rawLeft.startsWith("@") ? rawLeft.slice(1) : rawLeft;
-    const right = serializeEditorValueForScxml(rawRight);
+  const [, rawLeft, operator, rawRight] = match;
+  const left = rawLeft.startsWith("@") ? rawLeft.slice(1) : rawLeft;
+  const right = serializeEditorValueForScxml(rawRight);
 
-    return `${left} ${toScxmlConditionOperator(operator)} ${right}`;
+  return `${left} ${toScxmlConditionOperator(operator)} ${right}`;
 }
 
 export function deserializeScxmlConditionForEditor(condition) {
-    const trimmed = String(condition ?? "").trim();
-    if (!trimmed) return "";
-    if (isEntireQuotedLiteral(trimmed)) return trimmed;
-    if (hasUnquotedBooleanJoin(trimmed)) {
-        return mapUnquotedRelationalOperators(trimmed, "editor");
+  const trimmed = String(condition ?? "").trim();
+  if (!trimmed) return "";
+  if (isEntireQuotedLiteral(trimmed)) return trimmed;
+  if (hasUnquotedBooleanJoin(trimmed)) {
+    return mapUnquotedRelationalOperators(trimmed, "editor");
+  }
+
+  const match = trimmed.match(COMPARISON_PATTERN);
+  if (!match) {
+    // SCXML commonly uses a boolean datamodel variable directly as a
+    // condition, e.g. cond="gripper_open". The transition editor is
+    // comparison-based, so represent that equivalent expression
+    // explicitly instead of falling back to an uneditable free-form value.
+    if (/^@?[A-Za-z_#][A-Za-z0-9_:#.-]*$/.test(trimmed) && !/^(true|false|null)$/i.test(trimmed)) {
+      return `${trimmed.replace(/^@/, "")} == true`;
     }
 
-    const match = trimmed.match(COMPARISON_PATTERN);
-    if (!match) {
-        // SCXML commonly uses a boolean datamodel variable directly as a
-        // condition, e.g. cond="gripper_open". The transition editor is
-        // comparison-based, so represent that equivalent expression
-        // explicitly instead of falling back to an uneditable free-form value.
-        if (
-            /^@?[A-Za-z_#][A-Za-z0-9_:#.-]*$/.test(trimmed) &&
-            !/^(true|false|null)$/i.test(trimmed)
-        ) {
-            return `${trimmed.replace(/^@/, "")} == true`;
-        }
+    return trimmed;
+  }
 
-        return trimmed;
-    }
+  const [, left, operator, rawRight] = match;
+  const right = deserializeScxmlValueForEditor(rawRight);
 
-    const [, left, operator, rawRight] = match;
-    const right = deserializeScxmlValueForEditor(rawRight);
-
-    return `${left.replace(/^@/, "")} ${toEditorConditionOperator(operator)} ${right}`;
+  return `${left.replace(/^@/, "")} ${toEditorConditionOperator(operator)} ${right}`;
 }
-
 
 // Assignment RHS is executable JEXL, not a typed string value. Remove the
 // editor-only @ markers from identifiers, but never alter quoted literals.
 const mapAssignmentExpression = (expression, mapIdentifier) => {
-    const source = String(expression ?? "").trim();
-    let result = "";
-    let quote = null;
-    for (let index = 0; index < source.length;) {
-        const char = source[index];
-        if (quote) {
-            result += char;
-            if (char === "\\" && index + 1 < source.length) {
-                result += source[index + 1];
-                index += 2;
-                continue;
-            }
-            if (char === quote) quote = null;
-            index++;
-            continue;
-        }
-        if (char === "'" || char === '"') {
-            quote = char;
-            result += char;
-            index++;
-            continue;
-        }
-        const match = source.slice(index).match(/^@?[A-Za-z_][A-Za-z0-9_.:]*/);
-        if (match && (index === 0 || !/[\w.@:]/.test(source[index - 1]))) {
-            const token = match[0];
-            const next = source.slice(index + token.length).trimStart();
-            result += mapIdentifier(token, next);
-            index += token.length;
-            continue;
-        }
-        result += char;
-        index++;
+  const source = String(expression ?? "").trim();
+  let result = "";
+  let quote = null;
+  for (let index = 0; index < source.length;) {
+    const char = source[index];
+    if (quote) {
+      result += char;
+      if (char === "\\" && index + 1 < source.length) {
+        result += source[index + 1];
+        index += 2;
+        continue;
+      }
+      if (char === quote) quote = null;
+      index++;
+      continue;
     }
-    return result;
+    if (char === "'" || char === '"') {
+      quote = char;
+      result += char;
+      index++;
+      continue;
+    }
+    const match = source.slice(index).match(/^@?[A-Za-z_][A-Za-z0-9_.:]*/);
+    if (match && (index === 0 || !/[\w.@:]/.test(source[index - 1]))) {
+      const token = match[0];
+      const next = source.slice(index + token.length).trimStart();
+      result += mapIdentifier(token, next);
+      index += token.length;
+      continue;
+    }
+    result += char;
+    index++;
+  }
+  return result;
 };
 
 export const serializeEditorAssignmentForScxml = (expression) =>
-    mapAssignmentExpression(expression, (token) => token.replace(/^@/, ""));
+  mapAssignmentExpression(expression, (token) => token.replace(/^@/, ""));
 
 export const deserializeScxmlAssignmentForEditor = (expression, variableIds = null) => {
-    const names = variableIds ? new Set(variableIds.map((id) =>
-        typeof id === "string" ? id : id?.id).filter(Boolean)) : null;
-    const reserved = new Set(["true", "false", "null", "undefined", "NaN", "Infinity", "and", "or", "not", "empty", "new"]);
-    return mapAssignmentExpression(expression, (token, next) => {
-        if (token.startsWith("@") || reserved.has(token) || next.startsWith("(")) return token;
-        // With a known datamodel, preserve method/property names and literals
-        // not actually referring to a variable. Without one, infer ordinary
-        // identifiers for backward-compatible legacy SCXML imports.
-        if (names ? names.has(token) : !token.includes(".")) return `@${token}`;
-        return token;
-    });
+  const names = variableIds
+    ? new Set(variableIds.map((id) => (typeof id === "string" ? id : id?.id)).filter(Boolean))
+    : null;
+  const reserved = new Set([
+    "true",
+    "false",
+    "null",
+    "undefined",
+    "NaN",
+    "Infinity",
+    "and",
+    "or",
+    "not",
+    "empty",
+    "new",
+  ]);
+  return mapAssignmentExpression(expression, (token, next) => {
+    if (token.startsWith("@") || reserved.has(token) || next.startsWith("(")) return token;
+    // With a known datamodel, preserve method/property names and literals
+    // not actually referring to a variable. Without one, infer ordinary
+    // identifiers for backward-compatible legacy SCXML imports.
+    if (names ? names.has(token) : !token.includes(".")) return `@${token}`;
+    return token;
+  });
 };

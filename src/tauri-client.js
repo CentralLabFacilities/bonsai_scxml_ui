@@ -1,5 +1,5 @@
-import { invoke } from '@tauri-apps/api/core';
-import { installApiProxy } from './utils/apiProxy.js';
+import { invoke } from "@tauri-apps/api/core";
+import { installApiProxy } from "./utils/apiProxy.js";
 
 /**
  * Polyfill fetch for /api/* paths when running in Tauri desktop mode.
@@ -12,8 +12,8 @@ export function initApiProxy() {
 /**
  * Open a file picker dialog and return the selected file path.
  */
-export async function openFile(title = 'Open Workflow') {
-  const result = await invoke('open_file', { title });
+export async function openFile(title = "Open Workflow") {
+  const result = await invoke("open_file", { title });
   return result || null;
 }
 
@@ -22,37 +22,35 @@ export async function openFile(title = 'Open Workflow') {
  * Destination selection is separate and never grants an overwrite bypass.
  */
 export async function saveFile(content, path, expectedFileVersion, sourceContext = null, directories = []) {
-  if (typeof path !== 'string' || !path) {
-    throw new TypeError('saveFile requires a destination path.');
+  if (typeof path !== "string" || !path) {
+    throw new TypeError("saveFile requires a destination path.");
   }
-  if (expectedFileVersion !== null && typeof expectedFileVersion !== 'string') {
-    throw new TypeError('saveFile requires expectedFileVersion as a string or explicit null.');
+  if (expectedFileVersion !== null && typeof expectedFileVersion !== "string") {
+    throw new TypeError("saveFile requires expectedFileVersion as a string or explicit null.");
   }
-  return await invoke('save_file', { content, path, expectedFileVersion, sourceContext, directories });
+  return await invoke("save_file", { content, path, expectedFileVersion, sourceContext, directories });
 }
 
 /** Select and confirm a destination, capturing its version (or explicit absence). */
-export async function selectSaveDestination(defaultName = 'workflow.xml') {
+export async function selectSaveDestination(defaultName = "workflow.xml") {
   if (!isTauri()) {
-    throw new Error('Native save destinations are only available in the Tauri app.');
+    throw new Error("Native save destinations are only available in the Tauri app.");
   }
-  return await invoke('select_save_destination', { defaultName });
+  return await invoke("select_save_destination", { defaultName });
 }
 
 /**
  * Read a file's contents.
  */
 export async function readFile(path) {
-  return await invoke('read_file', { path });
+  return await invoke("read_file", { path });
 }
-
-
 
 /**
  * Pick a local directory and return its path.
  */
-export async function selectDirectory(title = 'Select Directory') {
-  const result = await invoke('pick_directory', { title });
+export async function selectDirectory(title = "Select Directory") {
+  const result = await invoke("pick_directory", { title });
   return result || null;
 }
 
@@ -61,7 +59,7 @@ export async function selectDirectory(title = 'Select Directory') {
  * Behavior Library root.
  */
 export async function listBehaviorDirectory(key, path) {
-  return await invoke('list_behavior_directory', {
+  return await invoke("list_behavior_directory", {
     key,
     path,
   });
@@ -70,7 +68,7 @@ export async function listBehaviorDirectory(key, path) {
 /** Return the canonical directory path, or null if the directory is missing.
  * The Rust backend expands leading ~ (the browser cannot expand it). */
 export async function resolveBehaviorDirectory(path) {
-  return await invoke('resolve_behavior_directory', { path });
+  return await invoke("resolve_behavior_directory", { path });
 }
 
 /**
@@ -80,17 +78,13 @@ export async function resolveBehaviorDirectory(path) {
  * resolves it, caches parsing by canonical path + exact-byte SHA-256, and
  * returns fileVersion and semantic interface metadata with the captured bytes.
  */
-export async function inspectWorkflowSource(
-    src,
-    directories = [],
-    currentFilePath = null,
-) {
+export async function inspectWorkflowSource(src, directories = [], currentFilePath = null) {
   if (!isTauri()) {
-    throw new Error('Rust workflow inspection is only available in the Tauri app.');
+    throw new Error("Rust workflow inspection is only available in the Tauri app.");
   }
 
-  return await invoke('inspect_workflow_source', {
-    src: String(src || ''),
+  return await invoke("inspect_workflow_source", {
+    src: String(src || ""),
     directories: directories || [],
     currentFilePath,
   });
@@ -99,9 +93,9 @@ export async function inspectWorkflowSource(
 /** Re-resolve and check a bounded batch without touching native document state. */
 export async function revalidateWorkflowSources(requests, directories = []) {
   if (!isTauri()) {
-    throw new Error('Workflow source revalidation is only available in the Tauri app.');
+    throw new Error("Workflow source revalidation is only available in the Tauri app.");
   }
-  return await invoke('revalidate_workflow_sources', { requests, directories });
+  return await invoke("revalidate_workflow_sources", { requests, directories });
 }
 
 /**
@@ -110,17 +104,14 @@ export async function revalidateWorkflowSources(requests, directories = []) {
  */
 export async function clearWorkflowInspectionCache() {
   if (!isTauri()) return 0;
-  return await invoke('clear_workflow_inspection_cache');
+  return await invoke("clear_workflow_inspection_cache");
 }
 
 /**
  * Check if running inside Tauri (desktop app).
  */
 export function isTauri() {
-  return (
-    typeof window !== 'undefined' &&
-    (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined)
-  );
+  return typeof window !== "undefined" && (window.__TAURI_INTERNALS__ !== undefined || window.__TAURI__ !== undefined);
 }
 
 /**
@@ -133,11 +124,11 @@ export function isTauri() {
  */
 export async function parseScxmlWorkflow(xml) {
   if (!isTauri()) {
-    throw new Error('Rust SCXML parsing is only available in the Tauri app.');
+    throw new Error("Rust SCXML parsing is only available in the Tauri app.");
   }
 
-  return await invoke('parse_scxml_workflow', {
-    xml: String(xml || ''),
+  return await invoke("parse_scxml_workflow", {
+    xml: String(xml || ""),
   });
 }
 
@@ -148,10 +139,10 @@ export async function parseScxmlWorkflow(xml) {
  */
 export async function serializeEditorWorkflow(request) {
   if (!isTauri()) {
-    throw new Error('Rust editor SCXML serialization is only available in the Tauri app.');
+    throw new Error("Rust editor SCXML serialization is only available in the Tauri app.");
   }
 
-  return await invoke('serialize_editor_workflow', {
+  return await invoke("serialize_editor_workflow", {
     request,
   });
 }
@@ -165,10 +156,10 @@ export async function loadRuntimeWorkflow(
   currentFilePath = null,
 ) {
   if (!isTauri()) {
-    throw new Error('Loading an in-memory workflow requires the Rust/Tauri desktop backend.');
+    throw new Error("Loading an in-memory workflow requires the Rust/Tauri desktop backend.");
   }
 
-  return await invoke('load_runtime_workflow', {
+  return await invoke("load_runtime_workflow", {
     request,
     pathToConfig,
     includeMapping,
@@ -189,15 +180,12 @@ export async function loadRuntimeWorkflow(
  * editor projection into the semantic Rust Workflow model and returns the new
  * revision.
  */
-export async function replaceActiveEditorWorkflowDocument(
-  request,
-  expectedRevision = null
-) {
+export async function replaceActiveEditorWorkflowDocument(request, expectedRevision = null) {
   if (!isTauri()) {
-    throw new Error('Rust workflow document state is only available in the Tauri app.');
+    throw new Error("Rust workflow document state is only available in the Tauri app.");
   }
 
-  return await invoke('replace_active_editor_workflow_document', {
+  return await invoke("replace_active_editor_workflow_document", {
     request,
     expectedRevision,
   });
@@ -210,10 +198,10 @@ export async function replaceActiveEditorWorkflowDocument(
  */
 export async function applyWorkflowCommand(command, expectedRevision = null) {
   if (!isTauri()) {
-    throw new Error('Rust workflow commands are only available in the Tauri app.');
+    throw new Error("Rust workflow commands are only available in the Tauri app.");
   }
 
-  return await invoke('apply_workflow_command', {
+  return await invoke("apply_workflow_command", {
     command,
     expectedRevision,
   });
@@ -221,20 +209,20 @@ export async function applyWorkflowCommand(command, expectedRevision = null) {
 
 export async function validateEditorWorkflow(request) {
   if (!isTauri()) {
-    throw new Error('Rust editor validation is only available in the Tauri app.');
+    throw new Error("Rust editor validation is only available in the Tauri app.");
   }
 
-  return await invoke('validate_editor_workflow', {
+  return await invoke("validate_editor_workflow", {
     request,
   });
 }
 
 export async function validateActiveWorkflow(request) {
   if (!isTauri()) {
-    throw new Error('Rust active workflow validation is only available in the Tauri app.');
+    throw new Error("Rust active workflow validation is only available in the Tauri app.");
   }
 
-  return await invoke('validate_active_workflow', {
+  return await invoke("validate_active_workflow", {
     request,
   });
 }
@@ -246,20 +234,20 @@ export async function validateActiveWorkflow(request) {
  */
 export async function resolveEditorSlotAncestry(request) {
   if (!isTauri()) {
-    throw new Error('Rust slot ancestry is only available in the Tauri app.');
+    throw new Error("Rust slot ancestry is only available in the Tauri app.");
   }
 
-  return await invoke('resolve_editor_slot_ancestry', {
+  return await invoke("resolve_editor_slot_ancestry", {
     request,
   });
 }
 
 export async function resolveActiveEditorSlotAncestry(request) {
   if (!isTauri()) {
-    throw new Error('Rust active slot ancestry is only available in the Tauri app.');
+    throw new Error("Rust active slot ancestry is only available in the Tauri app.");
   }
 
-  return await invoke('resolve_active_editor_slot_ancestry', {
+  return await invoke("resolve_active_editor_slot_ancestry", {
     request,
   });
 }
@@ -270,14 +258,13 @@ export async function resolveActiveEditorSlotAncestry(request) {
  */
 export async function analyzeEditorTransitions(request) {
   if (!isTauri()) {
-    throw new Error('Rust transition analysis is only available in the Tauri app.');
+    throw new Error("Rust transition analysis is only available in the Tauri app.");
   }
 
-  return await invoke('analyze_editor_transitions', {
+  return await invoke("analyze_editor_transitions", {
     request,
   });
 }
-
 
 /**
  * Parse a SkillStateMachine runtime log in Rust.
@@ -287,11 +274,11 @@ export async function analyzeEditorTransitions(request) {
  */
 export async function parseRuntimeLogText(text) {
   if (!isTauri()) {
-    throw new Error('Rust runtime-log parsing is only available in the Tauri app.');
+    throw new Error("Rust runtime-log parsing is only available in the Tauri app.");
   }
 
-  return await invoke('parse_runtime_log_text', {
-    text: String(text || ''),
+  return await invoke("parse_runtime_log_text", {
+    text: String(text || ""),
   });
 }
 
@@ -302,10 +289,10 @@ export async function parseRuntimeLogText(text) {
  */
 export async function prepareRuntimeReplayCacheRust(request) {
   if (!isTauri()) {
-    throw new Error('Rust runtime replay preparation is only available in the Tauri app.');
+    throw new Error("Rust runtime replay preparation is only available in the Tauri app.");
   }
 
-  return await invoke('prepare_runtime_replay_cache', {
+  return await invoke("prepare_runtime_replay_cache", {
     request,
   });
 }

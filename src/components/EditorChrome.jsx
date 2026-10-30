@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import {
-    FiFolder,
-    FiSave,
-    FiDownload,
-    FiSidebar,
-    FiSliders,
-    FiX,
-    FiChevronLeft,
-    FiChevronRight,
-    FiChevronDown,
-    FiCheck,
-    FiEye,
-    FiGitBranch,
-    FiShare2,
-    FiCode,
-    FiAlertCircle,
-    FiTrash2,
+  FiFolder,
+  FiSave,
+  FiDownload,
+  FiSidebar,
+  FiSliders,
+  FiX,
+  FiChevronLeft,
+  FiChevronRight,
+  FiChevronDown,
+  FiCheck,
+  FiEye,
+  FiGitBranch,
+  FiShare2,
+  FiCode,
+  FiAlertCircle,
+  FiTrash2,
 } from "react-icons/fi";
 import { clearWorkflowInspectionCache, isTauri } from "../tauri-client.js";
 import { PANEL_LIMITS } from "../utils/editorPreferences.js";
@@ -23,510 +23,584 @@ import { isDocumentGuardOpen } from "../hooks/interaction/useGlobalEditorShortcu
 import { Button, IconButton } from "./ui/index.js";
 
 function Header({
-    onOpenFile, onSaveFile, onSaveAsFile, hasFilePath,
-    isSaving = false, isOpening = false, panels,
-    showTransitionEdges = true, onToggleTransitionEdges,
-    showSlotEdges = true, onToggleSlotEdges,
-    showCodeViewButton = true, onToggleCodeViewButton,
-    colorblindMode = false, onToggleColorblindMode,
-    runtimeAssignmentsVisible = false, runtimeAssignmentsOpen = false, onToggleRuntimeAssignments,
+  onOpenFile,
+  onSaveFile,
+  onSaveAsFile,
+  hasFilePath,
+  isSaving = false,
+  isOpening = false,
+  panels,
+  showTransitionEdges = true,
+  onToggleTransitionEdges,
+  showSlotEdges = true,
+  onToggleSlotEdges,
+  showCodeViewButton = true,
+  onToggleCodeViewButton,
+  colorblindMode = false,
+  onToggleColorblindMode,
+  runtimeAssignmentsVisible = false,
+  runtimeAssignmentsOpen = false,
+  onToggleRuntimeAssignments,
 }) {
-    const IS_DESKTOP = isTauri();
+  const IS_DESKTOP = isTauri();
 
-    const [fileMenuOpen, setFileMenuOpen] = useState(false);
-    const fileMenuRef = useRef(null);
-    const fileMenuButtonRef = useRef(null);
-    const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
-    const optionsMenuRef = useRef(null);
-    const optionsButtonRef = useRef(null);
-    const [clearingCaches, setClearingCaches] = useState(false);
-    const [cacheClearMessage, setCacheClearMessage] = useState("");
+  const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const fileMenuRef = useRef(null);
+  const fileMenuButtonRef = useRef(null);
+  const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
+  const optionsMenuRef = useRef(null);
+  const optionsButtonRef = useRef(null);
+  const [clearingCaches, setClearingCaches] = useState(false);
+  const [cacheClearMessage, setCacheClearMessage] = useState("");
 
-    const handleClearCaches = async () => {
-        if (clearingCaches || !window.confirm(
-            "Clear cached skill descriptions, skill definitions, and behavior workflow inspections? " +
-            "Saved workflows, current editor content, and preferences will not be deleted."
-        )) return;
+  const handleClearCaches = async () => {
+    if (
+      clearingCaches ||
+      !window.confirm(
+        "Clear cached skill descriptions, skill definitions, and behavior workflow inspections? " +
+          "Saved workflows, current editor content, and preferences will not be deleted.",
+      )
+    )
+      return;
 
-        setClearingCaches(true);
-        setCacheClearMessage("");
-        let inspectionError = null;
+    setClearingCaches(true);
+    setCacheClearMessage("");
+    let inspectionError = null;
+    try {
+      if (IS_DESKTOP) {
+        // Clear the native inspection cache too: this is separate from
+        // the JavaScript skill caches and cannot be reset by React.
         try {
-            if (IS_DESKTOP) {
-                // Clear the native inspection cache too: this is separate from
-                // the JavaScript skill caches and cannot be reset by React.
-                try {
-                    await clearWorkflowInspectionCache();
-                } catch (error) {
-                    inspectionError = error;
-                    console.error("Could not clear workflow inspection cache:", error);
-                }
-            }
-            // Listeners invalidate both resolved and in-flight skill definitions.
-            // The tooltip's refresh key remounts it, dropping hover descriptions.
-            window.dispatchEvent(new Event("bonsai:clear-skill-caches"));
-            setCacheClearMessage(inspectionError
-                ? "Skill caches cleared, but workflow inspection cache failed to clear."
-                : "Caches cleared. Updated descriptions will load on next use.");
-        } finally {
-            setClearingCaches(false);
+          await clearWorkflowInspectionCache();
+        } catch (error) {
+          inspectionError = error;
+          console.error("Could not clear workflow inspection cache:", error);
         }
+      }
+      // Listeners invalidate both resolved and in-flight skill definitions.
+      // The tooltip's refresh key remounts it, dropping hover descriptions.
+      window.dispatchEvent(new Event("bonsai:clear-skill-caches"));
+      setCacheClearMessage(
+        inspectionError
+          ? "Skill caches cleared, but workflow inspection cache failed to clear."
+          : "Caches cleared. Updated descriptions will load on next use.",
+      );
+    } finally {
+      setClearingCaches(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!fileMenuOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!fileMenuRef.current?.contains(event.target)) setFileMenuOpen(false);
     };
-
-    useEffect(() => {
-        if (!fileMenuOpen) return undefined;
-        const closeOnOutsideClick = (event) => {
-            if (!fileMenuRef.current?.contains(event.target)) setFileMenuOpen(false);
-        };
-        const closeOnEscape = (event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            setFileMenuOpen(false);
-            fileMenuButtonRef.current?.focus();
-        };
-        const frame = window.requestAnimationFrame(() => {
-            fileMenuRef.current?.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
-        });
-        document.addEventListener("pointerdown", closeOnOutsideClick);
-        document.addEventListener("keydown", closeOnEscape, true);
-        return () => {
-            window.cancelAnimationFrame(frame);
-            document.removeEventListener("pointerdown", closeOnOutsideClick);
-            document.removeEventListener("keydown", closeOnEscape, true);
-        };
-    }, [fileMenuOpen]);
-
-    useEffect(() => {
-        if (!optionsMenuOpen) return undefined;
-        const closeOnOutsideClick = (event) => {
-            if (!optionsMenuRef.current?.contains(event.target)) setOptionsMenuOpen(false);
-        };
-        const closeOnEscape = (event) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopPropagation();
-            setOptionsMenuOpen(false);
-            optionsButtonRef.current?.focus();
-        };
-        const frame = window.requestAnimationFrame(() => {
-            optionsMenuRef.current?.querySelector('[role="menuitemcheckbox"]')?.focus();
-        });
-        document.addEventListener("pointerdown", closeOnOutsideClick);
-        document.addEventListener("keydown", closeOnEscape, true);
-        return () => {
-            window.cancelAnimationFrame(frame);
-            document.removeEventListener("pointerdown", closeOnOutsideClick);
-            document.removeEventListener("keydown", closeOnEscape, true);
-        };
-    }, [optionsMenuOpen]);
-
-    const runFileAction = (action) => {
-        setFileMenuOpen(false);
-        void action?.();
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setFileMenuOpen(false);
+      fileMenuButtonRef.current?.focus();
     };
-
-    const handleFileMenuKeys = (event) => {
-        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-        const items = Array.from(fileMenuRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || []);
-        if (items.length === 0) return;
-        event.preventDefault();
-        const index = items.indexOf(document.activeElement);
-        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 :
-            event.key === "ArrowDown" ? (index + 1) % items.length :
-                (index - 1 + items.length) % items.length;
-        items[next].focus();
+    const frame = window.requestAnimationFrame(() => {
+      fileMenuRef.current?.querySelector('[role="menuitem"]:not(:disabled)')?.focus();
+    });
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape, true);
     };
+  }, [fileMenuOpen]);
 
-    return (
-        <header className="header">
-            <div className="header-left">
-                <div
-                    className="editor-file-menu"
-                    ref={fileMenuRef}
-                    onKeyDown={handleFileMenuKeys}
-                    onBlurCapture={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget)) {
-                            setFileMenuOpen(false);
-                        }
-                    }}
+  useEffect(() => {
+    if (!optionsMenuOpen) return undefined;
+    const closeOnOutsideClick = (event) => {
+      if (!optionsMenuRef.current?.contains(event.target)) setOptionsMenuOpen(false);
+    };
+    const closeOnEscape = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOptionsMenuOpen(false);
+      optionsButtonRef.current?.focus();
+    };
+    const frame = window.requestAnimationFrame(() => {
+      optionsMenuRef.current?.querySelector('[role="menuitemcheckbox"]')?.focus();
+    });
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape, true);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("pointerdown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape, true);
+    };
+  }, [optionsMenuOpen]);
+
+  const runFileAction = (action) => {
+    setFileMenuOpen(false);
+    void action?.();
+  };
+
+  const handleFileMenuKeys = (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    const items = Array.from(fileMenuRef.current?.querySelectorAll('[role="menuitem"]:not(:disabled)') || []);
+    if (items.length === 0) return;
+    event.preventDefault();
+    const index = items.indexOf(document.activeElement);
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : event.key === "ArrowDown"
+            ? (index + 1) % items.length
+            : (index - 1 + items.length) % items.length;
+    items[next].focus();
+  };
+
+  return (
+    <header className="header">
+      <div className="header-left">
+        <div
+          className="editor-file-menu"
+          ref={fileMenuRef}
+          onKeyDown={handleFileMenuKeys}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              setFileMenuOpen(false);
+            }
+          }}
+        >
+          <Button
+            ref={fileMenuButtonRef}
+            size="sm"
+            className={`menu-button editor-file-menu-trigger ${fileMenuOpen ? "active" : ""}`}
+            trailingIcon={<FiChevronDown />}
+            aria-haspopup="menu"
+            aria-expanded={fileMenuOpen}
+            aria-controls="editor-file-menu-items"
+            onClick={() => {
+              setOptionsMenuOpen(false);
+              setFileMenuOpen((open) => !open);
+            }}
+            onKeyDown={(event) => {
+              if (!fileMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+                event.preventDefault();
+                setFileMenuOpen(true);
+              }
+            }}
+          >
+            File
+          </Button>
+          {fileMenuOpen && (
+            <div id="editor-file-menu-items" className="editor-file-menu-dropdown" role="menu" aria-label="File">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isSaving || isOpening}
+                onClick={() => runFileAction(onOpenFile)}
+              >
+                <FiFolder aria-hidden="true" />
+                {isOpening ? "Opening..." : "Open"}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isSaving || isOpening || (IS_DESKTOP && !hasFilePath)}
+                onClick={() => runFileAction(onSaveFile)}
+              >
+                <FiSave aria-hidden="true" />
+                {isSaving ? "Saving…" : "Save"}
+              </button>
+              {IS_DESKTOP && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={isSaving || isOpening}
+                  onClick={() => runFileAction(onSaveAsFile)}
                 >
-                    <Button
-                        ref={fileMenuButtonRef}
-                        size="sm"
-                        className={`menu-button editor-file-menu-trigger ${fileMenuOpen ? "active" : ""}`}
-                        trailingIcon={<FiChevronDown />}
-                        aria-haspopup="menu"
-                        aria-expanded={fileMenuOpen}
-                        aria-controls="editor-file-menu-items"
-                        onClick={() => {
-                            setOptionsMenuOpen(false);
-                            setFileMenuOpen((open) => !open);
-                        }}
-                        onKeyDown={(event) => {
-                            if (!fileMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) {
-                                event.preventDefault();
-                                setFileMenuOpen(true);
-                            }
-                        }}
-                    >
-                        File
-                    </Button>
-                    {fileMenuOpen && (
-                        <div
-                            id="editor-file-menu-items"
-                            className="editor-file-menu-dropdown"
-                            role="menu"
-                            aria-label="File"
-                        >
-                            <button
-                                type="button"
-                                role="menuitem"
-                                disabled={isSaving || isOpening}
-                                onClick={() => runFileAction(onOpenFile)}
-                            >
-                                <FiFolder aria-hidden="true" />
-                                {isOpening ? "Opening..." : "Open"}
-                            </button>
-                            <button
-                                type="button"
-                                role="menuitem"
-                                disabled={isSaving || isOpening || (IS_DESKTOP && !hasFilePath)}
-                                onClick={() => runFileAction(onSaveFile)}
-                            >
-                                <FiSave aria-hidden="true" />
-                                {isSaving ? "Saving…" : "Save"}
-                            </button>
-                            {IS_DESKTOP && (
-                                <button
-                                    type="button"
-                                    role="menuitem"
-                                    disabled={isSaving || isOpening}
-                                    onClick={() => runFileAction(onSaveAsFile)}
-                                >
-                                    <FiDownload aria-hidden="true" />
-                                    Save As…
-                                </button>
-                            )}
-                        </div>
-                    )}
-                </div>
-
-                <div
-                    className="editor-file-menu editor-options-menu"
-                    ref={optionsMenuRef}
-                    onBlurCapture={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget)) setOptionsMenuOpen(false);
-                    }}
-                    onKeyDown={(event) => {
-                        if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-                        const items = Array.from(optionsMenuRef.current?.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]') || []);
-                        if (!items.length) return;
-                        event.preventDefault();
-                        const index = items.indexOf(document.activeElement);
-                        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 :
-                            event.key === "ArrowDown" ? (index + 1) % items.length :
-                                (index - 1 + items.length) % items.length;
-                        items[next].focus();
-                    }}
-                >
-                    <Button
-                        ref={optionsButtonRef}
-                        size="sm"
-                        className={`menu-button editor-file-menu-trigger ${optionsMenuOpen ? "active" : ""}`}
-                        trailingIcon={<FiChevronDown />}
-                        aria-haspopup="menu"
-                        aria-expanded={optionsMenuOpen}
-                        aria-controls="editor-options-menu-items"
-                        onClick={() => {
-                            setFileMenuOpen(false);
-                            setOptionsMenuOpen((open) => !open);
-                        }}
-                        onKeyDown={(event) => {
-                            if (!optionsMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) {
-                                event.preventDefault();
-                                setFileMenuOpen(false);
-                                setOptionsMenuOpen(true);
-                            }
-                        }}
-                    >
-                        Options
-                    </Button>
-                    {optionsMenuOpen && (
-                        <div id="editor-options-menu-items" className="editor-file-menu-dropdown editor-options-menu-dropdown"
-                            role="menu" aria-label="Options">
-                            <button type="button" role="menuitemcheckbox" aria-checked={showTransitionEdges}
-                                className="editor-options-menu-toggle"
-                                onClick={() => onToggleTransitionEdges?.()}>
-                                <FiGitBranch aria-hidden="true" />
-                                <span>Show transitions</span>
-                                <span className="editor-options-menu-check" aria-hidden="true">
-                                    {showTransitionEdges && <FiCheck />}
-                                </span>
-                            </button>
-                            <button type="button" role="menuitemcheckbox" aria-checked={showSlotEdges}
-                                className="editor-options-menu-toggle"
-                                onClick={() => onToggleSlotEdges?.()}>
-                                <FiShare2 aria-hidden="true" />
-                                <span>Show slot edges</span>
-                                <span className="editor-options-menu-check" aria-hidden="true">
-                                    {showSlotEdges && <FiCheck />}
-                                </span>
-                            </button>
-                            <button type="button" role="menuitemcheckbox" aria-checked={showCodeViewButton}
-                                className="editor-options-menu-toggle"
-                                onClick={() => onToggleCodeViewButton?.()}>
-                                <FiCode aria-hidden="true" />
-                                <span>Show Code View button</span>
-                                <span className="editor-options-menu-check" aria-hidden="true">
-                                    {showCodeViewButton && <FiCheck />}
-                                </span>
-                            </button>
-                            <button type="button" role="menuitemcheckbox" aria-checked={colorblindMode}
-                                className="editor-options-menu-toggle"
-                                onClick={() => onToggleColorblindMode?.()}>
-                                <FiEye aria-hidden="true" />
-                                <span>Colorblind mode</span>
-                                <span className="editor-options-menu-check" aria-hidden="true">
-                                    {colorblindMode && <FiCheck />}
-                                </span>
-                            </button>
-                            <p className="editor-options-menu-help">Colorblind-friendly transition, slot and status colors.</p>
-                            <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid #475569" }}>
-                                <button type="button" role="menuitem" disabled={clearingCaches}
-                                    onClick={() => { void handleClearCaches(); }}>
-                                    <FiTrash2 aria-hidden="true" />
-                                    <span>{clearingCaches ? "Clearing caches…" : "Clear caches…"}</span>
-                                </button>
-                                <p className="editor-options-menu-help" role="status" aria-live="polite">
-                                    {cacheClearMessage || "Clears skill descriptions, definitions and inspected behaviors. Keeps workflows and preferences."}
-                                </p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-
-                <h2>Bonsai UI</h2>
+                  <FiDownload aria-hidden="true" />
+                  Save As…
+                </button>
+              )}
             </div>
-            {panels && (
-                <nav className="header-panel-controls" aria-label="Editor panels">
-                    {[
-                        ["library", "Library", FiSidebar],
-                        ["inspector", "Inspector", FiSliders],
-                    ].map(([side, label, Icon]) => (
-                        <Button
-                            key={side}
-                            size="sm"
-                            className={`menu-button panel-toggle ${panels[`${side}Open`] ? "active" : ""}`}
-                            leadingIcon={<Icon />}
-                            aria-controls={`editor-${side}-panel`}
-                            aria-expanded={panels[`${side}Open`]}
-                            aria-label={`Toggle ${label.toLowerCase()}`}
-                            title={`${panels[`${side}Open`] ? "Hide" : "Show"} ${label.toLowerCase()}`}
-                            onClick={() => {
-                                panels.togglePanel(side);
-                            }}
-                        >
-                            <span className="panel-toggle-text">{label}</span>
-                        </Button>
-                    ))}
-                    {runtimeAssignmentsVisible && <Button size="sm"
-                        className={`menu-button panel-toggle ${runtimeAssignmentsOpen ? "active" : ""}`}
-                        leadingIcon={<FiSliders />}
-                        aria-expanded={runtimeAssignmentsOpen} aria-controls="runtime-assignments-panel"
-                        title={runtimeAssignmentsOpen ? "Hide run assignments" : "Show run assignments"}
-                        onClick={onToggleRuntimeAssignments}>
-                        <span className="panel-toggle-text">Run assignments</span>
-                    </Button>}
-                </nav>
-            )}
-        </header>
-    );
+          )}
+        </div>
+
+        <div
+          className="editor-file-menu editor-options-menu"
+          ref={optionsMenuRef}
+          onBlurCapture={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setOptionsMenuOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            const items = Array.from(
+              optionsMenuRef.current?.querySelectorAll('[role="menuitemcheckbox"], [role="menuitem"]') || [],
+            );
+            if (!items.length) return;
+            event.preventDefault();
+            const index = items.indexOf(document.activeElement);
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? items.length - 1
+                  : event.key === "ArrowDown"
+                    ? (index + 1) % items.length
+                    : (index - 1 + items.length) % items.length;
+            items[next].focus();
+          }}
+        >
+          <Button
+            ref={optionsButtonRef}
+            size="sm"
+            className={`menu-button editor-file-menu-trigger ${optionsMenuOpen ? "active" : ""}`}
+            trailingIcon={<FiChevronDown />}
+            aria-haspopup="menu"
+            aria-expanded={optionsMenuOpen}
+            aria-controls="editor-options-menu-items"
+            onClick={() => {
+              setFileMenuOpen(false);
+              setOptionsMenuOpen((open) => !open);
+            }}
+            onKeyDown={(event) => {
+              if (!optionsMenuOpen && ["ArrowDown", "ArrowUp"].includes(event.key)) {
+                event.preventDefault();
+                setFileMenuOpen(false);
+                setOptionsMenuOpen(true);
+              }
+            }}
+          >
+            Options
+          </Button>
+          {optionsMenuOpen && (
+            <div
+              id="editor-options-menu-items"
+              className="editor-file-menu-dropdown editor-options-menu-dropdown"
+              role="menu"
+              aria-label="Options"
+            >
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={showTransitionEdges}
+                className="editor-options-menu-toggle"
+                onClick={() => onToggleTransitionEdges?.()}
+              >
+                <FiGitBranch aria-hidden="true" />
+                <span>Show transitions</span>
+                <span className="editor-options-menu-check" aria-hidden="true">
+                  {showTransitionEdges && <FiCheck />}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={showSlotEdges}
+                className="editor-options-menu-toggle"
+                onClick={() => onToggleSlotEdges?.()}
+              >
+                <FiShare2 aria-hidden="true" />
+                <span>Show slot edges</span>
+                <span className="editor-options-menu-check" aria-hidden="true">
+                  {showSlotEdges && <FiCheck />}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={showCodeViewButton}
+                className="editor-options-menu-toggle"
+                onClick={() => onToggleCodeViewButton?.()}
+              >
+                <FiCode aria-hidden="true" />
+                <span>Show Code View button</span>
+                <span className="editor-options-menu-check" aria-hidden="true">
+                  {showCodeViewButton && <FiCheck />}
+                </span>
+              </button>
+              <button
+                type="button"
+                role="menuitemcheckbox"
+                aria-checked={colorblindMode}
+                className="editor-options-menu-toggle"
+                onClick={() => onToggleColorblindMode?.()}
+              >
+                <FiEye aria-hidden="true" />
+                <span>Colorblind mode</span>
+                <span className="editor-options-menu-check" aria-hidden="true">
+                  {colorblindMode && <FiCheck />}
+                </span>
+              </button>
+              <p className="editor-options-menu-help">Colorblind-friendly transition, slot and status colors.</p>
+              <div style={{ marginTop: 6, paddingTop: 6, borderTop: "1px solid #475569" }}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={clearingCaches}
+                  onClick={() => {
+                    void handleClearCaches();
+                  }}
+                >
+                  <FiTrash2 aria-hidden="true" />
+                  <span>{clearingCaches ? "Clearing caches…" : "Clear caches…"}</span>
+                </button>
+                <p className="editor-options-menu-help" role="status" aria-live="polite">
+                  {cacheClearMessage ||
+                    "Clears skill descriptions, definitions and inspected behaviors. Keeps workflows and preferences."}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <h2>Bonsai UI</h2>
+      </div>
+      {panels && (
+        <nav className="header-panel-controls" aria-label="Editor panels">
+          {[
+            ["library", "Library", FiSidebar],
+            ["inspector", "Inspector", FiSliders],
+          ].map(([side, label, Icon]) => (
+            <Button
+              key={side}
+              size="sm"
+              className={`menu-button panel-toggle ${panels[`${side}Open`] ? "active" : ""}`}
+              leadingIcon={<Icon />}
+              aria-controls={`editor-${side}-panel`}
+              aria-expanded={panels[`${side}Open`]}
+              aria-label={`Toggle ${label.toLowerCase()}`}
+              title={`${panels[`${side}Open`] ? "Hide" : "Show"} ${label.toLowerCase()}`}
+              onClick={() => {
+                panels.togglePanel(side);
+              }}
+            >
+              <span className="panel-toggle-text">{label}</span>
+            </Button>
+          ))}
+          {runtimeAssignmentsVisible && (
+            <Button
+              size="sm"
+              className={`menu-button panel-toggle ${runtimeAssignmentsOpen ? "active" : ""}`}
+              leadingIcon={<FiSliders />}
+              aria-expanded={runtimeAssignmentsOpen}
+              aria-controls="runtime-assignments-panel"
+              title={runtimeAssignmentsOpen ? "Hide run assignments" : "Show run assignments"}
+              onClick={onToggleRuntimeAssignments}
+            >
+              <span className="panel-toggle-text">Run assignments</span>
+            </Button>
+          )}
+        </nav>
+      )}
+    </header>
+  );
 }
 
 export default Header;
 
 export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs, onReload, onKeepLocal }) {
-    const noticeRef = useRef(null);
-    const previousFocusRef = useRef(null);
-    useEffect(() => {
-        const active = document.activeElement;
-        if (notice && active !== document.body && !noticeRef.current?.contains(active)) {
-            previousFocusRef.current = active;
-        }
-    }, [notice]);
-    if (!notice) return null;
-    const restoreFocus = () => {
-        const previous = previousFocusRef.current;
-        if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) previous.focus();
-        else document.querySelector('.intellij-tab-button[aria-selected="true"]')?.focus();
-    };
-    return (
-        <section ref={noticeRef} className="editor-operation-notice" aria-label={notice.action === "insert" ? "Library insertion feedback" : "File operation feedback"}
-            onFocusCapture={(event) => {
-                if (event.relatedTarget && event.relatedTarget !== document.body &&
-                    !event.currentTarget.contains(event.relatedTarget)) previousFocusRef.current = event.relatedTarget;
-            }}>
-            <FiAlertCircle className="editor-notice-icon" aria-hidden="true" />
-            <div className="editor-notice-message" role="alert" aria-atomic="true">
-                <strong>{notice.title}</strong>
-                <p>{notice.message}</p>
-                <p className="editor-notice-guidance">
-                    {notice.guidance || (notice.desktopRequired
-                        ? "Use the Bonsai desktop app to open or save SCXML workflows."
-                        : notice.action === "save"
-                            ? "No successful save was reported. Check file permissions or use Save As."
-                            : "Check the file and backend connection, then try again.")}
-                </p>
-                {!notice.canRetry && !notice.desktopRequired && notice.action !== "insert" && (
-                    <p className="editor-notice-guidance">The originating workflow was closed or replaced. This operation cannot be retried here.</p>
-                )}
-            </div>
-            <div className="editor-notice-actions">
-                {notice.action === "external" && notice.canReload && <>
-                    <Button size="sm" disabled={notice.busy} onClick={async () => {
-                        const active = document.activeElement;
-                        if (active !== document.body && !noticeRef.current?.contains(active)) previousFocusRef.current = active;
-                        if (await onReload?.()) restoreFocus();
-                    }}>Reload from disk</Button>
-                    <Button size="sm" disabled={notice.busy || notice.keptLocal} onClick={() => onKeepLocal?.()}>
-                        {notice.keptLocal ? "Keeping local" : "Keep local"}
-                    </Button>
-                </>}
-                {notice.canRetry && (notice.action !== "external" || !notice.canReload) && (
-                    <Button size="sm" disabled={notice.busy} onClick={() => void onRetry?.()}>
-                        {notice.action === "external" ? "Retry disk check" : `Retry ${notice.action === "save" ? "Save" : "Open"}`}
-                    </Button>
-                )}
-                {notice.canRetry && (notice.action === "save" || notice.action === "external") && (
-                    <Button size="sm" disabled={notice.busy} onClick={() => void onSaveAs?.()}>Save As...</Button>
-                )}
-                {!notice.persistent && <IconButton size="sm" className="editor-notice-dismiss" aria-label="Dismiss operation feedback" onClick={() => {
-                    onDismiss?.();
-                    restoreFocus();
-                }}>
-                    <FiX aria-hidden="true" />
-                </IconButton>}
-            </div>
-        </section>
-    );
+  const noticeRef = useRef(null);
+  const previousFocusRef = useRef(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (notice && active !== document.body && !noticeRef.current?.contains(active)) {
+      previousFocusRef.current = active;
+    }
+  }, [notice]);
+  if (!notice) return null;
+  const restoreFocus = () => {
+    const previous = previousFocusRef.current;
+    if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) previous.focus();
+    else document.querySelector('.intellij-tab-button[aria-selected="true"]')?.focus();
+  };
+  return (
+    <section
+      ref={noticeRef}
+      className="editor-operation-notice"
+      aria-label={notice.action === "insert" ? "Library insertion feedback" : "File operation feedback"}
+      onFocusCapture={(event) => {
+        if (
+          event.relatedTarget &&
+          event.relatedTarget !== document.body &&
+          !event.currentTarget.contains(event.relatedTarget)
+        )
+          previousFocusRef.current = event.relatedTarget;
+      }}
+    >
+      <FiAlertCircle className="editor-notice-icon" aria-hidden="true" />
+      <div className="editor-notice-message" role="alert" aria-atomic="true">
+        <strong>{notice.title}</strong>
+        <p>{notice.message}</p>
+        <p className="editor-notice-guidance">
+          {notice.guidance ||
+            (notice.desktopRequired
+              ? "Use the Bonsai desktop app to open or save SCXML workflows."
+              : notice.action === "save"
+                ? "No successful save was reported. Check file permissions or use Save As."
+                : "Check the file and backend connection, then try again.")}
+        </p>
+        {!notice.canRetry && !notice.desktopRequired && notice.action !== "insert" && (
+          <p className="editor-notice-guidance">
+            The originating workflow was closed or replaced. This operation cannot be retried here.
+          </p>
+        )}
+      </div>
+      <div className="editor-notice-actions">
+        {notice.action === "external" && notice.canReload && (
+          <>
+            <Button
+              size="sm"
+              disabled={notice.busy}
+              onClick={async () => {
+                const active = document.activeElement;
+                if (active !== document.body && !noticeRef.current?.contains(active)) previousFocusRef.current = active;
+                if (await onReload?.()) restoreFocus();
+              }}
+            >
+              Reload from disk
+            </Button>
+            <Button size="sm" disabled={notice.busy || notice.keptLocal} onClick={() => onKeepLocal?.()}>
+              {notice.keptLocal ? "Keeping local" : "Keep local"}
+            </Button>
+          </>
+        )}
+        {notice.canRetry && (notice.action !== "external" || !notice.canReload) && (
+          <Button size="sm" disabled={notice.busy} onClick={() => void onRetry?.()}>
+            {notice.action === "external" ? "Retry disk check" : `Retry ${notice.action === "save" ? "Save" : "Open"}`}
+          </Button>
+        )}
+        {notice.canRetry && (notice.action === "save" || notice.action === "external") && (
+          <Button size="sm" disabled={notice.busy} onClick={() => void onSaveAs?.()}>
+            Save As...
+          </Button>
+        )}
+        {!notice.persistent && (
+          <IconButton
+            size="sm"
+            className="editor-notice-dismiss"
+            aria-label="Dismiss operation feedback"
+            onClick={() => {
+              onDismiss?.();
+              restoreFocus();
+            }}
+          >
+            <FiX aria-hidden="true" />
+          </IconButton>
+        )}
+      </div>
+    </section>
+  );
 }
 
 export function EditorPanelLedge({ side, panels }) {
-    const open = panels[`${side}Open`];
-    const label = side === "library" ? "Library" : "Inspector";
-    const Chevron = (side === "library") === open ? FiChevronLeft : FiChevronRight;
-    return (
-        <button
-            type="button"
-            className={`editor-panel-ledge editor-panel-ledge-${side}`}
-            data-open={String(open)}
-            aria-controls={`editor-${side}-panel`}
-            aria-expanded={open}
-            aria-label={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
-            title={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
-            onClick={() => {
-                panels.togglePanel(side);
-            }}
-        >
-            <Chevron aria-hidden="true" />
-            <span className="editor-panel-ledge-label">{label}</span>
-        </button>
-    );
+  const open = panels[`${side}Open`];
+  const label = side === "library" ? "Library" : "Inspector";
+  const Chevron = (side === "library") === open ? FiChevronLeft : FiChevronRight;
+  return (
+    <button
+      type="button"
+      className={`editor-panel-ledge editor-panel-ledge-${side}`}
+      data-open={String(open)}
+      aria-controls={`editor-${side}-panel`}
+      aria-expanded={open}
+      aria-label={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
+      title={`${open ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
+      onClick={() => {
+        panels.togglePanel(side);
+      }}
+    >
+      <Chevron aria-hidden="true" />
+      <span className="editor-panel-ledge-label">{label}</span>
+    </button>
+  );
 }
 
 export function EditorPanel({ side, panels, children }) {
-    const panel = useRef(null);
-    const wasOpen = useRef(panels[`${side}Open`]);
-    const previousFocus = useRef(null);
-    const focusInside = useRef(false);
-    const open = panels[`${side}Open`];
-    const title = side === "library" ? "Library" : "Inspector";
-    useEffect(() => {
-        if (open && !wasOpen.current && !panels.isDocked) {
-            previousFocus.current = document.activeElement;
-            panel.current?.querySelector("input:not(:disabled), button:not(:disabled)")?.focus();
-        } else if (
-            !open &&
-            wasOpen.current &&
-            (focusInside.current || panel.current?.contains(document.activeElement))
-        ) {
-            if (previousFocus.current?.isConnected) previousFocus.current.focus();
-            else document.querySelector(`[aria-controls="editor-${side}-panel"]`)?.focus();
-            focusInside.current = false;
+  const panel = useRef(null);
+  const wasOpen = useRef(panels[`${side}Open`]);
+  const previousFocus = useRef(null);
+  const focusInside = useRef(false);
+  const open = panels[`${side}Open`];
+  const title = side === "library" ? "Library" : "Inspector";
+  useEffect(() => {
+    if (open && !wasOpen.current && !panels.isDocked) {
+      previousFocus.current = document.activeElement;
+      panel.current?.querySelector("input:not(:disabled), button:not(:disabled)")?.focus();
+    } else if (!open && wasOpen.current && (focusInside.current || panel.current?.contains(document.activeElement))) {
+      if (previousFocus.current?.isConnected) previousFocus.current.focus();
+      else document.querySelector(`[aria-controls="editor-${side}-panel"]`)?.focus();
+      focusInside.current = false;
+    }
+    wasOpen.current = open;
+  }, [open, panels.isDocked, side]);
+  return (
+    <aside
+      ref={panel}
+      id={`editor-${side}-panel`}
+      className={`editor-side-panel editor-side-panel-${side}`}
+      data-open={String(open)}
+      aria-labelledby={`editor-${side}-heading`}
+      aria-hidden={!open}
+      inert={!open}
+      onFocusCapture={() => {
+        focusInside.current = true;
+      }}
+      onBlurCapture={(event) => {
+        if (event.relatedTarget && !panel.current?.contains(event.relatedTarget)) focusInside.current = false;
+      }}
+      onDragStartCapture={side === "library" ? panels.onLibraryDragStart : undefined}
+      onDragEndCapture={side === "library" ? panels.onLibraryDragEnd : undefined}
+      onKeyDown={(event) => {
+        if (!panels.isDocked && event.key === "Escape" && !event.defaultPrevented && !isDocumentGuardOpen()) {
+          event.preventDefault();
+          event.stopPropagation();
+          panels.closePanel(side);
         }
-        wasOpen.current = open;
-    }, [open, panels.isDocked, side]);
-    return (
-        <aside
-            ref={panel}
-            id={`editor-${side}-panel`}
-            className={`editor-side-panel editor-side-panel-${side}`}
-            data-open={String(open)}
-            aria-labelledby={`editor-${side}-heading`}
-            aria-hidden={!open}
-            inert={!open}
-            onFocusCapture={() => {
-                focusInside.current = true;
-            }}
-            onBlurCapture={(event) => {
-                if (event.relatedTarget && !panel.current?.contains(event.relatedTarget))
-                    focusInside.current = false;
-            }}
-            onDragStartCapture={side === "library" ? panels.onLibraryDragStart : undefined}
-            onDragEndCapture={side === "library" ? panels.onLibraryDragEnd : undefined}
-            onKeyDown={(event) => {
-                if (
-                    !panels.isDocked &&
-                    event.key === "Escape" &&
-                    !event.defaultPrevented &&
-                    !isDocumentGuardOpen()
-                ) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    panels.closePanel(side);
-                }
-            }}
+      }}
+    >
+      <div className="editor-side-panel-heading">
+        <h2 id={`editor-${side}-heading`}>{title}</h2>
+        <IconButton
+          size="sm"
+          className="editor-side-panel-close"
+          aria-label={`Close ${title.toLowerCase()}`}
+          onClick={() => panels.closePanel(side)}
         >
-            <div className="editor-side-panel-heading">
-                <h2 id={`editor-${side}-heading`}>{title}</h2>
-                <IconButton
-                    size="sm"
-                    className="editor-side-panel-close"
-                    aria-label={`Close ${title.toLowerCase()}`}
-                    onClick={() => panels.closePanel(side)}
-                >
-                    <FiX aria-hidden="true" />
-                </IconButton>
-            </div>
-            <div className="editor-side-panel-body">{children}</div>
-        </aside>
-    );
+          <FiX aria-hidden="true" />
+        </IconButton>
+      </div>
+      <div className="editor-side-panel-body">{children}</div>
+    </aside>
+  );
 }
 
 export function EditorPanelResizer({ side, panels }) {
-    const open = panels.isDocked && panels[`${side}Open`];
-    return (
-        <div
-            role="separator"
-            aria-orientation="vertical"
-            aria-label={`Resize ${side}`}
-            aria-controls={`editor-${side}-panel`}
-            aria-valuemin={PANEL_LIMITS[side].min}
-            aria-valuemax={Math.round(panels[`${side}MaxWidth`])}
-            aria-valuenow={Math.round(panels[`${side}Width`])}
-            tabIndex={open ? 0 : -1}
-            aria-hidden={!open}
-            className={`editor-panel-resize editor-panel-resize-${side}`}
-            data-open={String(open)}
-            onPointerDown={(event) => panels.startResize(side, event)}
-            onPointerMove={panels.moveResize}
-            onPointerUp={panels.finishResize}
-            onPointerCancel={(event) => panels.finishResize(event, true)}
-            onLostPointerCapture={(event) => panels.finishResize(event, true)}
-            onKeyDown={(event) => panels.resizeKey(side, event)}
-            onDoubleClick={() => panels.resetWidth(side)}
-            title="Drag or use arrow keys to resize; double-click to reset"
-        />
-    );
+  const open = panels.isDocked && panels[`${side}Open`];
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${side}`}
+      aria-controls={`editor-${side}-panel`}
+      aria-valuemin={PANEL_LIMITS[side].min}
+      aria-valuemax={Math.round(panels[`${side}MaxWidth`])}
+      aria-valuenow={Math.round(panels[`${side}Width`])}
+      tabIndex={open ? 0 : -1}
+      aria-hidden={!open}
+      className={`editor-panel-resize editor-panel-resize-${side}`}
+      data-open={String(open)}
+      onPointerDown={(event) => panels.startResize(side, event)}
+      onPointerMove={panels.moveResize}
+      onPointerUp={panels.finishResize}
+      onPointerCancel={(event) => panels.finishResize(event, true)}
+      onLostPointerCapture={(event) => panels.finishResize(event, true)}
+      onKeyDown={(event) => panels.resizeKey(side, event)}
+      onDoubleClick={() => panels.resetWidth(side)}
+      title="Drag or use arrow keys to resize; double-click to reset"
+    />
+  );
 }

@@ -1,38 +1,30 @@
 const DEFAULT_SLOW_THRESHOLD_MS = 50;
 
 const now = () =>
-    typeof performance !== "undefined" && typeof performance.now === "function"
-        ? performance.now()
-        : Date.now();
+  typeof performance !== "undefined" && typeof performance.now === "function" ? performance.now() : Date.now();
 
 const readGlobal = (name) => {
-    try {
-        return globalThis?.[name];
-    } catch {
-        return undefined;
-    }
+  try {
+    return globalThis?.[name];
+  } catch {
+    return undefined;
+  }
 };
 
 const isVerbose = () => Boolean(readGlobal("BONSAI_PERF"));
 
 const getSlowThreshold = () => {
-    const configured = Number(readGlobal("BONSAI_PERF_THRESHOLD_MS"));
-    return Number.isFinite(configured) && configured >= 0
-        ? configured
-        : DEFAULT_SLOW_THRESHOLD_MS;
+  const configured = Number(readGlobal("BONSAI_PERF_THRESHOLD_MS"));
+  return Number.isFinite(configured) && configured >= 0 ? configured : DEFAULT_SLOW_THRESHOLD_MS;
 };
 
-const shouldLog = (durationMs) =>
-    isVerbose() || durationMs >= getSlowThreshold();
+const shouldLog = (durationMs) => isVerbose() || durationMs >= getSlowThreshold();
 
 const log = (label, durationMs, details) => {
-    if (!shouldLog(durationMs)) return;
-    const suffix = details && Object.keys(details).length > 0 ? details : undefined;
-    const method = durationMs >= getSlowThreshold() ? "warn" : "info";
-    console[method](
-        `[Bonsai perf] ${label}: ${durationMs.toFixed(1)} ms`,
-        suffix
-    );
+  if (!shouldLog(durationMs)) return;
+  const suffix = details && Object.keys(details).length > 0 ? details : undefined;
+  const method = durationMs >= getSlowThreshold() ? "warn" : "info";
+  console[method](`[Bonsai perf] ${label}: ${durationMs.toFixed(1)} ms`, suffix);
 };
 
 /**
@@ -42,22 +34,22 @@ const log = (label, durationMs, details) => {
  * threshold with `window.BONSAI_PERF_THRESHOLD_MS`.
  */
 export const measureEditorTask = (label, task, details = null) => {
-    const startedAt = now();
-    try {
-        return task();
-    } finally {
-        log(label, now() - startedAt, details || undefined);
-    }
+  const startedAt = now();
+  try {
+    return task();
+  } finally {
+    log(label, now() - startedAt, details || undefined);
+  }
 };
 
 /** Same as measureEditorTask, but for Promise-returning work. */
 export const measureEditorAsync = async (label, task, details = null) => {
-    const startedAt = now();
-    try {
-        return await task();
-    } finally {
-        log(label, now() - startedAt, details || undefined);
-    }
+  const startedAt = now();
+  try {
+    return await task();
+  } finally {
+    log(label, now() - startedAt, details || undefined);
+  }
 };
 
 /**
@@ -66,9 +58,9 @@ export const measureEditorAsync = async (label, task, details = null) => {
  * many older commands.
  */
 export const logEditorQueueWait = (label, enqueuedAt, details = null) => {
-    const durationMs = Math.max(0, now() - enqueuedAt);
-    log(label, durationMs, details || undefined);
-    return durationMs;
+  const durationMs = Math.max(0, now() - enqueuedAt);
+  log(label, durationMs, details || undefined);
+  return durationMs;
 };
 
 export const editorPerfNow = now;

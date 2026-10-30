@@ -1,305 +1,264 @@
 import { useCallback } from "react";
 import { updateSharedSlotBinding, resolveSlotInheritanceOwner } from "../../../utils/sharedSlotBindings.js";
-import {
-    getSlotPathFromNode,
-    normalizeSlotPath,
-} from "../../../utils/editorGraph";
+import { getSlotPathFromNode, normalizeSlotPath } from "../../../utils/editorGraph";
 
 /**
  * Slot/declaration mutations that must update skills and the workflow-level
  * #_SLOTS declarations together.
  */
 export function useEditorSlotActions({
-    nodes,
-    slotNodes,
-    manualSlots,
-    setNodes,
-    setManualSlots,
-    setSelectedNodeId,
-    checkSlotConnection,
-    syncSlotsAfterCommit,
+  nodes,
+  slotNodes,
+  manualSlots,
+  setNodes,
+  setManualSlots,
+  setSelectedNodeId,
+  checkSlotConnection,
+  syncSlotsAfterCommit,
 }) {
-    const updateSlotPath = useCallback(
-        (slotNode, nextPath) => {
-            if (!slotNode || slotNode.type !== "slot") return false;
+  const updateSlotPath = useCallback(
+    (slotNode, nextPath) => {
+      if (!slotNode || slotNode.type !== "slot") return false;
 
-            const oldPath = getSlotPathFromNode(slotNode);
-            const newPath = normalizeSlotPath(nextPath);
-            if (!oldPath || !newPath || oldPath === newPath) return false;
+      const oldPath = getSlotPathFromNode(slotNode);
+      const newPath = normalizeSlotPath(nextPath);
+      if (!oldPath || !newPath || oldPath === newPath) return false;
 
-            const formattedPath = `/${newPath}`;
-            const updateSlotReference = (slot) => {
-                if (normalizeSlotPath(slot?.path) !== oldPath) return slot;
+      const formattedPath = `/${newPath}`;
+      const updateSlotReference = (slot) => {
+        if (normalizeSlotPath(slot?.path) !== oldPath) return slot;
 
-                return {
-                    ...slot,
-                    path: formattedPath,
-                    inherited: slot?.inherited
-                        ? {
-                              ...slot.inherited,
-                              xpath: formattedPath,
-                          }
-                        : slot?.inherited,
-                };
-            };
+        return {
+          ...slot,
+          path: formattedPath,
+          inherited: slot?.inherited
+            ? {
+                ...slot.inherited,
+                xpath: formattedPath,
+              }
+            : slot?.inherited,
+        };
+      };
 
-            const updatedNodes = nodes.map((node) => ({
-                ...node,
-                data: {
-                    ...node.data,
-                    inSlots: (node.data?.inSlots || []).map(
-                        updateSlotReference
-                    ),
-                    outSlots: (node.data?.outSlots || []).map(
-                        updateSlotReference
-                    ),
-                },
-            }));
-
-            const updatedManualSlots = (manualSlots || []).map((slot) => {
-                const declarationPath = normalizeSlotPath(
-                    slot?.inherited?.xpath || slot?.path
-                );
-                if (declarationPath !== oldPath) return slot;
-
-                return {
-                    ...slot,
-                    path: formattedPath,
-                    inherited: slot?.inherited
-                        ? {
-                              ...slot.inherited,
-                              xpath: formattedPath,
-                          }
-                        : slot?.inherited,
-                };
-            });
-
-            const oldCanonicalSlotNodeId = `slot-${oldPath}`;
-            const newCanonicalSlotNodeId = `slot-${newPath}`;
-            const updatedSlotNodes = slotNodes.map((candidate) => {
-                const isCanonical = candidate.id === oldCanonicalSlotNodeId;
-                const isClone =
-                    candidate.data?.isSlotClone &&
-                    candidate.data?.cloneOfNodeId === oldCanonicalSlotNodeId;
-
-                if (!isCanonical && !isClone) return candidate;
-
-                return {
-                    ...candidate,
-                    ...(isCanonical ? { id: newCanonicalSlotNodeId } : {}),
-                    data: {
-                        ...(candidate.data || {}),
-                        path: formattedPath,
-                        label: formattedPath,
-                        ...(isClone
-                            ? { cloneOfNodeId: newCanonicalSlotNodeId }
-                            : {}),
-                    },
-                };
-            });
-
-            setNodes(updatedNodes);
-            setManualSlots(updatedManualSlots);
-            setSelectedNodeId(
-                slotNode.data?.isSlotClone
-                    ? slotNode.id
-                    : newCanonicalSlotNodeId
-            );
-            checkSlotConnection(
-                updatedNodes,
-                updatedManualSlots,
-                updatedSlotNodes
-            );
-            void syncSlotsAfterCommit?.();
-            return true;
+      const updatedNodes = nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          inSlots: (node.data?.inSlots || []).map(updateSlotReference),
+          outSlots: (node.data?.outSlots || []).map(updateSlotReference),
         },
-        [
-            nodes,
-            slotNodes,
-            manualSlots,
-            setNodes,
-            setManualSlots,
-            setSelectedNodeId,
-            checkSlotConnection,
-            syncSlotsAfterCommit,
-        ]
-    );
+      }));
 
-    const updateSlotInherited = useCallback(
-        (slotNode, shouldInherit) => {
-            if (!slotNode || slotNode.type !== "slot") return false;
+      const updatedManualSlots = (manualSlots || []).map((slot) => {
+        const declarationPath = normalizeSlotPath(slot?.inherited?.xpath || slot?.path);
+        if (declarationPath !== oldPath) return slot;
 
-            const path = getSlotPathFromNode(slotNode);
-            if (!path) return false;
-            const formattedPath = `/${path}`;
-            const owner = shouldInherit ? resolveSlotInheritanceOwner(nodes, path) : null;
-            const matchingDeclarations = (manualSlots || []).filter((slot) =>
-                normalizeSlotPath(slot?.inherited?.xpath || slot?.path) === path);
-            const hasDeclaration = matchingDeclarations.length > 0;
-            const hasValidDeclaration = matchingDeclarations.some((slot) =>
-                String(slot?.key || "").trim() &&
-                String(slot?.inherited?.state || slot?.state || "").trim());
-            // An inheritSlot without a binding key/state cannot be serialized.
-            // Do not make a temporary visual change that silently resets.
-            if (shouldInherit && !owner && !hasValidDeclaration) return false;
+        return {
+          ...slot,
+          path: formattedPath,
+          inherited: slot?.inherited
+            ? {
+                ...slot.inherited,
+                xpath: formattedPath,
+              }
+            : slot?.inherited,
+        };
+      });
 
-            const updatedNodes = nodes.map((node) => {
-                const stateName =
-                    node.data?.fullSkillName || node.data?.label || node.id;
+      const oldCanonicalSlotNodeId = `slot-${oldPath}`;
+      const newCanonicalSlotNodeId = `slot-${newPath}`;
+      const updatedSlotNodes = slotNodes.map((candidate) => {
+        const isCanonical = candidate.id === oldCanonicalSlotNodeId;
+        const isClone = candidate.data?.isSlotClone && candidate.data?.cloneOfNodeId === oldCanonicalSlotNodeId;
 
-                const updateSlotReference = (slot) => {
-                    if (normalizeSlotPath(slot?.path) !== path) return slot;
+        if (!isCanonical && !isClone) return candidate;
 
-                    return {
-                        ...slot,
-                        inherited: shouldInherit
-                            ? {
-                                  ...(slot?.inherited || {}),
-                                  state:
-                                      slot?.inherited?.state || stateName,
-                                  xpath: formattedPath,
-                              }
-                            : null,
-                    };
-                };
+        return {
+          ...candidate,
+          ...(isCanonical ? { id: newCanonicalSlotNodeId } : {}),
+          data: {
+            ...(candidate.data || {}),
+            path: formattedPath,
+            label: formattedPath,
+            ...(isClone ? { cloneOfNodeId: newCanonicalSlotNodeId } : {}),
+          },
+        };
+      });
 
-                return {
-                    ...node,
-                    data: {
-                        ...node.data,
-                        inSlots: (node.data?.inSlots || []).map(
-                            updateSlotReference
-                        ),
-                        outSlots: (node.data?.outSlots || []).map(
-                            updateSlotReference
-                        ),
-                    },
-                };
-            });
+      setNodes(updatedNodes);
+      setManualSlots(updatedManualSlots);
+      setSelectedNodeId(slotNode.data?.isSlotClone ? slotNode.id : newCanonicalSlotNodeId);
+      checkSlotConnection(updatedNodes, updatedManualSlots, updatedSlotNodes);
+      void syncSlotsAfterCommit?.();
+      return true;
+    },
+    [
+      nodes,
+      slotNodes,
+      manualSlots,
+      setNodes,
+      setManualSlots,
+      setSelectedNodeId,
+      checkSlotConnection,
+      syncSlotsAfterCommit,
+    ],
+  );
 
-            const updatedManualSlots = (manualSlots || []).map((slot) => {
-                const declarationPath = normalizeSlotPath(
-                    slot?.inherited?.xpath || slot?.path
-                );
-                if (declarationPath !== path) return slot;
+  const updateSlotInherited = useCallback(
+    (slotNode, shouldInherit) => {
+      if (!slotNode || slotNode.type !== "slot") return false;
 
-                return {
-                    ...slot,
-                    path: formattedPath,
-                    key: slot?.key || owner?.key || "",
-                    state: slot?.state || owner?.state || "",
-                    slotKind: shouldInherit ? "inheritSlot" : "slot",
-                    inherited: shouldInherit
-                        ? {
-                              ...(slot?.inherited || {}),
-                              state: slot?.inherited?.state || slot?.state || owner?.state || "",
-                              xpath: formattedPath,
-                          }
-                        : null,
-                };
-            });
+      const path = getSlotPathFromNode(slotNode);
+      if (!path) return false;
+      const formattedPath = `/${path}`;
+      const owner = shouldInherit ? resolveSlotInheritanceOwner(nodes, path) : null;
+      const matchingDeclarations = (manualSlots || []).filter(
+        (slot) => normalizeSlotPath(slot?.inherited?.xpath || slot?.path) === path,
+      );
+      const hasDeclaration = matchingDeclarations.length > 0;
+      const hasValidDeclaration = matchingDeclarations.some(
+        (slot) => String(slot?.key || "").trim() && String(slot?.inherited?.state || slot?.state || "").trim(),
+      );
+      // An inheritSlot without a binding key/state cannot be serialized.
+      // Do not make a temporary visual change that silently resets.
+      if (shouldInherit && !owner && !hasValidDeclaration) return false;
 
-            // Only the current workflow's declarations govern its inheritance.
-            // A slot derived solely from child requirements still needs a
-            // persisted declaration if the user enables inheritSlot here.
-            if (shouldInherit && !hasDeclaration && owner) {
-                updatedManualSlots.push({
-                    id: `manual-${crypto.randomUUID()}`,
-                    path: formattedPath,
-                    key: owner.key,
-                    state: owner.state,
-                    slotKind: "inheritSlot",
-                    inherited: { state: owner.state, xpath: formattedPath },
-                });
-            }
+      const updatedNodes = nodes.map((node) => {
+        const stateName = node.data?.fullSkillName || node.data?.label || node.id;
 
-            setNodes(updatedNodes);
-            setManualSlots(updatedManualSlots);
-            checkSlotConnection(updatedNodes, updatedManualSlots);
-            void syncSlotsAfterCommit?.();
-            return true;
-        },
-        [
-            nodes,
-            manualSlots,
-            setNodes,
-            setManualSlots,
-            checkSlotConnection,
-            syncSlotsAfterCommit,
-        ]
-    );
+        const updateSlotReference = (slot) => {
+          if (normalizeSlotPath(slot?.path) !== path) return slot;
 
-    const createManualSlot = useCallback(
-        (slotData) => {
-            const cleanPath = normalizeSlotPath(slotData?.path);
-            const linked = slotData?.linkedSkillSlot;
-            const owner = nodes.find((node) => node.id === linked?.nodeId && node.type === "custom");
-            const requests = linked?.access === "read" ? owner?.data?.inSlots
-                : linked?.access === "write" ? owner?.data?.outSlots : null;
-            const slotIndex = Number(linked?.slotIndex);
-            const request = Number.isInteger(slotIndex) && slotIndex >= 0
-                ? requests?.[slotIndex] : null;
-            const key = String(request?.key || "").trim();
-            const state = String(owner?.data?.fullSkillName || owner?.data?.label || owner?.id || "").trim();
-            // Do not create a malformed manual <slot> when the dialog's
-            // selected skill/key is stale (e.g. edited or removed while open).
-            if (!cleanPath || !key || !state || !request || owner.data?.isSkillClone ||
-                String(request.type || "").trim() !== String(slotData?.type || "").trim() ||
-                (request.path && normalizeSlotPath(request.path) !== cleanPath)) return null;
-            const formattedPath = `/${cleanPath}`;
-            const inheritedState = String(slotData.inheritedFrom || request.inherited?.state || state).trim();
-            const newSlot = {
-                id: `manual-${crypto.randomUUID()}`,
-                path: formattedPath,
-                type: request.type,
-                key,
-                state,
-                inherited: slotData.isInherited
-                    ? { state: inheritedState, xpath: formattedPath }
-                    : null,
-            };
+          return {
+            ...slot,
+            inherited: shouldInherit
+              ? {
+                  ...(slot?.inherited || {}),
+                  state: slot?.inherited?.state || stateName,
+                  xpath: formattedPath,
+                }
+              : null,
+          };
+        };
 
-            const updatedManualSlots = [...manualSlots, newSlot];
-            setManualSlots(updatedManualSlots);
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            inSlots: (node.data?.inSlots || []).map(updateSlotReference),
+            outSlots: (node.data?.outSlots || []).map(updateSlotReference),
+          },
+        };
+      });
 
-            let updatedNodes = nodes;
-            if (slotData.linkedSkillSlot) {
-                const { nodeId, access, slotIndex } =
-                    slotData.linkedSkillSlot;
-                updatedNodes = nodes.map((node) => {
-                    if (node.id !== nodeId) return node;
+      const updatedManualSlots = (manualSlots || []).map((slot) => {
+        const declarationPath = normalizeSlotPath(slot?.inherited?.xpath || slot?.path);
+        if (declarationPath !== path) return slot;
 
-                    return {
-                        ...node,
-                        data: updateSharedSlotBinding(node.data, access, slotIndex, {
-                            path: formattedPath,
-                            inherited: slotData.isInherited
-                                ? { state: inheritedState, xpath: formattedPath }
-                                : null,
-                        }),
-                    };
-                });
+        return {
+          ...slot,
+          path: formattedPath,
+          key: slot?.key || owner?.key || "",
+          state: slot?.state || owner?.state || "",
+          slotKind: shouldInherit ? "inheritSlot" : "slot",
+          inherited: shouldInherit
+            ? {
+                ...(slot?.inherited || {}),
+                state: slot?.inherited?.state || slot?.state || owner?.state || "",
+                xpath: formattedPath,
+              }
+            : null,
+        };
+      });
 
-                setNodes(updatedNodes);
-            }
+      // Only the current workflow's declarations govern its inheritance.
+      // A slot derived solely from child requirements still needs a
+      // persisted declaration if the user enables inheritSlot here.
+      if (shouldInherit && !hasDeclaration && owner) {
+        updatedManualSlots.push({
+          id: `manual-${crypto.randomUUID()}`,
+          path: formattedPath,
+          key: owner.key,
+          state: owner.state,
+          slotKind: "inheritSlot",
+          inherited: { state: owner.state, xpath: formattedPath },
+        });
+      }
 
-            checkSlotConnection(updatedNodes, updatedManualSlots);
-            void syncSlotsAfterCommit?.();
-            return newSlot;
-        },
-        [
-            nodes,
-            manualSlots,
-            setNodes,
-            setManualSlots,
-            checkSlotConnection,
-            syncSlotsAfterCommit,
-        ]
-    );
+      setNodes(updatedNodes);
+      setManualSlots(updatedManualSlots);
+      checkSlotConnection(updatedNodes, updatedManualSlots);
+      void syncSlotsAfterCommit?.();
+      return true;
+    },
+    [nodes, manualSlots, setNodes, setManualSlots, checkSlotConnection, syncSlotsAfterCommit],
+  );
 
-    return {
-        updateSlotPath,
-        updateSlotInherited,
-        createManualSlot,
-    };
+  const createManualSlot = useCallback(
+    (slotData) => {
+      const cleanPath = normalizeSlotPath(slotData?.path);
+      const linked = slotData?.linkedSkillSlot;
+      const owner = nodes.find((node) => node.id === linked?.nodeId && node.type === "custom");
+      const requests =
+        linked?.access === "read" ? owner?.data?.inSlots : linked?.access === "write" ? owner?.data?.outSlots : null;
+      const slotIndex = Number(linked?.slotIndex);
+      const request = Number.isInteger(slotIndex) && slotIndex >= 0 ? requests?.[slotIndex] : null;
+      const key = String(request?.key || "").trim();
+      const state = String(owner?.data?.fullSkillName || owner?.data?.label || owner?.id || "").trim();
+      // Do not create a malformed manual <slot> when the dialog's
+      // selected skill/key is stale (e.g. edited or removed while open).
+      if (
+        !cleanPath ||
+        !key ||
+        !state ||
+        !request ||
+        owner.data?.isSkillClone ||
+        String(request.type || "").trim() !== String(slotData?.type || "").trim() ||
+        (request.path && normalizeSlotPath(request.path) !== cleanPath)
+      )
+        return null;
+      const formattedPath = `/${cleanPath}`;
+      const inheritedState = String(slotData.inheritedFrom || request.inherited?.state || state).trim();
+      const newSlot = {
+        id: `manual-${crypto.randomUUID()}`,
+        path: formattedPath,
+        type: request.type,
+        key,
+        state,
+        inherited: slotData.isInherited ? { state: inheritedState, xpath: formattedPath } : null,
+      };
+
+      const updatedManualSlots = [...manualSlots, newSlot];
+      setManualSlots(updatedManualSlots);
+
+      let updatedNodes = nodes;
+      if (slotData.linkedSkillSlot) {
+        const { nodeId, access, slotIndex } = slotData.linkedSkillSlot;
+        updatedNodes = nodes.map((node) => {
+          if (node.id !== nodeId) return node;
+
+          return {
+            ...node,
+            data: updateSharedSlotBinding(node.data, access, slotIndex, {
+              path: formattedPath,
+              inherited: slotData.isInherited ? { state: inheritedState, xpath: formattedPath } : null,
+            }),
+          };
+        });
+
+        setNodes(updatedNodes);
+      }
+
+      checkSlotConnection(updatedNodes, updatedManualSlots);
+      void syncSlotsAfterCommit?.();
+      return newSlot;
+    },
+    [nodes, manualSlots, setNodes, setManualSlots, checkSlotConnection, syncSlotsAfterCommit],
+  );
+
+  return {
+    updateSlotPath,
+    updateSlotInherited,
+    createManualSlot,
+  };
 }

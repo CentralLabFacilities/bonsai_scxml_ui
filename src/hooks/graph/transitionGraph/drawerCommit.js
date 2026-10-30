@@ -1,25 +1,20 @@
 import { applyParallelContainerTransitions } from "../../../utils/parallelContainerTransitions.js";
 import { MarkerType } from "@xyflow/react";
 import { clearTransientTransitionHighlight } from "../../../utils/editorGraph";
-import {
-    getTransitionTargetHandleForNode,
-    isNodeInsideContainer,
-} from "../../../utils/editorGeometry";
+import { getTransitionTargetHandleForNode, isNodeInsideContainer } from "../../../utils/editorGeometry";
 import { getSkillPackageName } from "../../../utils/editorScxml";
 import {
-    canTargetVisualNode,
-    getLogicalEdgeSourceHandle,
-    getLogicalEdgeSourceId,
-    makeSelfLoopControlPoints,
+  canTargetVisualNode,
+  getLogicalEdgeSourceHandle,
+  getLogicalEdgeSourceId,
+  makeSelfLoopControlPoints,
 } from "../../../utils/transitionSemantics";
 import { rebuildBoundaryTransitionsIncremental } from "../../../utils/boundaryTransitions";
 import { isWildcardTransitionEvent } from "../../../utils/transitionEvents";
-import {
-    getTransitionScope,
-    mergeContainerTransitionOrder,
-} from "../../../utils/transitionScopes.js";
+import { getTransitionScope, mergeContainerTransitionOrder } from "../../../utils/transitionScopes.js";
 
-export const createTransitionDrawerCommitHandler = ({
+export const createTransitionDrawerCommitHandler =
+  ({
     drawerData,
     edges,
     nodes,
@@ -30,312 +25,243 @@ export const createTransitionDrawerCommitHandler = ({
     updateNodeInternals,
     syncTransitionsForSource,
     setDrawerData,
-}) => ({ updatedTransitions, newGlobalVars = [], newGlobalVar = null, keepOpen = false, variablesOnly = false }) => {
+  }) =>
+  ({ updatedTransitions, newGlobalVars = [], newGlobalVar = null, keepOpen = false, variablesOnly = false }) => {
     if (variablesOnly) {
-        const variables = [...newGlobalVars, ...(newGlobalVar ? [newGlobalVar] : [])];
-        if (variables.length) setGlobalDataModel(previous => {
-            const ids = new Set(previous.map(variable => variable.id));
-            return [...previous, ...variables.filter(variable => variable?.id && !ids.has(variable.id))];
+      const variables = [...newGlobalVars, ...(newGlobalVar ? [newGlobalVar] : [])];
+      if (variables.length)
+        setGlobalDataModel((previous) => {
+          const ids = new Set(previous.map((variable) => variable.id));
+          return [...previous, ...variables.filter((variable) => variable?.id && !ids.has(variable.id))];
         });
-        return;
+      return;
     }
     if (drawerData.containerEventMode) {
-        // Parallel transitions are semantic events on their container, never
-        // a collection of independent lane transitions. Publish nodes/edges
-        // together; render helpers are derived by the boundary router.
-        try {
-            const managedEdgeIds = (drawerData.candidateTransitions || [])
-                .map(item => item.edgeId).filter(Boolean);
-            const normalized = applyParallelContainerTransitions({
-                nodes, edges, parallelId: drawerData.containerNodeId,
-                transitions: updatedTransitions || [], managedEdgeIds,
-            });
-            updateGraph({ nodes: normalized.nodes, edges: normalized.edges });
-            normalized.affectedNodeIds.forEach(id =>
-                requestAnimationFrame(() => updateNodeInternals(id)));
-            // Request one authoritative Rust transition projection. Issuing
-            // per-skill command patches here can race/rewrite the shared
-            // Parallel owner with stale event descriptors.
-            void syncTransitionsForSource?.(drawerData.containerNodeId, {
-                preserveContainerOrder: true,
-            });
-            if (!keepOpen) setDrawerData(previous => ({ ...previous, isOpen: false }));
-        } catch (error) {
-            // Validation is performed in the modal. In case a stale target or
-            // modified document slips through, keep the graph unchanged.
-            console.error("Cannot commit Parallel transitions", error);
-        }
-        return;
+      // Parallel transitions are semantic events on their container, never
+      // a collection of independent lane transitions. Publish nodes/edges
+      // together; render helpers are derived by the boundary router.
+      try {
+        const managedEdgeIds = (drawerData.candidateTransitions || []).map((item) => item.edgeId).filter(Boolean);
+        const normalized = applyParallelContainerTransitions({
+          nodes,
+          edges,
+          parallelId: drawerData.containerNodeId,
+          transitions: updatedTransitions || [],
+          managedEdgeIds,
+        });
+        updateGraph({ nodes: normalized.nodes, edges: normalized.edges });
+        normalized.affectedNodeIds.forEach((id) => requestAnimationFrame(() => updateNodeInternals(id)));
+        // Request one authoritative Rust transition projection. Issuing
+        // per-skill command patches here can race/rewrite the shared
+        // Parallel owner with stale event descriptors.
+        void syncTransitionsForSource?.(drawerData.containerNodeId, {
+          preserveContainerOrder: true,
+        });
+        if (!keepOpen) setDrawerData((previous) => ({ ...previous, isOpen: false }));
+      } catch (error) {
+        // Validation is performed in the modal. In case a stale target or
+        // modified document slips through, keep the graph unchanged.
+        console.error("Cannot commit Parallel transitions", error);
+      }
+      return;
     }
     if (drawerData.targetOnlyMode) {
-        if (!Array.isArray(updatedTransitions)) return;
+      if (!Array.isArray(updatedTransitions)) return;
 
-        const updateByEdgeId = new Map(
-            updatedTransitions
-                .filter((transition) => transition?.edgeId)
-                .map((transition) => [
-                    String(transition.edgeId),
-                    transition,
-                ])
+      const updateByEdgeId = new Map(
+        updatedTransitions
+          .filter((transition) => transition?.edgeId)
+          .map((transition) => [String(transition.edgeId), transition]),
+      );
+      const affectedSourceIds = new Set();
+      const acceptedUpdates = new Map();
+
+      const semanticEdges = edges.map((edge) => {
+        const transition = updateByEdgeId.get(String(edge.id));
+        if (!transition) return edge;
+
+        const logicalSourceId = transition.sourceNodeId || getLogicalEdgeSourceId(edge);
+        const logicalSourceNode = nodes.find((node) => node.id === logicalSourceId);
+        const targetNode = nodes.find((node) => node.id === transition.target);
+
+        const containerNode = drawerData.containerNodeId
+          ? nodes.find((node) => node.id === drawerData.containerNodeId)
+          : null;
+        const targetIsInsideContainer = Boolean(
+          containerNode &&
+          (targetNode?.id === containerNode.id ||
+            (targetNode && isNodeInsideContainer(targetNode, containerNode.id, nodes))),
         );
-        const affectedSourceIds = new Set();
-        const acceptedUpdates = new Map();
 
-        const semanticEdges = edges.map((edge) => {
-            const transition = updateByEdgeId.get(String(edge.id));
-            if (!transition) return edge;
-
-            const logicalSourceId =
-                transition.sourceNodeId ||
-                getLogicalEdgeSourceId(edge);
-            const logicalSourceNode = nodes.find(
-                (node) => node.id === logicalSourceId
-            );
-            const targetNode = nodes.find(
-                (node) => node.id === transition.target
-            );
-
-            const containerNode = drawerData.containerNodeId
-                ? nodes.find(
-                    (node) =>
-                        node.id === drawerData.containerNodeId
-                )
-                : null;
-            const targetIsInsideContainer = Boolean(
-                containerNode &&
-                (targetNode?.id === containerNode.id ||
-                    (targetNode &&
-                        isNodeInsideContainer(
-                            targetNode,
-                            containerNode.id,
-                            nodes
-                        )))
-            );
-
-            if (
-                !logicalSourceNode ||
-                !targetNode ||
-                targetIsInsideContainer ||
-                !canTargetVisualNode(
-                    logicalSourceNode,
-                    targetNode,
-                    nodes
-                )
-            ) {
-                return edge;
-            }
-
-            const eventId =
-                transition.event ||
-                getLogicalEdgeSourceHandle(edge) ||
-                "success";
-            const cleanedExisting =
-                clearTransientTransitionHighlight(edge);
-            const existingData = {
-                ...(cleanedExisting?.data || {}),
-            };
-
-            [
-                "boundaryInternalEdge",
-                "boundaryOriginalSource",
-                "boundaryOriginalSourceHandle",
-                "boundaryOriginalTarget",
-                "compoundInternalEdge",
-                "compoundOriginalSource",
-                "compoundOriginalSourceHandle",
-                "compoundOriginalTarget",
-                "parallelInternalEdge",
-                "parallelOriginalSource",
-                "parallelOriginalSourceHandle",
-                "parallelOriginalTarget",
-            ].forEach((key) => delete existingData[key]);
-
-            affectedSourceIds.add(logicalSourceId);
-            acceptedUpdates.set(String(edge.id), {
-                ...transition,
-                sourceNodeId: logicalSourceId,
-                event: eventId,
-            });
-
-            return {
-                ...cleanedExisting,
-                source: logicalSourceId,
-                target: transition.target,
-                sourceHandle: eventId,
-                targetHandle:
-                    getTransitionTargetHandleForNode(targetNode),
-                type: "smartTransition",
-                selected: false,
-                label: transition.cond
-                    ? `${eventId} [${transition.cond}]`
-                    : eventId,
-                data: {
-                    ...existingData,
-                    cond: transition.cond || "",
-                    assignments: Array.isArray(
-                        transition.assignments
-                    )
-                        ? transition.assignments.map(
-                            (assignment) => ({
-                                location: assignment.location,
-                                expr: assignment.expr,
-                            })
-                        )
-                        : [],
-                    assign: transition.assignments?.[0]
-                        ? {
-                            location:
-                                transition.assignments[0]
-                                    .location,
-                            expr:
-                                transition.assignments[0].expr,
-                        }
-                        : null,
-                },
-            };
-        });
-
-        if (acceptedUpdates.size === 0) {
-            if (!keepOpen) setDrawerData((previous) => ({
-                ...previous,
-                isOpen: false,
-            }));
-            return;
+        if (
+          !logicalSourceNode ||
+          !targetNode ||
+          targetIsInsideContainer ||
+          !canTargetVisualNode(logicalSourceNode, targetNode, nodes)
+        ) {
+          return edge;
         }
 
-        const updatesBySource = new Map();
-        acceptedUpdates.forEach((transition) => {
-            const sourceId = transition.sourceNodeId;
-            if (!updatesBySource.has(sourceId)) {
-                updatesBySource.set(sourceId, []);
-            }
-            updatesBySource.get(sourceId).push({
-                ...transition,
-                consumed: false,
-            });
+        const eventId = transition.event || getLogicalEdgeSourceHandle(edge) || "success";
+        const cleanedExisting = clearTransientTransitionHighlight(edge);
+        const existingData = {
+          ...(cleanedExisting?.data || {}),
+        };
+
+        [
+          "boundaryInternalEdge",
+          "boundaryOriginalSource",
+          "boundaryOriginalSourceHandle",
+          "boundaryOriginalTarget",
+          "compoundInternalEdge",
+          "compoundOriginalSource",
+          "compoundOriginalSourceHandle",
+          "compoundOriginalTarget",
+          "parallelInternalEdge",
+          "parallelOriginalSource",
+          "parallelOriginalSourceHandle",
+          "parallelOriginalTarget",
+        ].forEach((key) => delete existingData[key]);
+
+        affectedSourceIds.add(logicalSourceId);
+        acceptedUpdates.set(String(edge.id), {
+          ...transition,
+          sourceNodeId: logicalSourceId,
+          event: eventId,
         });
 
-        const semanticNodes = nodes.map((node) => {
-            const sourceUpdates = updatesBySource.get(node.id);
-            if (!sourceUpdates?.length) return node;
-
-            const nextEvents = (node.data?.events || []).map(
-                (event) => {
-                    const eventId = String(event?.id || "");
-                    const eventTarget = String(
-                        event?.target || ""
-                    );
-                    const eventCond = String(
-                        event?.cond || ""
-                    );
-
-                    let update = sourceUpdates.find(
-                        (candidate) =>
-                            !candidate.consumed &&
-                            String(candidate.event || "") ===
-                                eventId &&
-                            String(
-                                candidate.originalTarget || ""
-                            ) === eventTarget &&
-                            String(candidate.cond || "") ===
-                                eventCond
-                    );
-
-                    if (!update) {
-                        update = sourceUpdates.find(
-                            (candidate) =>
-                                !candidate.consumed &&
-                                String(
-                                    candidate.event || ""
-                                ) === eventId &&
-                                String(
-                                    candidate.originalTarget ||
-                                        ""
-                                ) === eventTarget
-                        );
-                    }
-
-                    if (!update) return event;
-                    update.consumed = true;
-
-                    const targetNode = nodes.find(
-                        (candidate) =>
-                            candidate.id === update.target
-                    );
-
-                    return {
-                        ...event,
-                        target: update.target,
-                        selectedPackage:
-                            getSkillPackageName(
-                                targetNode?.data?.fullSkillName
-                            ),
-                        selectedSkill:
-                            targetNode?.data?.fullSkillName
-                                ?.split("#")[0] ||
-                            targetNode?.data?.label ||
-                            "",
-                    };
+        return {
+          ...cleanedExisting,
+          source: logicalSourceId,
+          target: transition.target,
+          sourceHandle: eventId,
+          targetHandle: getTransitionTargetHandleForNode(targetNode),
+          type: "smartTransition",
+          selected: false,
+          label: transition.cond ? `${eventId} [${transition.cond}]` : eventId,
+          data: {
+            ...existingData,
+            cond: transition.cond || "",
+            assignments: Array.isArray(transition.assignments)
+              ? transition.assignments.map((assignment) => ({
+                  location: assignment.location,
+                  expr: assignment.expr,
+                }))
+              : [],
+            assign: transition.assignments?.[0]
+              ? {
+                  location: transition.assignments[0].location,
+                  expr: transition.assignments[0].expr,
                 }
-            );
+              : null,
+          },
+        };
+      });
 
-            return {
-                ...node,
-                data: {
-                    ...(node.data || {}),
-                    events: nextEvents,
-                },
-            };
-        });
-
-        const normalized =
-            rebuildBoundaryTransitionsIncremental(
-                semanticNodes,
-                semanticEdges,
-                {
-                    previousEdges: edges,
-                    sourceIds: [...affectedSourceIds],
-                }
-            );
-
-        setNodes(normalized.nodes);
-        setEdges(normalized.edges);
-        (normalized.affectedNodeIds || []).forEach(
-            (nodeId) => {
-                requestAnimationFrame(() =>
-                    updateNodeInternals(nodeId)
-                );
-            }
-        );
-        // Container exits are visually owned by the border but
-        // semantically owned by their real child source(s). Sync those
-        // logical sources, not the selected container id, otherwise Rust
-        // keeps the previous target and the border-to-target edge can
-        // disappear again on the next canonical refresh.
-        affectedSourceIds.forEach((sourceId) => {
-            void syncTransitionsForSource?.(sourceId);
-        });
-
-        if (!keepOpen) setDrawerData((previous) => ({
+      if (acceptedUpdates.size === 0) {
+        if (!keepOpen)
+          setDrawerData((previous) => ({
             ...previous,
             isOpen: false,
-        }));
+          }));
         return;
+      }
+
+      const updatesBySource = new Map();
+      acceptedUpdates.forEach((transition) => {
+        const sourceId = transition.sourceNodeId;
+        if (!updatesBySource.has(sourceId)) {
+          updatesBySource.set(sourceId, []);
+        }
+        updatesBySource.get(sourceId).push({
+          ...transition,
+          consumed: false,
+        });
+      });
+
+      const semanticNodes = nodes.map((node) => {
+        const sourceUpdates = updatesBySource.get(node.id);
+        if (!sourceUpdates?.length) return node;
+
+        const nextEvents = (node.data?.events || []).map((event) => {
+          const eventId = String(event?.id || "");
+          const eventTarget = String(event?.target || "");
+          const eventCond = String(event?.cond || "");
+
+          let update = sourceUpdates.find(
+            (candidate) =>
+              !candidate.consumed &&
+              String(candidate.event || "") === eventId &&
+              String(candidate.originalTarget || "") === eventTarget &&
+              String(candidate.cond || "") === eventCond,
+          );
+
+          if (!update) {
+            update = sourceUpdates.find(
+              (candidate) =>
+                !candidate.consumed &&
+                String(candidate.event || "") === eventId &&
+                String(candidate.originalTarget || "") === eventTarget,
+            );
+          }
+
+          if (!update) return event;
+          update.consumed = true;
+
+          const targetNode = nodes.find((candidate) => candidate.id === update.target);
+
+          return {
+            ...event,
+            target: update.target,
+            selectedPackage: getSkillPackageName(targetNode?.data?.fullSkillName),
+            selectedSkill: targetNode?.data?.fullSkillName?.split("#")[0] || targetNode?.data?.label || "",
+          };
+        });
+
+        return {
+          ...node,
+          data: {
+            ...(node.data || {}),
+            events: nextEvents,
+          },
+        };
+      });
+
+      const normalized = rebuildBoundaryTransitionsIncremental(semanticNodes, semanticEdges, {
+        previousEdges: edges,
+        sourceIds: [...affectedSourceIds],
+      });
+
+      setNodes(normalized.nodes);
+      setEdges(normalized.edges);
+      (normalized.affectedNodeIds || []).forEach((nodeId) => {
+        requestAnimationFrame(() => updateNodeInternals(nodeId));
+      });
+      // Container exits are visually owned by the border but
+      // semantically owned by their real child source(s). Sync those
+      // logical sources, not the selected container id, otherwise Rust
+      // keeps the previous target and the border-to-target edge can
+      // disappear again on the next canonical refresh.
+      affectedSourceIds.forEach((sourceId) => {
+        void syncTransitionsForSource?.(sourceId);
+      });
+
+      if (!keepOpen)
+        setDrawerData((previous) => ({
+          ...previous,
+          isOpen: false,
+        }));
+      return;
     }
 
-    const varsToAdd = [
-        ...(Array.isArray(newGlobalVars) ? newGlobalVars : []),
-        ...(newGlobalVar ? [newGlobalVar] : []),
-    ];
+    const varsToAdd = [...(Array.isArray(newGlobalVars) ? newGlobalVars : []), ...(newGlobalVar ? [newGlobalVar] : [])];
 
     if (varsToAdd.length > 0) {
-        setGlobalDataModel((previous) => {
-            const existingIds = new Set(previous.map((variable) => variable.id));
-            const additions = varsToAdd.filter(
-                (variable) => variable?.id && !existingIds.has(variable.id)
-            );
-            return [...previous, ...additions];
-        });
+      setGlobalDataModel((previous) => {
+        const existingIds = new Set(previous.map((variable) => variable.id));
+        const additions = varsToAdd.filter((variable) => variable?.id && !existingIds.has(variable.id));
+        return [...previous, ...additions];
+      });
     }
 
     const sourceId = drawerData.sourceNodeId;
@@ -345,247 +271,225 @@ export const createTransitionDrawerCommitHandler = ({
     if (!sourceNode) return;
 
     const validUpdatedTransitions = updatedTransitions.filter((transition) => {
-        const targetNode = nodes.find((node) => node.id === transition.target);
-        return Boolean(
-            targetNode && canTargetVisualNode(sourceNode, targetNode, nodes)
-        );
+      const targetNode = nodes.find((node) => node.id === transition.target);
+      return Boolean(targetNode && canTargetVisualNode(sourceNode, targetNode, nodes));
     });
 
     const existingById = new Map(edges.map((edge) => [edge.id, edge]));
-    const untouchedEdges = edges.filter(
-        (edge) => getLogicalEdgeSourceId(edge) !== sourceId
-    );
+    const untouchedEdges = edges.filter((edge) => getLogicalEdgeSourceId(edge) !== sourceId);
 
     const semanticEdges = validUpdatedTransitions.map((transition) => {
-        const existing = transition.edgeId
-            ? existingById.get(transition.edgeId)
-            : null;
-        const eventId = transition.event || "success";
-        const hasCondition = Boolean(
-            transition.cond && transition.cond.trim()
-        );
-        const cleanedExisting = existing
-            ? clearTransientTransitionHighlight(existing)
-            : null;
-        const existingData = { ...(cleanedExisting?.data || {}) };
+      const existing = transition.edgeId ? existingById.get(transition.edgeId) : null;
+      const eventId = transition.event || "success";
+      const hasCondition = Boolean(transition.cond && transition.cond.trim());
+      const cleanedExisting = existing ? clearTransientTransitionHighlight(existing) : null;
+      const existingData = { ...(cleanedExisting?.data || {}) };
 
-        // Boundary helper metadata describes the visual representation,
-        // not the semantic SCXML transition. Rebuild it from the edited
-        // source/target below so changing a transition cannot leave stale
-        // border points behind.
-        [
-            "boundaryInternalEdge",
-            "boundaryOriginalSource",
-            "boundaryOriginalSourceHandle",
-            "compoundInternalEdge",
-            "compoundOriginalSource",
-            "compoundOriginalSourceHandle",
-            "compoundOriginalTarget",
-            "parallelInternalEdge",
-            "parallelOriginalSource",
-            "parallelOriginalSourceHandle",
-            "parallelOriginalTarget",
-        ].forEach((key) => delete existingData[key]);
+      // Boundary helper metadata describes the visual representation,
+      // not the semantic SCXML transition. Rebuild it from the edited
+      // source/target below so changing a transition cannot leave stale
+      // border points behind.
+      [
+        "boundaryInternalEdge",
+        "boundaryOriginalSource",
+        "boundaryOriginalSourceHandle",
+        "compoundInternalEdge",
+        "compoundOriginalSource",
+        "compoundOriginalSourceHandle",
+        "compoundOriginalTarget",
+        "parallelInternalEdge",
+        "parallelOriginalSource",
+        "parallelOriginalSourceHandle",
+        "parallelOriginalTarget",
+      ].forEach((key) => delete existingData[key]);
 
-        return {
-            ...(cleanedExisting || {}),
-            id:
-                cleanedExisting?.id || transition.edgeId ||
-                `edge-${sourceId}-${eventId}-${transition.target}-${crypto.randomUUID()}`,
-            source: sourceId,
-            target: transition.target,
-            sourceHandle: eventId,
-            targetHandle: getTransitionTargetHandleForNode(
-                nodes.find((node) => node.id === transition.target)
-            ),
-            type: "smartTransition",
-            selected: false,
-            label: hasCondition
-                ? `${eventId} [${transition.cond}]`
-                : eventId,
-            markerEnd:
-                cleanedExisting?.markerEnd || { type: MarkerType.ArrowClosed },
-            data: {
-                ...existingData,
-                cond: transition.cond || "",
-                assignments: Array.isArray(transition.assignments)
-                    ? transition.assignments.map((assignment) => ({
-                        location: assignment.location,
-                        expr: assignment.expr,
-                    }))
-                    : [],
-                assign: transition.assignments?.[0]
-                    ? {
-                        location: transition.assignments[0].location,
-                        expr: transition.assignments[0].expr,
-                    }
-                    : null,
-                controlPoints:
-                    sourceId === transition.target
-                        ? (
-                            Array.isArray(existingData.controlPoints) &&
-                            existingData.controlPoints.length >= 2
-                                ? existingData.controlPoints
-                                : makeSelfLoopControlPoints()
-                        )
-                        : existingData.controlPoints,
-            },
-        };
+      return {
+        ...(cleanedExisting || {}),
+        id:
+          cleanedExisting?.id ||
+          transition.edgeId ||
+          `edge-${sourceId}-${eventId}-${transition.target}-${crypto.randomUUID()}`,
+        source: sourceId,
+        target: transition.target,
+        sourceHandle: eventId,
+        targetHandle: getTransitionTargetHandleForNode(nodes.find((node) => node.id === transition.target)),
+        type: "smartTransition",
+        selected: false,
+        label: hasCondition ? `${eventId} [${transition.cond}]` : eventId,
+        markerEnd: cleanedExisting?.markerEnd || { type: MarkerType.ArrowClosed },
+        data: {
+          ...existingData,
+          cond: transition.cond || "",
+          assignments: Array.isArray(transition.assignments)
+            ? transition.assignments.map((assignment) => ({
+                location: assignment.location,
+                expr: assignment.expr,
+              }))
+            : [],
+          assign: transition.assignments?.[0]
+            ? {
+                location: transition.assignments[0].location,
+                expr: transition.assignments[0].expr,
+              }
+            : null,
+          controlPoints:
+            sourceId === transition.target
+              ? Array.isArray(existingData.controlPoints) && existingData.controlPoints.length >= 2
+                ? existingData.controlPoints
+                : makeSelfLoopControlPoints()
+              : existingData.controlPoints,
+        },
+      };
     });
 
     const semanticNodes = nodes.map((node) => {
-        if (node.id !== sourceId) return node;
+      if (node.id !== sourceId) return node;
 
-        const originalEvents = node.data.events || [];
-        const baseEventById = new Map();
-        originalEvents.forEach((event) => {
-            if (!event?.id || baseEventById.has(event.id)) return;
-            baseEventById.set(event.id, {
-                ...event,
-                target: null,
-                cond: "",
-                assignments: [],
-                assignLocation: "",
-                assignExpr: "",
-                selectedPackage: "",
-                selectedSkill: "",
-            });
+      const originalEvents = node.data.events || [];
+      const baseEventById = new Map();
+      originalEvents.forEach((event) => {
+        if (!event?.id || baseEventById.has(event.id)) return;
+        baseEventById.set(event.id, {
+          ...event,
+          target: null,
+          cond: "",
+          assignments: [],
+          assignLocation: "",
+          assignExpr: "",
+          selectedPackage: "",
+          selectedSkill: "",
         });
+      });
 
-        const usedEventIds = new Set();
-        const orderedTransitionEvents = validUpdatedTransitions.map(
-            (transition) => {
-                const eventId = transition.event || "success";
-                usedEventIds.add(eventId);
-                const baseEvent = baseEventById.get(eventId) || {
-                    id: eventId,
-                    description: "",
-                };
-                const targetNode = nodes.find(
-                    (candidate) => candidate.id === transition.target
-                );
-
-                return {
-                    ...baseEvent,
-                    id: eventId,
-                    selectedPackage: getSkillPackageName(
-                        targetNode?.data?.fullSkillName
-                    ),
-                    selectedSkill:
-                        targetNode?.data?.fullSkillName?.split("#")[0] ||
-                        targetNode?.data?.label ||
-                        "",
-                    target: transition.target,
-                    cond: transition.cond || "",
-                    assignments: Array.isArray(transition.assignments)
-                        ? transition.assignments.map((assignment) => ({
-                            location: assignment.location,
-                            expr: assignment.expr,
-                        }))
-                        : [],
-                    assignLocation:
-                        transition.assignments?.[0]?.location || "",
-                    assignExpr: transition.assignments?.[0]?.expr || "",
-                };
-            }
-        );
-
-        const unusedEvents = [...baseEventById.entries()]
-            .filter(([eventId, event]) => {
-                if (usedEventIds.has(eventId)) return false;
-                if (eventId === "*") return true;
-                if (isWildcardTransitionEvent(eventId)) return false;
-
-                // Imported SCXML can contain transitions for exit tokens
-                // the skill does not actually expose. Such handles exist
-                // only so the imported edge can be represented and must
-                // disappear when its last transition is removed.
-                if (
-                    event?.editorImportedSynthetic ||
-                    event?.editorBoundarySynthetic
-                ) {
-                    return false;
-                }
-
-                return true;
-            })
-            .map(([, event]) => event);
+      const usedEventIds = new Set();
+      const orderedTransitionEvents = validUpdatedTransitions.map((transition) => {
+        const eventId = transition.event || "success";
+        usedEventIds.add(eventId);
+        const baseEvent = baseEventById.get(eventId) || {
+          id: eventId,
+          description: "",
+        };
+        const targetNode = nodes.find((candidate) => candidate.id === transition.target);
 
         return {
-            ...node,
-            data: {
-                ...node.data,
-                events: [...orderedTransitionEvents, ...unusedEvents],
-            },
+          ...baseEvent,
+          id: eventId,
+          selectedPackage: getSkillPackageName(targetNode?.data?.fullSkillName),
+          selectedSkill: targetNode?.data?.fullSkillName?.split("#")[0] || targetNode?.data?.label || "",
+          target: transition.target,
+          cond: transition.cond || "",
+          assignments: Array.isArray(transition.assignments)
+            ? transition.assignments.map((assignment) => ({
+                location: assignment.location,
+                expr: assignment.expr,
+              }))
+            : [],
+          assignLocation: transition.assignments?.[0]?.location || "",
+          assignExpr: transition.assignments?.[0]?.expr || "",
         };
+      });
+
+      const unusedEvents = [...baseEventById.entries()]
+        .filter(([eventId, event]) => {
+          if (usedEventIds.has(eventId)) return false;
+          if (eventId === "*") return true;
+          if (isWildcardTransitionEvent(eventId)) return false;
+
+          // Imported SCXML can contain transitions for exit tokens
+          // the skill does not actually expose. Such handles exist
+          // only so the imported edge can be represented and must
+          // disappear when its last transition is removed.
+          if (event?.editorImportedSynthetic || event?.editorBoundarySynthetic) {
+            return false;
+          }
+
+          return true;
+        })
+        .map(([, event]) => event);
+
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          events: [...orderedTransitionEvents, ...unusedEvents],
+        },
+      };
     });
 
-    const normalized = rebuildBoundaryTransitionsIncremental(
-        semanticNodes,
-        [...untouchedEdges, ...semanticEdges],
-        {
-            previousEdges: edges,
-            sourceIds: [sourceId],
-        }
-    );
+    const normalized = rebuildBoundaryTransitionsIncremental(semanticNodes, [...untouchedEdges, ...semanticEdges], {
+      previousEdges: edges,
+      sourceIds: [sourceId],
+    });
 
     // The Rust exporter hoists outgoing transitions to the *outermost exited*
     // Compound/Parallel. Edge-array order alone cannot preserve priority among
     // different child sources. Keep an explicit order per SCXML owner instead.
-    const actualEdges = (list) => list.filter((edge) =>
-        !edge.data?.boundaryInternalEdge &&
-        !edge.data?.compoundInternalEdge &&
-        !edge.data?.parallelInternalEdge &&
-        !edge.data?.compoundInitialEdge &&
-        !edge.data?.parallelEntryEdge &&
-        !String(edge.id).startsWith("edge-internal-")
-    );
+    const actualEdges = (list) =>
+      list.filter(
+        (edge) =>
+          !edge.data?.boundaryInternalEdge &&
+          !edge.data?.compoundInternalEdge &&
+          !edge.data?.parallelInternalEdge &&
+          !edge.data?.compoundInitialEdge &&
+          !edge.data?.parallelEntryEdge &&
+          !String(edge.id).startsWith("edge-internal-"),
+      );
     const ownerEdgesByContainer = (list) => {
-        const byOwner = new Map();
-        for (const edge of actualEdges(list)) {
-            const logicalSourceId = getLogicalEdgeSourceId(edge);
-            const ownerId = getTransitionScope(logicalSourceId, edge.target, nodes)?.id;
-            if (!ownerId) continue;
-            if (!byOwner.has(ownerId)) byOwner.set(ownerId, []);
-            byOwner.get(ownerId).push({ id: edge.id, logicalSourceId });
-        }
-        return byOwner;
+      const byOwner = new Map();
+      for (const edge of actualEdges(list)) {
+        const logicalSourceId = getLogicalEdgeSourceId(edge);
+        const ownerId = getTransitionScope(logicalSourceId, edge.target, nodes)?.id;
+        if (!ownerId) continue;
+        if (!byOwner.has(ownerId)) byOwner.set(ownerId, []);
+        byOwner.get(ownerId).push({ id: edge.id, logicalSourceId });
+      }
+      return byOwner;
     };
     const previousByOwner = ownerEdgesByContainer(edges);
     const nextByOwner = ownerEdgesByContainer(normalized.edges);
     const updatedOrders = new Map();
-    nodes.filter((node) => node.type === "compound" || node.type === "parallel")
-        .forEach((container) => {
-            const before = previousByOwner.get(container.id) || [];
-            const after = nextByOwner.get(container.id) || [];
-            if (!before.some((edge) => edge.logicalSourceId === sourceId) &&
-                !after.some((edge) => edge.logicalSourceId === sourceId)) return;
-            updatedOrders.set(container.id, mergeContainerTransitionOrder({
-                previousOrder: container.data?.containerTransitionOrder || [],
-                previousOwnerEdges: before,
-                nextOwnerEdges: after,
-                editedSourceId: sourceId,
-            }));
-        });
+    nodes
+      .filter((node) => node.type === "compound" || node.type === "parallel")
+      .forEach((container) => {
+        const before = previousByOwner.get(container.id) || [];
+        const after = nextByOwner.get(container.id) || [];
+        if (
+          !before.some((edge) => edge.logicalSourceId === sourceId) &&
+          !after.some((edge) => edge.logicalSourceId === sourceId)
+        )
+          return;
+        updatedOrders.set(
+          container.id,
+          mergeContainerTransitionOrder({
+            previousOrder: container.data?.containerTransitionOrder || [],
+            previousOwnerEdges: before,
+            nextOwnerEdges: after,
+            editedSourceId: sourceId,
+          }),
+        );
+      });
     const orderedNodes = normalized.nodes.map((node) =>
-        updatedOrders.has(node.id)
-            ? { ...node, data: {
-                ...node.data,
-                containerTransitionOrder: updatedOrders.get(node.id),
-            } }
-            : node
+      updatedOrders.has(node.id)
+        ? {
+            ...node,
+            data: {
+              ...node.data,
+              containerTransitionOrder: updatedOrders.get(node.id),
+            },
+          }
+        : node,
     );
     setNodes(orderedNodes);
     setEdges(normalized.edges);
     (normalized.affectedNodeIds || []).forEach((nodeId) => {
-        requestAnimationFrame(() => updateNodeInternals(nodeId));
+      requestAnimationFrame(() => updateNodeInternals(nodeId));
     });
     // A scoped order is a property of the enclosing state, not merely the
     // skill. Refresh the Rust transition projection in one transaction so
     // cross-source priority is not lost to targeted replacement/appending.
     void syncTransitionsForSource?.(sourceId, {
-        preserveContainerOrder: updatedOrders.size > 0,
+      preserveContainerOrder: updatedOrders.size > 0,
     });
 
     if (!keepOpen) setDrawerData((previous) => ({ ...previous, isOpen: false }));
-};
+  };

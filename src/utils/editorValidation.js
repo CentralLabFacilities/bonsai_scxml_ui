@@ -3,224 +3,206 @@ import { isManagedBoundaryEvent } from "./transitionEvents.js";
 
 // Presentation only: stable IDs and full skill names remain semantic identity.
 export function getValidationNodeDisplayName(node) {
-    const data = node?.data || node || {};
-    const id = String(node?.id || "");
-    const label = String(data.label || "").trim();
-    const fullName = String(data.fullSkillName || label).trim();
-    if ((node?.type || node?.nodeType) !== "custom") return label || id;
+  const data = node?.data || node || {};
+  const id = String(node?.id || "");
+  const label = String(data.label || "").trim();
+  const fullName = String(data.fullSkillName || label).trim();
+  if ((node?.type || node?.nodeType) !== "custom") return label || id;
 
-    const separator = fullName.lastIndexOf("#");
-    const fullBase = separator < 0 ? fullName : fullName.slice(0, separator);
-    const shortName = fullBase.split(".").filter(Boolean).pop() || "";
-    const labelBase = label.split("#")[0];
-    const baseName = !label || labelBase === fullBase || labelBase === shortName
-        ? shortName || id : label;
-    const instanceId = String(data.editorInstanceId || (
-        separator < 0 ? "" : fullName.slice(separator + 1)
-    )).trim();
-    if (node?.isReference || data.isSkillClone || data.isStateClone) {
-        return `${baseName} [${String(data.editorInstanceId || id).trim()}]`;
-    }
-    return instanceId && !baseName.endsWith(`#${instanceId}`)
-        ? `${baseName}#${instanceId}` : baseName;
+  const separator = fullName.lastIndexOf("#");
+  const fullBase = separator < 0 ? fullName : fullName.slice(0, separator);
+  const shortName = fullBase.split(".").filter(Boolean).pop() || "";
+  const labelBase = label.split("#")[0];
+  const baseName = !label || labelBase === fullBase || labelBase === shortName ? shortName || id : label;
+  const instanceId = String(data.editorInstanceId || (separator < 0 ? "" : fullName.slice(separator + 1))).trim();
+  if (node?.isReference || data.isSkillClone || data.isStateClone) {
+    return `${baseName} [${String(data.editorInstanceId || id).trim()}]`;
+  }
+  return instanceId && !baseName.endsWith(`#${instanceId}`) ? `${baseName}#${instanceId}` : baseName;
 }
 
 export function projectNodeWarningTitles(previous = new Map(), problems = []) {
-    const byNodeId = new Map();
-    for (const problem of problems) {
-        if (problem?.severity !== "warning" && problem?.severity !== "error") continue;
-        const nodeId = String(problem.nodeId ?? "");
-        if (!nodeId) continue;
-        const text = [problem.title, problem.message]
-            .map((value) => String(value ?? "").trim())
-            .filter(Boolean)
-            .join(": ");
-        if (!text) continue;
-        if (!byNodeId.has(nodeId)) byNodeId.set(nodeId, []);
-        byNodeId.get(nodeId).push({ id: String(problem.id ?? ""), text });
-    }
+  const byNodeId = new Map();
+  for (const problem of problems) {
+    if (problem?.severity !== "warning" && problem?.severity !== "error") continue;
+    const nodeId = String(problem.nodeId ?? "");
+    if (!nodeId) continue;
+    const text = [problem.title, problem.message]
+      .map((value) => String(value ?? "").trim())
+      .filter(Boolean)
+      .join(": ");
+    if (!text) continue;
+    if (!byNodeId.has(nodeId)) byNodeId.set(nodeId, []);
+    byNodeId.get(nodeId).push({ id: String(problem.id ?? ""), text });
+  }
 
-    const next = new Map();
-    let changed = previous.size !== byNodeId.size;
-    for (const nodeId of [...byNodeId.keys()].sort()) {
-        const entries = byNodeId.get(nodeId);
-        entries.sort((a, b) => a.id.localeCompare(b.id) || a.text.localeCompare(b.text));
-        const title = entries.map((entry) => entry.text).join("\n");
-        next.set(nodeId, title);
-        if (previous.get(nodeId) !== title) changed = true;
-    }
-    return changed ? next : previous;
+  const next = new Map();
+  let changed = previous.size !== byNodeId.size;
+  for (const nodeId of [...byNodeId.keys()].sort()) {
+    const entries = byNodeId.get(nodeId);
+    entries.sort((a, b) => a.id.localeCompare(b.id) || a.text.localeCompare(b.text));
+    const title = entries.map((entry) => entry.text).join("\n");
+    next.set(nodeId, title);
+    if (previous.get(nodeId) !== title) changed = true;
+  }
+  return changed ? next : previous;
 }
 
 const mapVariable = (entry) => ({
-    id: String(entry?.id || ""),
-    typeName: String(entry?.valueType || entry?.type || ""),
-    expression: String(entry?.expr ?? entry?.value ?? ""),
+  id: String(entry?.id || ""),
+  typeName: String(entry?.valueType || entry?.type || ""),
+  expression: String(entry?.expr ?? entry?.value ?? ""),
 });
 
 const mapAssignment = (assignment) => ({
-    location: String(assignment?.location || ""),
-    expression: String(assignment?.expr ?? assignment?.expression ?? ""),
+  location: String(assignment?.location || ""),
+  expression: String(assignment?.expr ?? assignment?.expression ?? ""),
 });
 
 // Referenced interfaces always describe accepted disk bytes, never unsaved child tabs.
 export const submachineActionDataModel = (node) => node?.data?.localDataModel;
 
 const mapSlot = (slot) => ({
-    key: String(slot?.key || ""),
-    typeName: String(slot?.type || ""),
-    path: String(slot?.path || ""),
-    definitionMissing: Boolean(slot?.definitionMissing),
+  key: String(slot?.key || ""),
+  typeName: String(slot?.type || ""),
+  path: String(slot?.path || ""),
+  definitionMissing: Boolean(slot?.definitionMissing),
 });
 
 const mapSlotDefinition = (slot, index) => ({
-    index,
-    key: String(slot?.key || ""),
-    typeName: String(slot?.type || ""),
-    definitionMissing: Boolean(slot?.definitionMissing),
+  index,
+  key: String(slot?.key || ""),
+  typeName: String(slot?.type || ""),
+  definitionMissing: Boolean(slot?.definitionMissing),
 });
 
 const isReferenceNode = (node) =>
-    Boolean(
-        node?.data?.cloneOfNodeId &&
-            (node.data?.isSkillClone ||
-                node.data?.isStateClone ||
-                node.data?.isSlotClone)
-    );
+  Boolean(node?.data?.cloneOfNodeId && (node.data?.isSkillClone || node.data?.isStateClone || node.data?.isSlotClone));
 
-const collectInheritedSlotPaths = (
-    nodes = [],
-    manualSlots = [],
-    currentSlotNodes = []
-) => {
-    const paths = new Set();
-    const add = (value) => {
-        const path = normalizeSlotPath(value);
-        if (path) paths.add(path);
-    };
+const collectInheritedSlotPaths = (nodes = [], manualSlots = [], currentSlotNodes = []) => {
+  const paths = new Set();
+  const add = (value) => {
+    const path = normalizeSlotPath(value);
+    if (path) paths.add(path);
+  };
 
-    manualSlots.forEach((slot) => {
-        if (slot?.slotKind === "inheritSlot" || Boolean(slot?.inherited)) {
-            add(slot?.inherited?.xpath || slot?.path);
-        }
+  manualSlots.forEach((slot) => {
+    if (slot?.slotKind === "inheritSlot" || Boolean(slot?.inherited)) {
+      add(slot?.inherited?.xpath || slot?.path);
+    }
+  });
+
+  nodes.forEach((node) => {
+    [...(node.data?.inSlots || []), ...(node.data?.outSlots || [])].forEach((slot) => {
+      if (slot?.inherited) {
+        add(slot?.inherited?.xpath || slot?.path);
+      }
     });
+  });
 
-    nodes.forEach((node) => {
-        [...(node.data?.inSlots || []), ...(node.data?.outSlots || [])].forEach(
-            (slot) => {
-                if (slot?.inherited) {
-                    add(slot?.inherited?.xpath || slot?.path);
-                }
-            }
-        );
-    });
+  currentSlotNodes.forEach((slotNode) => {
+    if (slotNode?.data?.currentMachineInherited) {
+      add(slotNode?.data?.path || slotNode?.data?.label);
+    }
+  });
 
-    currentSlotNodes.forEach((slotNode) => {
-        if (slotNode?.data?.currentMachineInherited) {
-            add(slotNode?.data?.path || slotNode?.data?.label);
-        }
-    });
-
-    return [...paths];
+  return [...paths];
 };
 
 const collectAncestorWriterSlotPaths = (ancestorSlotSourcesByPath) => {
-    const paths = [];
+  const paths = [];
 
-    ancestorSlotSourcesByPath?.forEach?.((entries, rawPath) => {
-        if ((entries || []).some((entry) => entry?.hierarchyKind === "writer")) {
-            const path = normalizeSlotPath(rawPath);
-            if (path) paths.push(path);
-        }
-    });
+  ancestorSlotSourcesByPath?.forEach?.((entries, rawPath) => {
+    if ((entries || []).some((entry) => entry?.hierarchyKind === "writer")) {
+      const path = normalizeSlotPath(rawPath);
+      if (path) paths.push(path);
+    }
+  });
 
-    return paths;
+  return paths;
 };
 
 export const buildEditorValidationRequest = ({
-    nodes = [],
-    edges = [],
-    globalDataModel = [],
-    availableDataModel = globalDataModel,
-    behaviorDirectories = [],
-    isBehaviorWorkflow = false,
-    manualSlots = [],
-    ancestorSlotSourcesByPath = new Map(),
-    currentSlotNodes = [],
-    tabs = [],
-    activeTabId = null,
+  nodes = [],
+  edges = [],
+  globalDataModel = [],
+  availableDataModel = globalDataModel,
+  behaviorDirectories = [],
+  isBehaviorWorkflow = false,
+  manualSlots = [],
+  ancestorSlotSourcesByPath = new Map(),
+  currentSlotNodes = [],
+  tabs = [],
+  activeTabId = null,
 }) => ({
-    nodes: nodes.map((node) => ({
-        id: String(node?.id || ""),
-        nodeType: String(node?.type || ""),
-        parentId: node?.parentId ? String(node.parentId) : null,
-        label: String(node?.data?.label || ""),
-        fullSkillName: String(node?.data?.fullSkillName || ""),
-        editorInstanceId: String(node?.data?.editorInstanceId || ""),
-        source: String(node?.data?.src || ""),
-        isInitial: Boolean(node?.data?.isInitial),
-        isFinal: Boolean(node?.data?.isFinal),
-        isBehaviorExit: Boolean(node?.data?.isBehaviorExit),
-        isCollapsed: Boolean(node?.data?.isCollapsed),
-        isReference: isReferenceNode(node),
-        events: (node?.data?.events || []).map((event) => ({
-            id: String(event?.id || ""),
-            synthetic: Boolean(
-                event?.editorImportedSynthetic || event?.editorBoundarySynthetic ||
-                isManagedBoundaryEvent(node?.type, event)
-            ),
-        })),
-        parameters: (node?.data?.params || []).map((parameter) => ({
-            key: String(parameter?.key || ""),
-            typeName: String(parameter?.type || ""),
-            required: Boolean(parameter?.required),
-            defaultValue: String(parameter?.default ?? ""),
-            expression: String(parameter?.expr ?? ""),
-        })),
-        onEntry: (node?.data?.onEntry || []).map(mapAssignment),
-        onExit: (node?.data?.onExit || []).map(mapAssignment),
-        inputSlots: (node?.data?.inSlots || []).map(mapSlot),
-        outputSlots: (node?.data?.outSlots || []).map(mapSlot),
-        hasLocalDataModel: Array.isArray(submachineActionDataModel(node, tabs, activeTabId)),
-        localDataModel: (submachineActionDataModel(node, tabs, activeTabId) || []).map(mapVariable),
+  nodes: nodes.map((node) => ({
+    id: String(node?.id || ""),
+    nodeType: String(node?.type || ""),
+    parentId: node?.parentId ? String(node.parentId) : null,
+    label: String(node?.data?.label || ""),
+    fullSkillName: String(node?.data?.fullSkillName || ""),
+    editorInstanceId: String(node?.data?.editorInstanceId || ""),
+    source: String(node?.data?.src || ""),
+    isInitial: Boolean(node?.data?.isInitial),
+    isFinal: Boolean(node?.data?.isFinal),
+    isBehaviorExit: Boolean(node?.data?.isBehaviorExit),
+    isCollapsed: Boolean(node?.data?.isCollapsed),
+    isReference: isReferenceNode(node),
+    events: (node?.data?.events || []).map((event) => ({
+      id: String(event?.id || ""),
+      synthetic: Boolean(
+        event?.editorImportedSynthetic || event?.editorBoundarySynthetic || isManagedBoundaryEvent(node?.type, event),
+      ),
     })),
-    edges: edges.map((edge) => {
-        const assignments = Array.isArray(edge?.data?.assignments)
-            ? edge.data.assignments
-            : edge?.data?.assign?.location
-                ? [edge.data.assign]
-                : [];
+    parameters: (node?.data?.params || []).map((parameter) => ({
+      key: String(parameter?.key || ""),
+      typeName: String(parameter?.type || ""),
+      required: Boolean(parameter?.required),
+      defaultValue: String(parameter?.default ?? ""),
+      expression: String(parameter?.expr ?? ""),
+    })),
+    onEntry: (node?.data?.onEntry || []).map(mapAssignment),
+    onExit: (node?.data?.onExit || []).map(mapAssignment),
+    inputSlots: (node?.data?.inSlots || []).map(mapSlot),
+    outputSlots: (node?.data?.outSlots || []).map(mapSlot),
+    hasLocalDataModel: Array.isArray(submachineActionDataModel(node, tabs, activeTabId)),
+    localDataModel: (submachineActionDataModel(node, tabs, activeTabId) || []).map(mapVariable),
+  })),
+  edges: edges.map((edge) => {
+    const assignments = Array.isArray(edge?.data?.assignments)
+      ? edge.data.assignments
+      : edge?.data?.assign?.location
+        ? [edge.data.assign]
+        : [];
 
-        return {
-            id: String(edge?.id || ""),
-            source: String(edge?.source || ""),
-            target: String(edge?.target || ""),
-            event: String(edge?.sourceHandle || edge?.label || ""),
-            sourceHandle: String(edge?.sourceHandle || ""),
-            semanticSource: String(
-                edge?.data?.boundaryOriginalSource ||
-                    edge?.data?.compoundOriginalSource ||
-                    edge?.data?.parallelOriginalSource ||
-                    edge?.source ||
-                    ""
-            ),
-            assignments: assignments.map(mapAssignment),
-        };
-    }),
-    globalDataModel: (globalDataModel || []).map(mapVariable),
-    availableDataModel: (availableDataModel || []).map(mapVariable),
-    behaviorDirectoryKeys: (behaviorDirectories || [])
-        .map((directory) => String(directory?.key || "").trim().toUpperCase())
-        .filter(Boolean),
-    isBehaviorWorkflow: Boolean(isBehaviorWorkflow),
-    inheritedSlotPaths: collectInheritedSlotPaths(
-        nodes,
-        manualSlots,
-        currentSlotNodes
-    ),
-    ancestorWriterSlotPaths: collectAncestorWriterSlotPaths(
-        ancestorSlotSourcesByPath
-    ),
+    return {
+      id: String(edge?.id || ""),
+      source: String(edge?.source || ""),
+      target: String(edge?.target || ""),
+      event: String(edge?.sourceHandle || edge?.label || ""),
+      sourceHandle: String(edge?.sourceHandle || ""),
+      semanticSource: String(
+        edge?.data?.boundaryOriginalSource ||
+          edge?.data?.compoundOriginalSource ||
+          edge?.data?.parallelOriginalSource ||
+          edge?.source ||
+          "",
+      ),
+      assignments: assignments.map(mapAssignment),
+    };
+  }),
+  globalDataModel: (globalDataModel || []).map(mapVariable),
+  availableDataModel: (availableDataModel || []).map(mapVariable),
+  behaviorDirectoryKeys: (behaviorDirectories || [])
+    .map((directory) =>
+      String(directory?.key || "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean),
+  isBehaviorWorkflow: Boolean(isBehaviorWorkflow),
+  inheritedSlotPaths: collectInheritedSlotPaths(nodes, manualSlots, currentSlotNodes),
+  ancestorWriterSlotPaths: collectAncestorWriterSlotPaths(ancestorSlotSourcesByPath),
 });
 
 /**
@@ -231,48 +213,48 @@ export const buildEditorValidationRequest = ({
  * persisted there yet crosses IPC.
  */
 export const buildActiveValidationRequest = ({
-    nodes = [],
-    availableDataModel = [],
-    behaviorDirectories = [],
-    isBehaviorWorkflow = false,
-    ancestorSlotSourcesByPath = new Map(),
-    tabs = [],
-    activeTabId = null,
+  nodes = [],
+  availableDataModel = [],
+  behaviorDirectories = [],
+  isBehaviorWorkflow = false,
+  ancestorSlotSourcesByPath = new Map(),
+  tabs = [],
+  activeTabId = null,
 }) => ({
-    availableDataModel: (availableDataModel || []).map(mapVariable),
-    behaviorDirectoryKeys: (behaviorDirectories || [])
-        .map((directory) => String(directory?.key || "").trim().toUpperCase())
-        .filter(Boolean),
-    isBehaviorWorkflow: Boolean(isBehaviorWorkflow),
-    ancestorWriterSlotPaths: collectAncestorWriterSlotPaths(
-        ancestorSlotSourcesByPath
-    ),
-    nodeOverlays: (nodes || [])
-        .filter((node) => !isReferenceNode(node))
-        .map((node) => ({
-            id: String(node?.id || ""),
-            isCollapsed: Boolean(node?.data?.isCollapsed),
-            isBehaviorExit: Boolean(node?.data?.isBehaviorExit),
-            events: (node?.data?.events || []).map((event) => ({
-                id: String(event?.id || ""),
-                synthetic: Boolean(
-                    event?.editorImportedSynthetic ||
-                        event?.editorBoundarySynthetic ||
-                        isManagedBoundaryEvent(node?.type, event)
-                ),
-            })),
-            parameters: (node?.data?.params || []).map((parameter) => ({
-                key: String(parameter?.key || ""),
-                typeName: String(parameter?.type || ""),
-                required: Boolean(parameter?.required),
-                defaultValue: String(parameter?.default ?? ""),
-                expression: String(parameter?.expr ?? ""),
-            })),
-            onEntry: (node?.data?.onEntry || []).map(mapAssignment),
-            onExit: (node?.data?.onExit || []).map(mapAssignment),
-            inputSlotDefinitions: (node?.data?.inSlots || []).map(mapSlotDefinition),
-            outputSlotDefinitions: (node?.data?.outSlots || []).map(mapSlotDefinition),
-            hasLocalDataModel: Array.isArray(submachineActionDataModel(node, tabs, activeTabId)),
-            localDataModel: (submachineActionDataModel(node, tabs, activeTabId) || []).map(mapVariable),
-        })),
+  availableDataModel: (availableDataModel || []).map(mapVariable),
+  behaviorDirectoryKeys: (behaviorDirectories || [])
+    .map((directory) =>
+      String(directory?.key || "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean),
+  isBehaviorWorkflow: Boolean(isBehaviorWorkflow),
+  ancestorWriterSlotPaths: collectAncestorWriterSlotPaths(ancestorSlotSourcesByPath),
+  nodeOverlays: (nodes || [])
+    .filter((node) => !isReferenceNode(node))
+    .map((node) => ({
+      id: String(node?.id || ""),
+      isCollapsed: Boolean(node?.data?.isCollapsed),
+      isBehaviorExit: Boolean(node?.data?.isBehaviorExit),
+      events: (node?.data?.events || []).map((event) => ({
+        id: String(event?.id || ""),
+        synthetic: Boolean(
+          event?.editorImportedSynthetic || event?.editorBoundarySynthetic || isManagedBoundaryEvent(node?.type, event),
+        ),
+      })),
+      parameters: (node?.data?.params || []).map((parameter) => ({
+        key: String(parameter?.key || ""),
+        typeName: String(parameter?.type || ""),
+        required: Boolean(parameter?.required),
+        defaultValue: String(parameter?.default ?? ""),
+        expression: String(parameter?.expr ?? ""),
+      })),
+      onEntry: (node?.data?.onEntry || []).map(mapAssignment),
+      onExit: (node?.data?.onExit || []).map(mapAssignment),
+      inputSlotDefinitions: (node?.data?.inSlots || []).map(mapSlotDefinition),
+      outputSlotDefinitions: (node?.data?.outSlots || []).map(mapSlotDefinition),
+      hasLocalDataModel: Array.isArray(submachineActionDataModel(node, tabs, activeTabId)),
+      localDataModel: (submachineActionDataModel(node, tabs, activeTabId) || []).map(mapVariable),
+    })),
 });

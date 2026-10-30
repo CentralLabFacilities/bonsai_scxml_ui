@@ -10,22 +10,22 @@
  * their intended read/write direction is ambiguous and stays unresolved.
  */
 export function matchImportedSlotDeclaration(
-    declarations = [],
-    { fullSkillName = "", baseSkillName = "", slotKey = "" } = {},
+  declarations = [],
+  { fullSkillName = "", baseSkillName = "", slotKey = "" } = {},
 ) {
-    if (!fullSkillName || !slotKey) return undefined;
+  if (!fullSkillName || !slotKey) return undefined;
 
-    // Preserve the importer's previous state precedence, but do not treat
-    // non-matching keys within a state as aliases for other requests.
-    const groups = [
-        declarations.filter((slot) => slot?.state === fullSkillName),
-        declarations.filter((slot) => slot?.state === baseSkillName),
-        declarations.filter((slot) => slot?.state === "*"),
-    ];
-    for (const candidates of groups) {
-        if (candidates.length === 0) continue;
-        const exact = candidates.filter((slot) => slot?.key === slotKey);
-        return exact.length === 1 ? exact[0] : undefined;
-    }
-    return undefined;
+  // Preserve the importer's previous state precedence, but do not treat
+  // non-matching keys within a state as aliases for other requests.
+  const groups = [
+    declarations.filter((slot) => slot?.state === fullSkillName),
+    declarations.filter((slot) => slot?.state === baseSkillName),
+    declarations.filter((slot) => slot?.state === "*"),
+  ];
+  for (const candidates of groups) {
+    if (candidates.length === 0) continue;
+    const exact = candidates.filter((slot) => slot?.key === slotKey);
+    return exact.length === 1 ? exact[0] : undefined;
+  }
+  return undefined;
 }

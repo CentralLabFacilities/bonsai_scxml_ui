@@ -1,104 +1,105 @@
 export function getSkillPackageName(fullSkillName) {
-    let baseName = String(fullSkillName || "").split("#")[0];
-    const skillsMarker = ".skills.";
-    const skillsIndex = baseName.indexOf(skillsMarker);
+  let baseName = String(fullSkillName || "").split("#")[0];
+  const skillsMarker = ".skills.";
+  const skillsIndex = baseName.indexOf(skillsMarker);
 
-    if (skillsIndex !== -1) {
-        baseName = baseName.slice(skillsIndex + skillsMarker.length);
-    }
+  if (skillsIndex !== -1) {
+    baseName = baseName.slice(skillsIndex + skillsMarker.length);
+  }
 
-    const parts = baseName.split(".").filter(Boolean);
-    return parts.length <= 1 ? "" : parts.slice(0, -1).join(".");
+  const parts = baseName.split(".").filter(Boolean);
+  return parts.length <= 1 ? "" : parts.slice(0, -1).join(".");
 }
 
 export function createDetailsTargetIndex(availableTargetNodes, transitions, sourceNodeId) {
-    const options = (availableTargetNodes || []).map((node) => {
-        const fullSkillName = node.data?.fullSkillName || "";
-        const editorInstanceId = String(node.data?.editorInstanceId || "").trim();
-        const isReference = Boolean(node.data?.isSkillClone || node.data?.isStateClone);
-        const referenceId = isReference ? editorInstanceId || String(node.id || "") : "";
-        const stateName = editorInstanceId && !isReference
-            ? `#${editorInstanceId}`
-            : fullSkillName.includes("#")
-                ? fullSkillName.split("#").pop()
-                : "";
-        const skillName = node.data?.label || fullSkillName.split(".").pop().split("#")[0] || node.id;
-        const displayName = isReference
-            ? `${skillName} [${referenceId}]`
-            : editorInstanceId
-                ? `${skillName}#${editorInstanceId}`
-                : stateName && stateName !== skillName
-                    ? `${skillName}${stateName.startsWith("#") ? "" : "#"}${stateName}`
-                    : skillName;
+  const options = (availableTargetNodes || []).map((node) => {
+    const fullSkillName = node.data?.fullSkillName || "";
+    const editorInstanceId = String(node.data?.editorInstanceId || "").trim();
+    const isReference = Boolean(node.data?.isSkillClone || node.data?.isStateClone);
+    const referenceId = isReference ? editorInstanceId || String(node.id || "") : "";
+    const stateName =
+      editorInstanceId && !isReference
+        ? `#${editorInstanceId}`
+        : fullSkillName.includes("#")
+          ? fullSkillName.split("#").pop()
+          : "";
+    const skillName = node.data?.label || fullSkillName.split(".").pop().split("#")[0] || node.id;
+    const displayName = isReference
+      ? `${skillName} [${referenceId}]`
+      : editorInstanceId
+        ? `${skillName}#${editorInstanceId}`
+        : stateName && stateName !== skillName
+          ? `${skillName}${stateName.startsWith("#") ? "" : "#"}${stateName}`
+          : skillName;
 
-        return {
-            id: node.id,
-            displayName,
-            skillName,
-            stateName,
-            fullSkillName,
-            editorInstanceId,
-            isReference,
-            referenceId,
-            packageName: getSkillPackageName(fullSkillName),
-        };
+    return {
+      id: node.id,
+      displayName,
+      skillName,
+      stateName,
+      fullSkillName,
+      editorInstanceId,
+      isReference,
+      referenceId,
+      packageName: getSkillPackageName(fullSkillName),
+    };
+  });
+
+  const byId = new Map();
+  const byAlias = new Map();
+  const byExactQuery = new Map();
+  const searchableOptions = options.map((option) => {
+    if (!byId.has(option.id)) byId.set(option.id, option);
+    // Preserve array.find precedence across aliases, not just within each alias type.
+    [option.id, option.fullSkillName, option.displayName].forEach((alias) => {
+      if (!byAlias.has(alias)) byAlias.set(alias, option);
     });
 
-    const byId = new Map();
-    const byAlias = new Map();
-    const byExactQuery = new Map();
-    const searchableOptions = options.map((option) => {
-        if (!byId.has(option.id)) byId.set(option.id, option);
-        // Preserve array.find precedence across aliases, not just within each alias type.
-        [option.id, option.fullSkillName, option.displayName].forEach((alias) => {
-            if (!byAlias.has(alias)) byAlias.set(alias, option);
-        });
-
-        const values = [
-            option.displayName,
-            option.skillName,
-            option.stateName,
-            option.fullSkillName,
-            option.packageName,
-            option.id,
-            option.referenceId,
-        ].map((value) => String(value || "").toLowerCase());
-        values.forEach((value) => {
-            if (!byExactQuery.has(value)) byExactQuery.set(value, option);
-        });
-        return { option, values };
+    const values = [
+      option.displayName,
+      option.skillName,
+      option.stateName,
+      option.fullSkillName,
+      option.packageName,
+      option.id,
+      option.referenceId,
+    ].map((value) => String(value || "").toLowerCase());
+    values.forEach((value) => {
+      if (!byExactQuery.has(value)) byExactQuery.set(value, option);
     });
+    return { option, values };
+  });
 
-    const targetsByEvent = new Map();
-    (transitions || []).forEach((transition) => {
-        if (transition?.sourceNodeId !== sourceNodeId) return;
-        if (!transition.targetNodeId) return;
+  const targetsByEvent = new Map();
+  (transitions || []).forEach((transition) => {
+    if (transition?.sourceNodeId !== sourceNodeId) return;
+    if (!transition.targetNodeId) return;
 
-        const eventId = String(transition.eventId || "");
-        if (!targetsByEvent.has(eventId)) targetsByEvent.set(eventId, new Set());
-        targetsByEvent.get(eventId).add(transition.targetNodeId);
-    });
+    const eventId = String(transition.eventId || "");
+    if (!targetsByEvent.has(eventId)) targetsByEvent.set(eventId, new Set());
+    targetsByEvent.get(eventId).add(transition.targetNodeId);
+  });
 
-    return { options, byId, byAlias, byExactQuery, searchableOptions, targetsByEvent };
+  return { options, byId, byAlias, byExactQuery, searchableOptions, targetsByEvent };
 }
 
 export function getSemanticTargetNodeIds(event, index) {
-    const targetIds = new Set();
-    if (event?.target) {
-        targetIds.add(index.byAlias.get(event.target)?.id || event.target);
-    }
-    const transitionTargets = index.targetsByEvent.get(String(event?.id || ""));
-    transitionTargets?.forEach((targetId) => targetIds.add(targetId));
-    return [...targetIds];
+  const targetIds = new Set();
+  if (event?.target) {
+    targetIds.add(index.byAlias.get(event.target)?.id || event.target);
+  }
+  const transitionTargets = index.targetsByEvent.get(String(event?.id || ""));
+  transitionTargets?.forEach((targetId) => targetIds.add(targetId));
+  return [...targetIds];
 }
 
 export function getMatchingTargetNodeOptions(query, index) {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return index.options;
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) return index.options;
 
-    return index.searchableOptions
-        .filter(({ values }) => values.some((value) => value.includes(normalizedQuery)))
-        .map(({ option }) => option);
+  return index.searchableOptions
+    .filter(({ values }) => values.some((value) => value.includes(normalizedQuery)))
+    .map(({ option }) => option);
 }
 
 /**
@@ -107,72 +108,85 @@ export function getMatchingTargetNodeOptions(query, index) {
  * or (for a sub-SM invocation) the child machine's local datamodel.
  */
 export function getAvailableActionLocations(dataModel) {
-    const seen = new Set();
-    return (Array.isArray(dataModel) ? dataModel : []).filter((location) => {
-        const id = String(location?.id || "").trim();
-        if (!id || id === "#_STATE_PREFIX" || id === "#_SLOTS" || seen.has(id)) {
-            return false;
-        }
-        seen.add(id);
-        return true;
-    });
+  const seen = new Set();
+  return (Array.isArray(dataModel) ? dataModel : []).filter((location) => {
+    const id = String(location?.id || "").trim();
+    if (!id || id === "#_STATE_PREFIX" || id === "#_SLOTS" || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
 }
 
 export function areDetailsPanelPropsEqual(previous, next) {
-    const stableDataProps = [
-        "selectedNode", "hasInitialNode", "activeTab", "availableTargetNodes",
-        "availableSlotPaths", "globalDataModel", "actionValueVariables", "slotDetails",
-        "parameterFocusRequest", "slotFocusRequest", "transitionFocusRequest", "cloneSourceNode",
-        "cloneNodes", "containerOutgoingTransitions", "skillOutgoingTransitions", "skillSharedExits", "parallelLanes",
-        "skillLibraryRefreshVersion",
-    ];
-    if (!stableDataProps.every((key) => previous[key] === next[key])) return false;
+  const stableDataProps = [
+    "selectedNode",
+    "hasInitialNode",
+    "activeTab",
+    "availableTargetNodes",
+    "availableSlotPaths",
+    "globalDataModel",
+    "actionValueVariables",
+    "slotDetails",
+    "parameterFocusRequest",
+    "slotFocusRequest",
+    "transitionFocusRequest",
+    "cloneSourceNode",
+    "cloneNodes",
+    "containerOutgoingTransitions",
+    "skillOutgoingTransitions",
+    "skillSharedExits",
+    "parallelLanes",
+    "skillLibraryRefreshVersion",
+  ];
+  if (!stableDataProps.every((key) => previous[key] === next[key])) return false;
 
-    // Ignoring function props can keep old document/selection closures alive.
-    const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
-    for (const key of keys) {
-        if (key === "getPackageSkillEvent") continue;
-        if ((typeof previous[key] === "function" || typeof next[key] === "function") && previous[key] !== next[key]) {
-            return false;
-        }
+  // Ignoring function props can keep old document/selection closures alive.
+  const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const key of keys) {
+    if (key === "getPackageSkillEvent") continue;
+    if ((typeof previous[key] === "function" || typeof next[key] === "function") && previous[key] !== next[key]) {
+      return false;
     }
-    return true;
+  }
+  return true;
 }
 
 export function getExitTokenType(eventId) {
-    const mainType = String(eventId || "")
-        .trim()
-        .toLowerCase()
-        .split(".")[0];
+  const mainType = String(eventId || "")
+    .trim()
+    .toLowerCase()
+    .split(".")[0];
 
-    if (mainType === "success") return "success";
-    if (mainType === "error") return "error";
-    if (mainType === "fatal") return "fatal";
+  if (mainType === "success") return "success";
+  if (mainType === "error") return "error";
+  if (mainType === "fatal") return "fatal";
 
-    return "other";
+  return "other";
 }
 
 export function getEditableExitTokens(events, includeImplicitFatal = false) {
-    const byName = new Map();
-    (events || []).forEach((event) => {
-        if (!event?.id || (event.sourceNodeId && event.transitionHandleId)) return;
-        const id = String(event.id);
-        if (!byName.has(id)) {
-            byName.set(id, { ...event });
-        } else if (!byName.get(id).description && event.description) {
-            // Event objects may repeat for each target/condition. They share
-            // one exit-token definition in the inspector.
-            byName.get(id).description = event.description;
-        }
-    });
-
-    if (includeImplicitFatal && !byName.has("fatal")) {
-        byName.set("fatal", { id: "fatal", description: "" });
+  const byName = new Map();
+  (events || []).forEach((event) => {
+    if (!event?.id || (event.sourceNodeId && event.transitionHandleId)) return;
+    const id = String(event.id);
+    if (!byName.has(id)) {
+      byName.set(id, { ...event });
+    } else if (!byName.get(id).description && event.description) {
+      // Event objects may repeat for each target/condition. They share
+      // one exit-token definition in the inspector.
+      byName.get(id).description = event.description;
     }
+  });
 
-    const priority = { success: 0, error: 1, fatal: 2, other: 3 };
-    return [...byName.values()]
-        .map((event, index) => ({ event, index, priority: priority[getExitTokenType(event.id)] }))
-        .sort((a, b) => a.priority - b.priority || a.index - b.index)
-        .map(({ event }) => event);
+  if (includeImplicitFatal && !byName.has("fatal")) {
+    byName.set("fatal", { id: "fatal", description: "" });
+  }
+
+  const priority = { success: 0, error: 1, fatal: 2, other: 3 };
+  return [...byName.values()]
+    .map((event, index) => ({ event, index, priority: priority[getExitTokenType(event.id)] }))
+    .sort((a, b) => a.priority - b.priority || a.index - b.index)
+    .map(({ event }) => event);
 }
