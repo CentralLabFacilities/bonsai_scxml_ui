@@ -123,9 +123,6 @@ export function useNodeInteraction({ setNodes, setRightPanelTab, setActiveTab })
     const slotFocusRequestIdRef = useRef(0);
     const transitionFocusRequestIdRef = useRef(0);
 
-    useEffect(() => {
-        if (!selectedNodeId) setRightPanelTab("datamodel");
-    }, [selectedNodeId, setRightPanelTab]);
 
     const selectOnlyNode = useCallback((nodeId) => {
         setNodes((currentNodes) =>
