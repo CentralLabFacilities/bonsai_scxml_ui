@@ -12,6 +12,7 @@ import {
     FiTrash2,
 } from "react-icons/fi";
 import {
+    isTauri,
     listBehaviorDirectory,
     selectDirectory,
 } from "../../tauri-client.js";
@@ -283,6 +284,16 @@ function BehaviorRoot({
 
     const choosePath = async () => {
         if (pickerRequestRef.current) return;
+        if (!isTauri()) {
+            updateRootState((current) => ({
+                ...current,
+                picker: {
+                    pending: false,
+                    error: "Behavior libraries require the Rust/Tauri desktop backend. Use the Bonsai desktop app for behaviors.",
+                },
+            }));
+            return;
+        }
         const request = {};
         pickerRequestRef.current = request;
         updateRootState((current) => ({
@@ -517,6 +528,13 @@ function BehaviorLibrary({
 
     const browseForNewPath = async () => {
         if (newPathRequestRef.current) return;
+        if (!isTauri()) {
+            setNewPathPicker({
+                pending: false,
+                error: "Behavior libraries require the Rust/Tauri desktop backend. Use the Bonsai desktop app for behaviors.",
+            });
+            return;
+        }
         const request = {};
         newPathRequestRef.current = request;
         setNewPathPicker((current) => ({ ...current, pending: true }));
