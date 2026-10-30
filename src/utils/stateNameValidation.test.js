@@ -67,3 +67,9 @@ test("load preflight catches duplicate sub-state-machine names without flagging 
     nodes[1].data.fullSkillName = "Search#2";
     assert.equal(findDuplicateSubmachineStateName(nodes), null);
 });
+
+test("submachine names cannot contain #", () => {
+    const sub = { id: "sub", type: "submachine", data: { fullSkillName: "Search", label: "Search" } };
+    assert.match(validateStateRename([sub], "sub", "Search#2"), /cannot contain #/);
+    assert.equal(validateStateRename([sub], "sub", "Search2"), null);
+});

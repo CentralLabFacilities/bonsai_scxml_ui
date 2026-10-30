@@ -31,10 +31,10 @@ const resolveIncomingSkillIdentity = (currentNodes, incomingNode) => {
             .filter((node) => node.type !== "slot" && !isEditorCloneNode(node))
             .map((node) => String(node.data?.fullSkillName || node.data?.label || node.id || "").trim()));
         if (!used.has(requested)) return incomingNode;
-        const base = requested.replace(/#\d+$/, "");
+        const base = requested.replace(/\d+$/, "");
         let index = 2;
-        while (used.has(`${base}#${index}`)) index += 1;
-        const name = `${base}#${index}`;
+        while (used.has(`${base}${index}`)) index += 1;
+        const name = `${base}${index}`;
         return { ...incomingNode, data: { ...incomingNode.data,
             label: name, fullSkillName: name } };
     }

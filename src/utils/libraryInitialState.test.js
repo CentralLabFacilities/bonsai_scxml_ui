@@ -146,8 +146,8 @@ test("repeated sub-state-machine drops get unique SCXML names even across lanes"
     const first = appendLibraryNodeWithInitial([], behavior("child1", "laneA"));
     const second = appendLibraryNodeWithInitial(first, behavior("child2", "laneB"));
     const third = appendLibraryNodeWithInitial(second, behavior("child3", "laneA"));
-    assert.deepEqual(third.map((n) => n.data.fullSkillName), ["Search", "Search#2", "Search#3"]);
-    assert.deepEqual(third.map((n) => n.data.label), ["Search", "Search#2", "Search#3"]);
+    assert.deepEqual(third.map((n) => n.data.fullSkillName), ["Search", "Search2", "Search3"]);
+    assert.deepEqual(third.map((n) => n.data.label), ["Search", "Search2", "Search3"]);
     assert.ok(third.every((n) => n.data.src === "${BEHAVIORS}/Search.xml"));
 });
 
@@ -157,5 +157,5 @@ test("a sub-state-machine also avoids collisions with an existing compound", () 
     const incoming = { ...node("sub", null, false, "submachine"),
         data: { label: "Search", fullSkillName: "Search", src: "Search.xml" } };
     const result = appendLibraryNodeWithInitial([compound], incoming);
-    assert.equal(result[1].data.fullSkillName, "Search#2");
+    assert.equal(result[1].data.fullSkillName, "Search2");
 });

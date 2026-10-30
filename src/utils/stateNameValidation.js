@@ -29,6 +29,9 @@ export function validateStateRename(nodes, nodeId, requestedName) {
     if (!node) return "State not found.";
     if (node.data?.isSkillClone || node.data?.isStateClone) return "References cannot be renamed.";
 
+    if (node.type === "submachine" && text(requestedName).includes("#")) {
+        return "Behavior names cannot contain #.";
+    }
     const editorOnly = isEditorOnlyInstanceName(node);
     const proposed = editorOnly
         ? text(requestedName)
