@@ -149,7 +149,7 @@ export function classifyWebCommanderMessages(messages) {
     // WebCommander omits severity, but these exact engine fault formats are known.
     const text = message.trim();
     if (
-      /^(?:warn(?:ing)?\s*[:\-]|\[warn(?:ing)?\])\s*/i.test(text) ||
+      /^(?:warn(?:ing)?\s*[:-]|\[warn(?:ing)?\])\s*/i.test(text) ||
       /^State with id '.+' has only conditional transitions for event '.+'$/.test(text) ||
       /^Skill .+ has ExitStatus .+ with and without ps$/.test(text)
     ) {
@@ -158,7 +158,7 @@ export function classifyWebCommanderMessages(messages) {
       /(?:\b(?:missing|undefined|unresolved|unknown|not found|not configured|not defined|does not exist)\b.{0,90}\bslot\b|\bslot\b.{0,90}\b(?:missing|undefined|unresolved|unknown|not found|not configured|not defined|does not exist)\b)/i.test(
         text,
       ) ||
-      /^(?:err(?:or)?\s*[:\-]|\[err(?:or)?\])\s*/i.test(text) ||
+      /^(?:err(?:or)?\s*[:-]|\[err(?:or)?\])\s*/i.test(text) ||
       /^State with id '.+' misses transition for event '.+'$/.test(text) ||
       /^State with id '.+' sending event '.+' that is not captured in transitions$/.test(text)
     ) {

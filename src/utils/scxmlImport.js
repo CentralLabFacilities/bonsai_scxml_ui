@@ -21,7 +21,6 @@ import {
   COMPOUND_PADDING_X,
   getCompoundChildrenRight,
   getCompoundExitGutterWidth,
-  getLaneForNode,
   isNodeInsideContainer,
   getTransitionTargetHandleForNode,
 } from "./editorGeometry.js";

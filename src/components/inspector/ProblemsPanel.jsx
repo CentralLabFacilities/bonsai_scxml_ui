@@ -16,9 +16,9 @@ function SeverityIcon({ severity }) {
 
 export default function ProblemsPanel({ problems = [], onProblemClick, validationStatus = "ready", selectedNode }) {
   const [showAll, setShowAll] = useState(false);
-  useEffect(() => {
-    setShowAll(false);
-  }, [selectedNode?.id]);
+  // Reset filter when the selected node changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setShowAll(false), [selectedNode?.id]);
   const validationNotice = {
     pending: { title: "Validation running", message: "Waiting for validation of the current workflow." },
     unavailable: {

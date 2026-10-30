@@ -84,10 +84,6 @@ export default function WorkflowTabBar({
         </button>
       </div>
 
-      <div className="editor-title-badge">
-        <span>Node Editor</span>
-      </div>
-
       <div
         ref={tabListRef}
         className="intellij-tabs-container"

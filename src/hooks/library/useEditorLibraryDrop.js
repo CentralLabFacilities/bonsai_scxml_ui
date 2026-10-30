@@ -18,7 +18,6 @@ import {
 import { getOverviewLayoutNodeSize } from "../../utils/layoutUtils";
 import { getSlotPathFromNode, isKnownSlotType, normalizeSlotPath, normalizeSlotType } from "../../utils/editorGraph";
 import { isEditorModalOpen } from "../interaction/useGlobalEditorShortcuts.js";
-import { isEditorCloneNode } from "../../utils/editorClones";
 import { appendLibraryNodeWithInitial, ensureUniqueLibraryNodeId } from "../../utils/libraryInitialState.js";
 import { insertNodeWithParallelBoundarySync } from "../../utils/libraryParallelInsertion.js";
 import {

@@ -199,7 +199,7 @@ export function CompoundNode({ id, data = {}, selected = false }) {
       <CollapsedSlotAnchor data={data} />
       {!isCollapsed && <BoundaryExits events={events} />}
       {isCollapsed &&
-        events.map((event, index) => (
+        events.map((event) => (
           <ConnectionHandle
             key={`collapsed-source-${event.id}`}
             id={event.id}
@@ -293,7 +293,7 @@ export function ParallelNode({ id, data = {}, selected = false }) {
                 prefix. Those direct handlers belong on the Parallel itself. */}
       {!isCollapsed && <BoundaryExits events={events.filter((event) => event.editorDirectParallelEvent)} />}
       {isCollapsed &&
-        events.map((event, index) => (
+        events.map((event) => (
           <ConnectionHandle
             key={`collapsed-parallel-source-${event.id}`}
             id={event.id}

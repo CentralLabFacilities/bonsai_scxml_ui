@@ -57,7 +57,7 @@ export function getMatchingExpressionVariables(
       return aStarts - bStarts || aId.localeCompare(bId);
     });
 
-  const singleReference = /^@[A-Za-z0-9_:#.\-]*$/.test(String(value || "").trim());
+  const singleReference = /^@[A-Za-z0-9_:#.-]*$/.test(String(value || "").trim());
   const matches = [];
   for (const variable of candidates) {
     if (targetType) {

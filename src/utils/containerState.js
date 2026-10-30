@@ -142,7 +142,7 @@ export function followParallelResizeGesture(nodes, parallelId, width, height) {
     )
       return node;
     changed = true;
-    const { extent, ...withoutExtent } = node;
+    const { extent: _extent, ...withoutExtent } = node;
     return {
       ...withoutExtent,
       expandParent: false,

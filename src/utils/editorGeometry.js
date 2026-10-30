@@ -1,6 +1,6 @@
 import { measureContainerTask } from "./containerPerf.js";
 import { traceResizeForContainer, traceResizeNodeMutation } from "./resizeDiagnostics.js";
-import { resolveCollisionScope, resolveCollisions } from "./nodeCollisions.js";
+import { resolveCollisionScope } from "./nodeCollisions.js";
 import { createEditorNodeIndex } from "./editorGraph.js";
 
 export const getNodeId = () => `skill-node-${crypto.randomUUID()}`;
@@ -590,7 +590,7 @@ export const isAutoParallelLaneCompound = (node) =>
 // insets, and only then derive the exact container dimensions from the final
 // child geometry. This prevents stale saved sizes and overlapping imported
 // positions from being restored indefinitely.
-const layoutSiblingScopeInContext = (context, parentId, { minX = 20, minY = 20, gap = 30, filter = null } = {}) => {
+const layoutSiblingScopeInContext = (context, parentId, { minX = 20, minY = 20, filter = null } = {}) => {
   const originalChildren = context
     .getChildren(parentId)
     .filter((node) => !node.hidden)
@@ -698,7 +698,7 @@ export const normalizeContainerAutoExpansion = (allNodes) => {
       // bounds; a full-width lane would make its parallel unshrinkable.
       if (node.expandParent === false && node.extent !== "parent") return node;
       changed = true;
-      const { extent, ...withoutExtent } = node;
+      const { extent: _extent, ...withoutExtent } = node;
       return { ...withoutExtent, expandParent: false };
     }
     if (!shouldExpandParent || node.expandParent === true) {

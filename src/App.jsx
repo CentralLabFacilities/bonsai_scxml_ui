@@ -122,7 +122,9 @@ function AppContent() {
   const runtimeMemoryRef = useRef(runtimeMemory);
   const runtimeTabsRef = useRef([]);
   const runtimeSkillEntriesRef = useRef(new Map());
-  runtimeMemoryRef.current = runtimeMemory;
+  useEffect(() => {
+    runtimeMemoryRef.current = runtimeMemory;
+  }, [runtimeMemory]);
   const [recentRuntimeTransition, setRecentRuntimeTransition] = useState(null);
   const runtimeTransitionTimerRef = useRef(null);
   const handleRuntimeEvent = useCallback(
@@ -289,7 +291,9 @@ function AppContent() {
   // Runtime Load can finish after panel-mode changes. Keep the latest panel
   // controller without recreating the long-lived runtime callback.
   const collapseLibraryRef = useRef(() => {});
-  collapseLibraryRef.current = () => basePanels.closePanel("library");
+  useEffect(() => {
+    collapseLibraryRef.current = () => basePanels.closePanel("library");
+  }, [basePanels]);
   // Both right-side panels act as tabs: opening either closes the other.
   // Library visibility and inspector width preferences remain independent.
   const switchRightPanel = useCallback(
@@ -767,7 +771,9 @@ function AppContent() {
     cancelFlowConnection,
     isDraggingNode,
   });
-  runtimeTabsRef.current = tabs;
+  useEffect(() => {
+    runtimeTabsRef.current = tabs;
+  }, [tabs]);
 
   // A replaced/reloaded workflow may reuse edge ids; never retain a hover
   // originating from the previous canvas or its now-unmounted details panel.
@@ -1690,6 +1696,9 @@ function AppContent() {
     onNavigateAncestorSlot: handleNavigateAncestorSlot,
   });
 
+  // liveRunRef holds the loaded runtime workflow; reading it here avoids
+  // passing it through props while still keeping the memo fresh via deps.
+  // eslint-disable-next-line react-hooks/refs
   const runtimeTimelineSkill = useMemo(() => {
     if (!selectedRuntimeFrame || !liveRunRef.current?.workflow) return null;
     const state = selectedRuntimeFrame.state || selectedRuntimeFrame.transition?.source || "";

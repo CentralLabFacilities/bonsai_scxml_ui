@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   FiAlertCircle,
@@ -31,7 +31,6 @@ import { useBonsaiRuntimeSocket } from "../../hooks/editor/useBonsaiRuntimeSocke
 import { runtimePayload } from "../../utils/runtimeEventFrames.js";
 import { matchesLoadedInitial, initialWorkflowStateIds } from "../../utils/runtimeWorkflowIdentity.js";
 import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
-import { isRootTerminalState } from "../../utils/runtimeParallelContexts.js";
 import {
   runtimeConnectionNeedsStatusRefresh,
   shouldReplaceControlStatusBaseline,
@@ -54,16 +53,11 @@ export default function RuntimeCommander({
   onLogLoadRequested,
   onRuntimeGap,
   onRuntimeBackendRestart,
-  onRuntimeBaseline,
   runtimeTimeline,
   selectedRuntimeFrame,
   onRuntimeSeek,
   onRuntimeLive,
   onRuntimeStarted,
-  unresolvedStates = [],
-  runtimeParallelViews = [],
-  runtimeActiveSubMachines = [],
-  onOpenRuntimeSubMachine,
   behaviorDirectories = [],
 }) {
   const [configuration, setConfiguration] = useState(loadRuntimeConfiguration);
@@ -308,9 +302,7 @@ export default function RuntimeCommander({
 
   const {
     connection: eventConnection,
-    address: eventSocketAddress,
     diagnostic: eventSocketDiagnostic,
-    hasConnected: eventSocketEverConnected,
     reconnectNow,
   } = useBonsaiRuntimeSocket({
     // Listen even when the floating Run panel is closed: external runs
@@ -443,6 +435,8 @@ export default function RuntimeCommander({
     const previousConnection = previousEventConnectionRef.current;
     previousEventConnectionRef.current = eventConnection;
     if (eventConnection !== "connected") return;
+    // Clear status error when WebSocket reconnects.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setStatusError("");
     if (runtimeConnectionNeedsStatusRefresh(previousConnection, eventConnection)) {
       // The WebSocket can reconnect without changing shouldObserve, so
@@ -499,6 +493,13 @@ export default function RuntimeCommander({
       }
     }
   };
+  // The live engine's active state is authoritative, even with auto events off.
+  // Never offer exit tokens from a manually scrubbed historical snapshot.
+  const currentStates = snapshot?.currentStates || [];
+  const manualEvents = getManualRuntimeEvents(loadedWorkflow, currentStates);
+  const selectedEventName = manualEvents.some((entry) => entry.value === eventName)
+    ? eventName
+    : manualEvents[0]?.value || "";
 
   const execute = async (action, enabled) => {
     if (operationRef.current || browseRef.current || !ownerRef.current) return;
@@ -697,19 +698,13 @@ export default function RuntimeCommander({
     if (!terminalStopRequestedRef.current || busyAction || !loadedWorkflowRef.current) return;
     if (!["RUNNING", "PAUSED"].includes(snapshot?.status)) return;
     terminalStopRequestedRef.current = false;
+    // Reset pending stop when the engine is no longer running.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTerminalStopPending(false);
     void execute("stop");
     // execute is intentionally recreated with current request/status state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busyAction, snapshot?.status, terminalStopPending]);
-
-  // The live engine's active state is authoritative, even with auto events off.
-  // Never offer exit tokens from a manually scrubbed historical snapshot.
-  const currentStates = snapshot?.currentStates || [];
-  const manualEvents = getManualRuntimeEvents(loadedWorkflow, currentStates);
-  const selectedEventName = manualEvents.some((entry) => entry.value === eventName)
-    ? eventName
-    : manualEvents[0]?.value || "";
 
   if (!isOpen) return null;
   const busy = Boolean(busyAction);

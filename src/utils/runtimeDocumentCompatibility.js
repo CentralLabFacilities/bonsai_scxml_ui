@@ -22,13 +22,13 @@ export function sameRuntimeDocumentIgnoringPositions(loadedFingerprint, currentF
       ...document,
       nodes: document.nodes.map((node) => {
         if (!node || typeof node !== "object" || Array.isArray(node)) return node;
-        const { x, y, editorPositions, ...rest } = node;
+        const { x: _x, y: _y, editorPositions, ...rest } = node;
         return {
           ...rest,
           editorPositions: Array.isArray(editorPositions)
             ? editorPositions.map((position) => {
                 if (!position || typeof position !== "object" || Array.isArray(position)) return position;
-                const { x, y, ...identity } = position;
+                const { x: _x, y: _y, ...identity } = position;
                 return identity;
               })
             : editorPositions,

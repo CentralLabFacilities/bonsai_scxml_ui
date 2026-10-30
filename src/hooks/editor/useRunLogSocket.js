@@ -28,6 +28,8 @@ export function useRunLogSocket(session) {
   // Keep the log socket established across Load calls. Previously each Load
   // reconnected it, dropping early configuration errors emitted during startup.
   useEffect(() => {
+    // Clear logs when session changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     clear();
     sequenceRef.current = 0;
   }, [session, clear]);

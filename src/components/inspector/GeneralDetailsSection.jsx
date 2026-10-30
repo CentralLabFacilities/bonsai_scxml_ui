@@ -228,6 +228,8 @@ function GeneralDetailsSection({
   onDeleteParallelLane,
 }) {
   const [nameError, setNameError] = useState("");
+  // Reset error when the selected node changes.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setNameError(""), [selectedNode.id]);
   const skillName =
     !isSubMachine && !isContainerState && selectedNode.type === "custom"

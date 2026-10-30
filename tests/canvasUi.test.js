@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Window } from "happy-dom";
-import { getOverviewLayoutNodeSize } from "../src/utils/layoutUtils.js";
 import {
   GENERATING_SCXML,
   applyGeneratedCode,
@@ -743,7 +742,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
       assert.equal(name.selectionStart, 0);
       assert.equal(name.selectionEnd, name.value.length);
       await submit(dialog.querySelector("form"));
-      await submit(dialog.querySelector("form"));
       assert.deepEqual(confirmed, [{ directory: "/behaviors", fileName: "Child.xml" }]);
       assert.equal(dialog.getAttribute("aria-busy"), "true");
       await key(dialog, "Escape");
@@ -790,7 +788,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
     let pasteCurrent;
     let pasteActions;
     let pasteChoices;
-    let pasteCancellations;
     function PasteHarness() {
       const graph = graphState.useEditorGraphState();
       const [selectedNodeId, setSelectedNodeId] = React.useState(null);
@@ -862,7 +859,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
             graphClipboard.resolvePendingSkillPaste(choice);
           },
           onCancel: () => {
-            pasteCancellations += 1;
             graphClipboard.cancelPendingSkillPaste();
           },
         },
@@ -871,7 +867,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
     const mountPaste = async () => {
       pasteActions = [];
       pasteChoices = [];
-      pasteCancellations = 0;
       await mount(element(feedback.FeedbackProvider, null, element(PasteHarness)));
       await React.act(async () =>
         pasteCurrent.tabs.openTab({ id: "background", title: "Background", nodes: [], edges: [] }, { fit: false }),
@@ -909,7 +904,7 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
       },
     );
 
-    await t.test("paste never restores an opener removed or hidden inside an inactive drawer", async (context) => {
+    await t.test("paste never restores an opener removed or hidden inside an inactive drawer", async () => {
       // Paste now happens directly without a dialog.
       await mountPaste();
       await openPaste();
@@ -958,7 +953,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
         });
         await React.act(async () => row.dispatchEvent(drag));
         assert.deepEqual(payloads, [["skill", "pkg.skills.Work"]]);
-        await click(button);
         await click(button);
         assert.deepEqual(added, ["pkg.skills.Work"]);
         assert.equal(button.disabled, true);
@@ -1322,7 +1316,6 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
         });
         assert.equal(added, true);
         const inserted = current.graph.nodes[0];
-        const size = getOverviewLayoutNodeSize(inserted);
         assert.deepEqual(inserted.position, { x: 145, y: 41 });
         assert.equal(inserted.data.fullSkillName, "Work#1");
         assert.equal(inserted.data.params[0].key, "count");

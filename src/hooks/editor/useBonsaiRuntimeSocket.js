@@ -8,7 +8,9 @@ export function bonsaiRuntimeSocketUrl() {
 
 export function useBonsaiRuntimeSocket({ enabled, onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue }) {
   const callbacks = useRef({});
-  callbacks.current = { onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue };
+  useEffect(() => {
+    callbacks.current = { onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue };
+  }, [onEvent, onGap, onRestart, onConnectionLost, onConnectionIssue]);
   const lastSequence = useRef(null);
   const [connection, setConnection] = useState("disconnected");
   const [address, setAddress] = useState("");
@@ -19,6 +21,8 @@ export function useBonsaiRuntimeSocket({ enabled, onEvent, onGap, onRestart, onC
 
   useEffect(() => {
     if (!enabled) {
+      // Reset connection state when disabled.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setConnection("disconnected");
       setAddress("");
       setDiagnostic("");

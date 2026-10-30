@@ -5,7 +5,8 @@ import { SmartEdgeProvider } from "@tisoap/react-flow-smart-edge";
 import { SkillNode, SubMachineNode, StateReferenceNode } from "../graph/StateNodes.jsx";
 import SlotNode from "../graph/SlotNode";
 import { CompoundNode, ParallelNode, ParallelLaneNode } from "../graph/ContainerNodes.jsx";
-import EditableTransitionEdge, { GestureRoutingContext } from "../graph/EditableTransitionEdge";
+import EditableTransitionEdge from "../graph/EditableTransitionEdge";
+import { GestureRoutingContext } from "../graph/GestureRoutingContext.js";
 import CodeView from "./CodeView";
 import ModeSwitcher from "./ModeSwitcher.jsx";
 import CanvasViewportPlacement from "./CanvasViewportPlacement.jsx";
@@ -176,7 +177,6 @@ export default function EditorCanvas({
   handleNodeDoubleClick,
   handlePaneClick,
   handleContextMenuOpen,
-  handleOpenSubMachine,
   handleNodeDragStart,
   handleNodeDrag,
   handleNodeDragStop,

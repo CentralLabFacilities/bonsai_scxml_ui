@@ -107,8 +107,6 @@ export function useRustWorkflowDocument({
   edges,
   globalDataModel,
   manualSlots,
-  setNodes,
-  setEdges,
   updateGraph,
   setGlobalDataModel,
 }) {

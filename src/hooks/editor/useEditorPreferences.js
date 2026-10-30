@@ -68,7 +68,7 @@ export function useEditorPreferences() {
         const hidden = current.filter(
           (entry) => !visibleIds.has(behaviorDirectoryIdentity(entry)) && !updatedKeys.has(entry.key),
         );
-        return [...updated.map(({ resolvedPath, ...entry }) => entry), ...hidden];
+        return [...updated.map(({ _resolved, ...entry }) => entry), ...hidden];
       });
     },
     [behaviorDirectories],

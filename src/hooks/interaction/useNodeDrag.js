@@ -16,7 +16,6 @@ import {
   findDropContainerAtPoint,
   growContainerForDraggedChild,
   shouldKeepDragInContainerNearBorder,
-  resolveNodeCollisionsAndRefit,
   orderNodesParentsFirst,
 } from "../../utils/editorGeometry";
 

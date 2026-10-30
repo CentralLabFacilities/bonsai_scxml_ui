@@ -1,11 +1,7 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef } from "react";
 import { BaseEdge, EdgeLabelRenderer, Position, getBezierPath, useReactFlow } from "@xyflow/react";
 import { createSmartEdge, getSmartEdge, smartEdgePresets } from "@tisoap/react-flow-smart-edge";
-
-// A presentation-only switch. It never changes semantic edge arrays/ids.
-// During an interaction it avoids A* route work for all displayed edges;
-// the SmartEdgeProvider stays mounted and receives the final geometry on drop.
-export const GestureRoutingContext = createContext(false);
+import { GestureRoutingContext } from "./GestureRoutingContext.js";
 
 const AUTO_ROUTING_OPTIONS = {
   routeOnlyWhenBlocked: true,

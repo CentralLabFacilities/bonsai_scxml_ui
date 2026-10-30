@@ -17,6 +17,9 @@ export default defineConfig([
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
+    rules: {
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true }],
+    },
   },
   {
     files: ['src/server.js', 'src/httpServer.js', 'src/embed-assets.js', 'tests/**/*.js', 'scripts/**/*.mjs', 'vite.config.js', 'playwright.config.js'],

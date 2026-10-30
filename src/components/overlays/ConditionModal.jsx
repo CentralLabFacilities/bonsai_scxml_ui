@@ -124,7 +124,7 @@ function hydrateTransition(transition, index, variables, fallbackEvent = "") {
 }
 
 /** Insert an item before or after a target while keeping transition identities stable. */
-export function reorderTransitionItems(items, movingId, targetId, position = "before") {
+function reorderTransitionItems(items, movingId, targetId, position = "before") {
   const sourceIndex = items.findIndex((item) => item.transitionId === movingId);
   const targetIndex = items.findIndex((item) => item.transitionId === targetId);
   if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return items;
@@ -1607,6 +1607,7 @@ function ConditionModal({
                   <>
                     {(selectedTransition.assignments || []).length > 0 && (
                       <div className="transition-assignment-list transition-expression-list">
+                        {/* eslint-disable react-hooks/refs */}
                         {(selectedTransition.assignments || []).map((assignment, assignmentIndex) => {
                           const assignmentVariable = editorVariables.find(
                             (variable) => variable.id === assignment.location,
@@ -1764,6 +1765,7 @@ function ConditionModal({
                             </div>
                           );
                         })}
+                        {/* eslint-enable react-hooks/refs */}
                       </div>
                     )}
                   </>

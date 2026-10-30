@@ -409,7 +409,7 @@ test("isolated inspector editors preserve draft, focus, commit and render contra
       server: { middlewareMode: true, hmr: false, ws: false, watch: { ignored: () => true } },
       optimizeDeps: { noDiscovery: true, include: [] },
     });
-    const [lanes, slots, general, nop, details, inspector, libraryView, behaviors, detailsController] =
+    const [lanes, slots, _general, nop, details, _inspector, libraryView, behaviors, detailsController] =
       await Promise.all(
         [
           "/src/components/inspector/ParallelLaneEditor.jsx",
