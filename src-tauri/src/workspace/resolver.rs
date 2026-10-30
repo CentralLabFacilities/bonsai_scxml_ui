@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::io;
+use std::path::{Path, PathBuf};
 
 use super::library::{expand_home, normalize_key, BehaviorDirectoryMapping};
 
@@ -66,23 +66,34 @@ pub(crate) fn resolve_workflow_source_path_io(
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
     let resolved_path = candidate.canonicalize().map_err(|error| {
-        io::Error::new(error.kind(), format!(
-            "Could not resolve workflow file '{}': {error}", candidate.display()
-        ))
+        io::Error::new(
+            error.kind(),
+            format!(
+                "Could not resolve workflow file '{}': {error}",
+                candidate.display()
+            ),
+        )
     })?;
 
     if let Some(root) = root_path {
         let canonical_root = root.canonicalize().map_err(|error| {
-            io::Error::new(error.kind(), format!(
-                "Could not resolve Behavior Library directory '{}': {error}", root.display()
-            ))
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not resolve Behavior Library directory '{}': {error}",
+                    root.display()
+                ),
+            )
         })?;
 
         if !resolved_path.starts_with(&canonical_root) {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!(
-                "Workflow source '{}' is outside its Behavior Library directory.",
-                resolved_path.display()
-            )));
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "Workflow source '{}' is outside its Behavior Library directory.",
+                    resolved_path.display()
+                ),
+            ));
         }
     }
 
@@ -121,9 +132,7 @@ fn resolve_workflow_path(
         let mapping = directories
             .iter()
             .find(|directory| normalize_key(&directory.key) == key)
-            .ok_or_else(|| {
-                format!("No Behavior Library directory is configured for key {key}.")
-            })?;
+            .ok_or_else(|| format!("No Behavior Library directory is configured for key {key}."))?;
 
         let root = expand_home(&mapping.path);
         let candidate = root.join(relative);

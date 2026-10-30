@@ -1,10 +1,13 @@
 use super::helpers::{
-    add_missing_variable_problem, get_variable_references, normalize_value_type, problem,
-    validate_typed_value, variable_id_set, focus_node, node_label,
+    add_missing_variable_problem, focus_node, get_variable_references, node_label,
+    normalize_value_type, problem, validate_typed_value, variable_id_set,
 };
 use super::types::{EditorProblemDto, ValidationRequestDto, ValidationVariableDto};
 
-pub(super) fn validate_parameters(request: &ValidationRequestDto, problems: &mut Vec<EditorProblemDto>) {
+pub(super) fn validate_parameters(
+    request: &ValidationRequestDto,
+    problems: &mut Vec<EditorProblemDto>,
+) {
     let available_variables = if request.available_data_model.is_empty() {
         request.global_data_model.as_slice()
     } else {
@@ -13,17 +16,20 @@ pub(super) fn validate_parameters(request: &ValidationRequestDto, problems: &mut
 
     for node in &request.nodes {
         let mut parameter_variables = available_variables.to_vec();
-        parameter_variables.extend(node.parameters.iter().filter(|parameter| !parameter.key.is_empty()).map(
-            |parameter| ValidationVariableDto {
-                id: parameter.key.clone(),
-                type_name: parameter.type_name.clone(),
-                expression: if parameter.expression.trim().is_empty() {
-                    parameter.default_value.clone()
-                } else {
-                    parameter.expression.clone()
-                },
-            },
-        ));
+        parameter_variables.extend(
+            node.parameters
+                .iter()
+                .filter(|parameter| !parameter.key.is_empty())
+                .map(|parameter| ValidationVariableDto {
+                    id: parameter.key.clone(),
+                    type_name: parameter.type_name.clone(),
+                    expression: if parameter.expression.trim().is_empty() {
+                        parameter.default_value.clone()
+                    } else {
+                        parameter.expression.clone()
+                    },
+                }),
+        );
         let parameter_variable_ids = variable_id_set(&parameter_variables);
 
         for (index, parameter) in node.parameters.iter().enumerate() {
@@ -50,7 +56,11 @@ pub(super) fn validate_parameters(request: &ValidationRequestDto, problems: &mut
                 continue;
             }
 
-            let effective_value = if !value.is_empty() { value } else { default_value };
+            let effective_value = if !value.is_empty() {
+                value
+            } else {
+                default_value
+            };
             if effective_value.is_empty() {
                 continue;
             }
@@ -78,7 +88,8 @@ pub(super) fn validate_parameters(request: &ValidationRequestDto, problems: &mut
                 continue;
             };
 
-            if let Err(error) = validate_typed_value(effective_value, expected_type, &parameter_variables)
+            if let Err(error) =
+                validate_typed_value(effective_value, expected_type, &parameter_variables)
             {
                 let mut item = problem(
                     format!("parameter-type-{}-{index}", node.id),

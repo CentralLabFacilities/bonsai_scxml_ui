@@ -44,9 +44,7 @@ pub(super) fn normalize_initial_scope(
         .states
         .iter()
         .enumerate()
-        .filter_map(|(position, state)| {
-            (state.parent_id.as_ref() == parent_id).then_some(position)
-        })
+        .filter_map(|(position, state)| (state.parent_id.as_ref() == parent_id).then_some(position))
         .collect::<Vec<_>>();
 
     let current_initial = if let Some(parent_id) = parent_id {
@@ -103,7 +101,11 @@ pub(super) fn normalize_initial_scope(
     }
 
     if let Some(parent_id) = parent_id {
-        if let Some(parent) = workflow.states.iter_mut().find(|state| &state.id == parent_id) {
+        if let Some(parent) = workflow
+            .states
+            .iter_mut()
+            .find(|state| &state.id == parent_id)
+        {
             if parent.initial_child_id != selected_id
                 || parent.initial_child_scxml_id != selected_scxml_id
             {
@@ -129,12 +131,7 @@ fn is_state_within(
     state_id == ancestor_id || index.is_ancestor_of(workflow, ancestor_id, state_id)
 }
 
-
-fn has_parallel_scope(
-    workflow: &Workflow,
-    index: &WorkflowIndex,
-    state_id: &StateId,
-) -> bool {
+fn has_parallel_scope(workflow: &Workflow, index: &WorkflowIndex, state_id: &StateId) -> bool {
     let mut current = index.parent_of(workflow, state_id);
     let mut visited = HashSet::new();
     while let Some(parent_id) = current {
@@ -237,8 +234,12 @@ pub(super) fn recalculate_transition_owners(
             )?;
             let event = scxml_transition_event(&logical_source.handle, &source.scxml_id);
 
-            if resolved_owner.as_ref().is_some_and(|current| current != &owner)
-                || resolved_event.as_ref().is_some_and(|current| current != &event)
+            if resolved_owner
+                .as_ref()
+                .is_some_and(|current| current != &owner)
+                || resolved_event
+                    .as_ref()
+                    .is_some_and(|current| current != &event)
             {
                 return Err(format!(
                     "Transition '{}' requires splitting after reparenting",
@@ -305,7 +306,6 @@ pub(super) fn recalculate_transition_owners(
     workflow.transitions = merged;
     Ok(changed)
 }
-
 
 fn lane_state_name(context: &ParallelLaneMoveContextDto) -> String {
     let lane = State::from_dto(build_inserted_state(&context.lane));
@@ -394,15 +394,25 @@ pub(super) fn reconcile_parallel_lane(
             ));
         }
         let wrapper_id = StateId::from(wrapper_node.id.as_str());
-        if let Some(wrapper_position) = workflow.states.iter().position(|state| state.id == wrapper_id) {
+        if let Some(wrapper_position) = workflow
+            .states
+            .iter()
+            .position(|state| state.id == wrapper_id)
+        {
             let wrapper = &workflow.states[wrapper_position];
             if wrapper.kind != StateKind::Compound || wrapper.parent_id.as_ref() != Some(&lane_id) {
-                return Err(format!("Lane wrapper '{}' has unexpected semantic ownership", wrapper_node.id));
+                return Err(format!(
+                    "Lane wrapper '{}' has unexpected semantic ownership",
+                    wrapper_node.id
+                ));
             }
             if workflow.transitions.iter().any(|transition| {
                 transition.source_state_id == wrapper_id
                     || transition.target_state_id.as_ref() == Some(&wrapper_id)
-                    || transition.logical_sources.iter().any(|source| source.state_id == wrapper_id)
+                    || transition
+                        .logical_sources
+                        .iter()
+                        .any(|source| source.state_id == wrapper_id)
             }) {
                 // Do not silently discard transitions belonging to a state.
                 return Err(format!(
@@ -418,9 +428,12 @@ pub(super) fn reconcile_parallel_lane(
                     wrapper_node.id
                 ));
             }
-            if !wrapper.on_entry.is_empty() || !wrapper.on_exit.is_empty()
-                || !wrapper.events.is_empty() || !wrapper.parameters.is_empty()
-                || !wrapper.input_slots.is_empty() || !wrapper.output_slots.is_empty()
+            if !wrapper.on_entry.is_empty()
+                || !wrapper.on_exit.is_empty()
+                || !wrapper.events.is_empty()
+                || !wrapper.parameters.is_empty()
+                || !wrapper.input_slots.is_empty()
+                || !wrapper.output_slots.is_empty()
             {
                 return Err(format!(
                     "Cannot unwrap lane state '{}': it contains semantic actions or data",
@@ -435,9 +448,9 @@ pub(super) fn reconcile_parallel_lane(
             // Preserve absolute placement even for wrappers moved before
             // reconciliation. The editor likewise translates visual members.
             for member in workflow.states.iter_mut().filter(|state| {
-                members.contains(&state.id) &&
-                    (state.parent_id.as_ref() == Some(&wrapper_id)
-                    || state.parent_id.as_ref() == Some(&parallel_id))
+                members.contains(&state.id)
+                    && (state.parent_id.as_ref() == Some(&wrapper_id)
+                        || state.parent_id.as_ref() == Some(&parallel_id))
             }) {
                 if member.parent_id.as_ref() == Some(&wrapper_id) {
                     member.parent_id = Some(lane_id.clone());
@@ -476,13 +489,16 @@ pub(super) fn reconcile_parallel_lane(
     let existing_initial = existing_lane
         .and_then(|position| workflow.states[position].initial_child_id.clone())
         .filter(|id| members.contains(id));
-    let flagged_initial = members.iter().find(|member_id| {
-        workflow
-            .states
-            .iter()
-            .find(|state| state.id == **member_id)
-            .is_some_and(|state| state.is_initial)
-    }).cloned();
+    let flagged_initial = members
+        .iter()
+        .find(|member_id| {
+            workflow
+                .states
+                .iter()
+                .find(|state| state.id == **member_id)
+                .is_some_and(|state| state.is_initial)
+        })
+        .cloned();
     let initial_child_id = wrapper_initial
         .filter(|id| members.contains(id))
         .or(existing_initial)
@@ -535,9 +551,11 @@ pub(super) fn reconcile_parallel_lane(
             lane.initial_child_scxml_id = None;
             workflow.states.push(lane);
             changed.push(lane_id.as_str().to_string());
-        } else if let Some(position) = workflow.states.iter().position(|state| state.id == lane_id) {
+        } else if let Some(position) = workflow.states.iter().position(|state| state.id == lane_id)
+        {
             let lane = &mut workflow.states[position];
-            if lane.kind != StateKind::ParallelLane || lane.parent_id.as_ref() != Some(&parallel_id) {
+            if lane.kind != StateKind::ParallelLane || lane.parent_id.as_ref() != Some(&parallel_id)
+            {
                 lane.kind = StateKind::ParallelLane;
                 lane.parent_id = Some(parallel_id.clone());
                 changed.push(lane_id.as_str().to_string());
@@ -561,7 +579,8 @@ pub(super) fn reconcile_parallel_lane(
                 .find(|state| state.id == *member_id)
                 .ok_or_else(|| format!("Unknown Parallel lane member '{}'", member_id))?;
             let should_be_initial = initial_child_id.as_ref() == Some(member_id);
-            if member.parent_id.as_ref() != Some(&lane_id) || member.is_initial != should_be_initial {
+            if member.parent_id.as_ref() != Some(&lane_id) || member.is_initial != should_be_initial
+            {
                 member.parent_id = Some(lane_id.clone());
                 member.is_initial = should_be_initial;
                 changed.push(member.id.as_str().to_string());
@@ -579,7 +598,12 @@ pub(super) fn reconcile_parallel_lane(
             .states
             .iter_mut()
             .find(|state| state.id == lane_id)
-            .ok_or_else(|| format!("Parallel lane '{}' disappeared during normalization", lane_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "Parallel lane '{}' disappeared during normalization",
+                    lane_id
+                )
+            })?;
         if lane.initial_child_id != initial_child_id
             || lane.initial_child_scxml_id != selected_scxml_id
         {
@@ -597,10 +621,7 @@ pub(super) fn reconcile_parallel_lane(
             lane_id: lane_id.as_str().to_string(),
             parent_parallel_id: parallel_id.as_str().to_string(),
             initial_child_id: initial_child_id.map(|id| id.as_str().to_string()),
-            member_state_ids: members
-                .iter()
-                .map(|id| id.as_str().to_string())
-                .collect(),
+            member_state_ids: members.iter().map(|id| id.as_str().to_string()).collect(),
             wrapper_state_id: None,
             wrapper_label: None,
             wrapper_initial_child_id: None,
@@ -613,8 +634,7 @@ pub(super) fn reconcile_parallel_lane_command(
     context: ParallelLaneMoveContextDto,
 ) -> Result<WorkflowCommandChanges, String> {
     let mut candidate = workflow.clone();
-    let (mut changed_state_ids, lane_patch) =
-        reconcile_parallel_lane(&mut candidate, &context)?;
+    let (mut changed_state_ids, lane_patch) = reconcile_parallel_lane(&mut candidate, &context)?;
     let changed_transition_ids = recalculate_transition_owners(&mut candidate)?;
     changed_state_ids.sort();
     changed_state_ids.dedup();
@@ -683,12 +703,9 @@ fn remove_transitions_for_cross_lane_move(
         let transition_id = transition.id.as_str().to_string();
         let targets_moved_state = transition.target_state_id.as_ref() == Some(moved_id);
         let directly_owned_by_moved_state = &transition.source_state_id == moved_id;
-        let legacy_hoisted_from_moved_state =
-            transition.logical_sources.is_empty()
-                && !moved_scxml_id.is_empty()
-                && transition
-                    .event
-                    .starts_with(&format!("{moved_scxml_id}."));
+        let legacy_hoisted_from_moved_state = transition.logical_sources.is_empty()
+            && !moved_scxml_id.is_empty()
+            && transition.event.starts_with(&format!("{moved_scxml_id}."));
         let source_count_before = transition.logical_sources.len();
         transition
             .logical_sources
@@ -716,8 +733,7 @@ fn remove_transitions_for_cross_lane_move(
         let event_prefix = format!("{moved_scxml_id}.");
         for state in &mut workflow.states {
             state.editor.edge_targets.retain(|route| {
-                route.target_scxml_id != moved_scxml_id
-                    && !route.event.starts_with(&event_prefix)
+                route.target_scxml_id != moved_scxml_id && !route.event.starts_with(&event_prefix)
             });
         }
     }

@@ -16,7 +16,11 @@ fn set_previous_scope_initial(
     let mut changed = Vec::new();
 
     if let Some(parent_id) = parent_id {
-        if let Some(parent) = workflow.states.iter_mut().find(|state| &state.id == parent_id) {
+        if let Some(parent) = workflow
+            .states
+            .iter_mut()
+            .find(|state| &state.id == parent_id)
+        {
             parent.initial_child_id = Some(container_id.clone());
             parent.initial_child_scxml_id = Some(container_scxml_id.to_string());
             changed.push(parent.id.as_str().to_string());
@@ -36,7 +40,11 @@ fn set_previous_scope_initial(
     } else {
         workflow.initial_state_id = Some(container_id.clone());
         workflow.initial_scxml_state_id = Some(container_scxml_id.to_string());
-        for root in workflow.states.iter_mut().filter(|state| state.parent_id.is_none()) {
+        for root in workflow
+            .states
+            .iter_mut()
+            .filter(|state| state.parent_id.is_none())
+        {
             let should_be_initial = root.id == *container_id;
             if root.is_initial != should_be_initial {
                 root.is_initial = should_be_initial;
@@ -121,25 +129,24 @@ pub(super) fn wrap_editor_states(
         .collect::<Vec<_>>();
 
     let previous_parent_id = validate_selected_siblings(workflow, index, &selected_ids)?;
-    if container_node.parent_id.as_deref()
-        != previous_parent_id.as_ref().map(|id| id.as_str())
-    {
+    if container_node.parent_id.as_deref() != previous_parent_id.as_ref().map(|id| id.as_str()) {
         return Err("Container parent does not match the selected sibling scope".into());
     }
 
     let mut candidate = workflow.clone();
     let selected_set = selected_ids.iter().cloned().collect::<HashSet<_>>();
-    let was_initial = previous_scope_selected_initial(
-        &candidate,
-        previous_parent_id.as_ref(),
-        &selected_set,
-    );
+    let was_initial =
+        previous_scope_selected_initial(&candidate, previous_parent_id.as_ref(), &selected_set);
 
     let mut container = State::from_dto(build_inserted_state(&container_node));
     if !matches!(container.kind, StateKind::Compound | StateKind::Parallel) {
         return Err("Wrapped container must be Compound or Parallel".into());
     }
-    if candidate.states.iter().any(|state| state.id == container.id) {
+    if candidate
+        .states
+        .iter()
+        .any(|state| state.id == container.id)
+    {
         return Err(format!("State '{}' already exists", container.id));
     }
 
@@ -197,8 +204,7 @@ pub(super) fn wrap_editor_states(
             if let (Some(initial_id), Some(initial_scxml_id)) =
                 (requested_initial.as_ref(), initial_scxml_id.as_ref())
             {
-                promoted_initial_target =
-                    Some((initial_id.clone(), initial_scxml_id.clone()));
+                promoted_initial_target = Some((initial_id.clone(), initial_scxml_id.clone()));
             }
 
             if let Some(container) = candidate
@@ -259,10 +265,9 @@ pub(super) fn wrap_editor_states(
     // to the container after wrapping.
     if let Some((initial_id, initial_scxml_id)) = promoted_initial_target {
         for transition in &mut candidate.transitions {
-            let targets_initial =
-                transition.target_state_id.as_ref() == Some(&initial_id)
-                    || (transition.target_state_id.is_none()
-                        && transition.target_scxml_id == initial_scxml_id);
+            let targets_initial = transition.target_state_id.as_ref() == Some(&initial_id)
+                || (transition.target_state_id.is_none()
+                    && transition.target_scxml_id == initial_scxml_id);
             if !targets_initial {
                 continue;
             }

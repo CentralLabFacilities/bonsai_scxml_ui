@@ -85,8 +85,8 @@ pub(crate) fn build_workflow_from_editor(
 mod tests {
     use super::build_workflow_from_editor;
     use crate::core::editor_export::types::{
-        EditorBehaviorExitTransitionDto, EditorExportEdgeDto, EditorExportNodeDto,
-        EditorExportRequestDto, EditorExportEventDto, EditorTransitionSourceDto,
+        EditorBehaviorExitTransitionDto, EditorExportEdgeDto, EditorExportEventDto,
+        EditorExportNodeDto, EditorExportRequestDto, EditorTransitionSourceDto,
     };
     use crate::core::scxml::{parse_scxml, serialize_scxml};
 
@@ -172,7 +172,6 @@ mod tests {
         assert_eq!(workflow.transitions[0].id.as_str(), "edge-1");
     }
 
-
     // Regression: the Bonsai runtime does not reliably leave a Parallel when
     // the exiting event handler is declared directly on <parallel>. It must be
     // emitted on the lane's semantic Compound, not duplicated in every lane.
@@ -201,48 +200,93 @@ mod tests {
         fatal.full_skill_name = "Fatal".into();
         fatal.is_final = true;
         let request = EditorExportRequestDto {
-            nodes: vec![node("parallel", "parallel", None), talk_lane, talk_wrapper,
-                wait2, wait_lane, wait_wrapper, wait1, end, fatal],
+            nodes: vec![
+                node("parallel", "parallel", None),
+                talk_lane,
+                talk_wrapper,
+                wait2,
+                wait_lane,
+                wait_wrapper,
+                wait1,
+                end,
+                fatal,
+            ],
             edges: vec![
-                EditorExportEdgeDto { id: "exit-success".into(), source: "wait-1".into(),
-                    source_handle: "success".into(), target: "end".into(),
+                EditorExportEdgeDto {
+                    id: "exit-success".into(),
+                    source: "wait-1".into(),
+                    source_handle: "success".into(),
+                    target: "end".into(),
                     logical_sources: vec![EditorTransitionSourceDto {
-                        state_id: "wait-1".into(), handle: "success".into(),
-                    }], ..Default::default() },
-                EditorExportEdgeDto { id: "exit-fatal".into(), source: "wait-1".into(),
-                    source_handle: "fatal".into(), target: "fatal".into(),
-                    ..Default::default() },
+                        state_id: "wait-1".into(),
+                        handle: "success".into(),
+                    }],
+                    ..Default::default()
+                },
+                EditorExportEdgeDto {
+                    id: "exit-fatal".into(),
+                    source: "wait-1".into(),
+                    source_handle: "fatal".into(),
+                    target: "fatal".into(),
+                    ..Default::default()
+                },
             ],
             ..Default::default()
         };
         let workflow = build_workflow_from_editor(&request).unwrap();
         assert_eq!(workflow.transitions.len(), 2);
-        assert!(workflow.transitions.iter().all(|tr| tr.source_state_id == "wait-wrap"));
+        assert!(workflow
+            .transitions
+            .iter()
+            .all(|tr| tr.source_state_id == "wait-wrap"));
         assert_eq!(workflow.transitions[0].event, "Wait.success");
         assert_eq!(workflow.transitions[1].event, "Wait.fatal");
         let xml = serialize_scxml(&workflow).unwrap();
         let parallel_body = xml.split("<parallel id=\"parallel\"").nth(1).unwrap();
-        let talk_body = parallel_body.split("<state id=\"TalkPart\"").nth(1).unwrap();
+        let talk_body = parallel_body
+            .split("<state id=\"TalkPart\"")
+            .nth(1)
+            .unwrap();
         let wait_body = talk_body.split("<state id=\"Lane_2\"").nth(1).unwrap();
-        assert!(!parallel_body.split("<state id=").next().unwrap().contains("<transition"));
-        assert!(!talk_body.split("<state id=").next().unwrap().contains("<transition"));
+        assert!(!parallel_body
+            .split("<state id=")
+            .next()
+            .unwrap()
+            .contains("<transition"));
+        assert!(!talk_body
+            .split("<state id=")
+            .next()
+            .unwrap()
+            .contains("<transition"));
         assert!(wait_body.contains("<transition event=\"Wait.success\" target=\"End\""));
         assert!(wait_body.contains("<transition event=\"Wait.fatal\" target=\"Fatal\""));
         let reopened = parse_scxml(&xml).unwrap();
-        let lane = reopened.states.iter().find(|s| s.scxml_id == "Lane_2").unwrap();
-        assert!(reopened.transitions.iter().all(|tr| tr.source_state_id == lane.id));
+        let lane = reopened
+            .states
+            .iter()
+            .find(|s| s.scxml_id == "Lane_2")
+            .unwrap();
+        assert!(reopened
+            .transitions
+            .iter()
+            .all(|tr| tr.source_state_id == lane.id));
     }
 
     #[test]
     fn parallel_lane_exit_without_editor_wrapper_is_kept_on_lane() {
         let request = EditorExportRequestDto {
-            nodes: vec![node("p", "parallel", None),
+            nodes: vec![
+                node("p", "parallel", None),
                 node("lane", "parallelLane", Some("p")),
                 node("wait", "custom", Some("lane")),
-                node("out", "custom", None)],
+                node("out", "custom", None),
+            ],
             edges: vec![EditorExportEdgeDto {
-                id: "e".into(), source: "wait".into(), source_handle: "success".into(),
-                target: "out".into(), ..Default::default()
+                id: "e".into(),
+                source: "wait".into(),
+                source_handle: "success".into(),
+                target: "out".into(),
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -255,15 +299,24 @@ mod tests {
     fn imported_parallel_event_is_not_duplicated_after_lane_ownership_repair() {
         let mut parallel = node("p", "parallel", None);
         parallel.events.push(EditorExportEventDto {
-            id: "Wait.success".into(), raw_event: "Wait.success".into(),
-            target: "out".into(), ..Default::default()
+            id: "Wait.success".into(),
+            raw_event: "Wait.success".into(),
+            target: "out".into(),
+            ..Default::default()
         });
         let request = EditorExportRequestDto {
-            nodes: vec![parallel, node("lane", "parallelLane", Some("p")),
-                node("wait", "custom", Some("lane")), node("out", "custom", None)],
+            nodes: vec![
+                parallel,
+                node("lane", "parallelLane", Some("p")),
+                node("wait", "custom", Some("lane")),
+                node("out", "custom", None),
+            ],
             edges: vec![EditorExportEdgeDto {
-                id: "original".into(), source: "wait".into(), source_handle: "success".into(),
-                target: "out".into(), imported_raw_event: "Wait.success".into(),
+                id: "original".into(),
+                source: "wait".into(),
+                source_handle: "success".into(),
+                target: "out".into(),
+                imported_raw_event: "Wait.success".into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -276,13 +329,18 @@ mod tests {
     #[test]
     fn ordinary_compound_exit_still_uses_outermost_compound() {
         let request = EditorExportRequestDto {
-            nodes: vec![node("outer", "compound", None),
+            nodes: vec![
+                node("outer", "compound", None),
                 node("inner", "compound", Some("outer")),
                 node("wait", "custom", Some("inner")),
-                node("out", "custom", None)],
+                node("out", "custom", None),
+            ],
             edges: vec![EditorExportEdgeDto {
-                id: "e".into(), source: "wait".into(), source_handle: "success".into(),
-                target: "out".into(), ..Default::default()
+                id: "e".into(),
+                source: "wait".into(),
+                source_handle: "success".into(),
+                target: "out".into(),
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -355,8 +413,14 @@ mod tests {
         assert_eq!(workflow.transitions.len(), 1);
         assert_eq!(workflow.transitions[0].source_state_id, "compound");
         assert_eq!(workflow.transitions[0].logical_sources.len(), 2);
-        assert_eq!(workflow.transitions[0].logical_sources[0].state_id, "talk-a");
-        assert_eq!(workflow.transitions[0].logical_sources[1].state_id, "talk-b");
+        assert_eq!(
+            workflow.transitions[0].logical_sources[0].state_id,
+            "talk-a"
+        );
+        assert_eq!(
+            workflow.transitions[0].logical_sources[1].state_id,
+            "talk-b"
+        );
     }
 
     #[test]
@@ -419,6 +483,9 @@ mod tests {
         };
         let workflow = build_workflow_from_editor(&request).unwrap();
         assert_eq!(workflow.transitions[0].target_state_id, None);
-        assert_eq!(workflow.transitions[0].sent_events, vec!["behavior.success"]);
+        assert_eq!(
+            workflow.transitions[0].sent_events,
+            vec!["behavior.success"]
+        );
     }
 }

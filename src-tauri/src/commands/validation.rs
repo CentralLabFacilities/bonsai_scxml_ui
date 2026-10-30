@@ -23,7 +23,7 @@ pub(crate) async fn validate_active_workflow(
     request: ActiveValidationRequestDto,
     store: State<'_, WorkflowDocumentStore>,
 ) -> Result<Vec<EditorProblemDto>, String> {
-    let active_request =
-        store.inspect_active(|_, workflow, _| build_active_validation_request(workflow, &request))?;
+    let active_request = store
+        .inspect_active(|_, workflow, _| build_active_validation_request(workflow, &request))?;
     Ok(validate_editor_graph(&active_request))
 }

@@ -19,18 +19,24 @@ fn edge_event(edge: &EditorExportEdgeDto, source: Option<&&EditorExportNodeDto>)
     } else {
         "success"
     };
-    scxml_transition_event(raw, &source.map(|node| state_name(node)).unwrap_or_default())
+    scxml_transition_event(
+        raw,
+        &source.map(|node| state_name(node)).unwrap_or_default(),
+    )
 }
 
 // Return the semantic source of an editor edge. A boundary edge's visible
 // source/handle are rendering artifacts and must not become SCXML events.
 fn semantic_edge_source<'a>(edge: &'a EditorExportEdgeDto) -> (&'a str, &'a str) {
-    let logical = edge.logical_sources.iter().find(|source| {
-        !source.state_id.trim().is_empty() && !source.handle.trim().is_empty()
-    });
-    let state_id = logical.map(|source| source.state_id.as_str())
+    let logical = edge
+        .logical_sources
+        .iter()
+        .find(|source| !source.state_id.trim().is_empty() && !source.handle.trim().is_empty());
+    let state_id = logical
+        .map(|source| source.state_id.as_str())
         .unwrap_or(edge.source.as_str());
-    let handle = logical.map(|source| source.handle.trim())
+    let handle = logical
+        .map(|source| source.handle.trim())
         .or_else(|| (!edge.source_handle.trim().is_empty()).then_some(edge.source_handle.trim()))
         .or_else(|| (!edge.label.trim().is_empty()).then_some(edge.label.trim()))
         .unwrap_or("success");
@@ -53,10 +59,11 @@ fn edge_logical_sources(
                 return None;
             }
             let key = (state_id.to_string(), handle.to_string());
-            seen.insert(key.clone()).then_some(crate::core::model::TransitionSourceDto {
-                state_id: key.0,
-                handle: key.1,
-            })
+            seen.insert(key.clone())
+                .then_some(crate::core::model::TransitionSourceDto {
+                    state_id: key.0,
+                    handle: key.1,
+                })
         })
         .collect::<Vec<_>>();
 
@@ -178,8 +185,11 @@ fn build_normal_transitions(
     }
 
     for (event_index, event) in node.events.iter().enumerate() {
-        if event.target.trim().is_empty() ||
-            !index.nodes_by_id.contains_key(index.semantic_state_id(&event.target).as_str()) {
+        if event.target.trim().is_empty()
+            || !index
+                .nodes_by_id
+                .contains_key(index.semantic_state_id(&event.target).as_str())
+        {
             continue;
         }
         if index.transition_owner_id(&node.id, &event.target) != Some(node.id.as_str()) {
@@ -216,25 +226,30 @@ fn build_normal_transitions(
 
     combined
         .into_iter()
-        .filter_map(|(raw_event, target_id, condition, assignments, id, logical_sources)| {
-            if target_id.trim().is_empty()
-                || !index.nodes_by_id.contains_key(index.semantic_state_id(&target_id).as_str()) {
-                return None;
-            }
-            let (target_state_id, target_scxml_id) = target_details(&target_id, index);
-            Some(TransitionDto {
-                id,
-                source_state_id: node.id.clone(),
-                target_state_id,
-                target_scxml_id,
-                logical_sources,
-                event: scxml_transition_event(&raw_event, &state_name(node)),
-                condition,
-                assignments,
-                sent_events: Vec::new(),
-                target_instance_id: None,
-            })
-        })
+        .filter_map(
+            |(raw_event, target_id, condition, assignments, id, logical_sources)| {
+                if target_id.trim().is_empty()
+                    || !index
+                        .nodes_by_id
+                        .contains_key(index.semantic_state_id(&target_id).as_str())
+                {
+                    return None;
+                }
+                let (target_state_id, target_scxml_id) = target_details(&target_id, index);
+                Some(TransitionDto {
+                    id,
+                    source_state_id: node.id.clone(),
+                    target_state_id,
+                    target_scxml_id,
+                    logical_sources,
+                    event: scxml_transition_event(&raw_event, &state_name(node)),
+                    condition,
+                    assignments,
+                    sent_events: Vec::new(),
+                    target_instance_id: None,
+                })
+            },
+        )
         .collect()
 }
 
@@ -259,8 +274,7 @@ fn build_container_transitions(
             let target_inside = index.is_inside_container(&edge.target, &node.id);
             let owns_transition =
                 index.transition_owner_id(&edge.source, &edge.target) == Some(node.id.as_str());
-            (source_inside && !target_inside && owns_transition)
-                .then_some((edge_index, edge))
+            (source_inside && !target_inside && owns_transition).then_some((edge_index, edge))
         })
         .collect::<Vec<_>>();
 
@@ -278,7 +292,10 @@ fn build_container_transitions(
     let mut seen = HashMap::new();
 
     for (_, edge) in leaving {
-        if !index.nodes_by_id.contains_key(index.semantic_state_id(&edge.target).as_str()) {
+        if !index
+            .nodes_by_id
+            .contains_key(index.semantic_state_id(&edge.target).as_str())
+        {
             continue;
         }
         // Boundary projections use a synthetic display source/handle. Resolve
@@ -288,7 +305,8 @@ fn build_container_transitions(
         let source = index.nodes_by_id.get(logical_state_id);
         let full_event = if !edge.imported_raw_event.trim().is_empty() {
             edge.imported_raw_event.trim().to_string()
-        } else if edge.source == node.id && logical_state_id == node.id && raw_handle.contains('.') {
+        } else if edge.source == node.id && logical_state_id == node.id && raw_handle.contains('.')
+        {
             // Direct container transitions can use global/dotted SCXML event
             // descriptors. Do not prefix those with the container label.
             raw_handle.to_string()
@@ -319,7 +337,9 @@ fn build_container_transitions(
 
     for (event_index, event) in node.events.iter().enumerate() {
         if event.target.trim().is_empty()
-            || !index.nodes_by_id.contains_key(index.semantic_state_id(&event.target).as_str())
+            || !index
+                .nodes_by_id
+                .contains_key(index.semantic_state_id(&event.target).as_str())
             || (!event.source_node_id.trim().is_empty()
                 && !event.transition_handle_id.trim().is_empty())
         {
@@ -335,27 +355,35 @@ fn build_container_transitions(
         // in the Parallel's event list after the editor reconstructs its
         // canonical skill-to-outside edge. When that edge now belongs to a
         // lane, do not serialize a second transition on the old Parallel.
-        if node.node_type == "parallel" && request.edges.iter().any(|edge| {
-            if !index.is_strict_descendant(&edge.source, &node.id)
-                || index.transition_owner_id(&edge.source, &edge.target)
-                    == Some(node.id.as_str())
-            {
-                return false;
-            }
-            let (_, edge_target) = target_details(&edge.target, index);
-            if edge_target != target_scxml_id ||
-                edge.condition.trim() != event.condition.trim() {
-                return false;
-            }
-            let (source_id, handle) = semantic_edge_source(edge);
-            let edge_event = if !edge.imported_raw_event.trim().is_empty() {
-                edge.imported_raw_event.trim().to_string()
-            } else {
-                scxml_transition_event(handle, &index.nodes_by_id
-                    .get(source_id).map(|source| state_name(source)).unwrap_or_default())
-            };
-            edge_event == raw_event
-        }) {
+        if node.node_type == "parallel"
+            && request.edges.iter().any(|edge| {
+                if !index.is_strict_descendant(&edge.source, &node.id)
+                    || index.transition_owner_id(&edge.source, &edge.target)
+                        == Some(node.id.as_str())
+                {
+                    return false;
+                }
+                let (_, edge_target) = target_details(&edge.target, index);
+                if edge_target != target_scxml_id || edge.condition.trim() != event.condition.trim()
+                {
+                    return false;
+                }
+                let (source_id, handle) = semantic_edge_source(edge);
+                let edge_event = if !edge.imported_raw_event.trim().is_empty() {
+                    edge.imported_raw_event.trim().to_string()
+                } else {
+                    scxml_transition_event(
+                        handle,
+                        &index
+                            .nodes_by_id
+                            .get(source_id)
+                            .map(|source| state_name(source))
+                            .unwrap_or_default(),
+                    )
+                };
+                edge_event == raw_event
+            })
+        {
             continue;
         }
 
@@ -475,7 +503,10 @@ pub(super) fn build_transitions(
             continue;
         } else if node.is_behavior_exit && node.node_type != "parallelLane" {
             transitions.extend(build_behavior_exit_transition(node));
-        } else if matches!(node.node_type.as_str(), "compound" | "parallel" | "parallelLane") {
+        } else if matches!(
+            node.node_type.as_str(),
+            "compound" | "parallel" | "parallelLane"
+        ) {
             transitions.extend(build_container_transitions(node, request, index));
         } else {
             transitions.extend(build_normal_transitions(node, request, index));
@@ -505,7 +536,10 @@ mod boundary_event_regression_tests {
         let (id, handle) = semantic_edge_source(&edge);
         assert_eq!(id, "skill-node-123");
         assert_eq!(handle, "error.cancelled");
-        assert_eq!(scxml_transition_event(handle, "Grasp#42"), "Grasp.error.cancelled");
+        assert_eq!(
+            scxml_transition_event(handle, "Grasp#42"),
+            "Grasp.error.cancelled"
+        );
     }
 
     #[test]

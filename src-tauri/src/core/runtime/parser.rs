@@ -126,11 +126,7 @@ fn parse_data_change(message: &str) -> Option<(String, String, String)> {
         return Some((key.to_string(), expr.to_string(), value.to_string()));
     }
 
-    Some((
-        before_change.to_string(),
-        String::new(),
-        value.to_string(),
-    ))
+    Some((before_change.to_string(), String::new(), value.to_string()))
 }
 
 fn parse_assignment(message: &str) -> Option<(String, String)> {
@@ -263,7 +259,11 @@ pub(crate) fn parse_runtime_log(text: &str) -> RuntimeLogDto {
 
         if line.component.eq_ignore_ascii_case("ObjectSlot") {
             if let Some((operation, value)) = parse_object_slot(line.message) {
-                let kind = if operation == "memorized" { "write" } else { "read" };
+                let kind = if operation == "memorized" {
+                    "write"
+                } else {
+                    "read"
+                };
                 let state = if current_runner_state.is_empty() {
                     current_invocation_state.clone()
                 } else {
@@ -298,7 +298,10 @@ mod tests {
         );
 
         let parsed = parse_runtime_log(log);
-        assert_eq!(parsed.first_entry.as_ref().unwrap().state, "demo.Skill#main");
+        assert_eq!(
+            parsed.first_entry.as_ref().unwrap().state,
+            "demo.Skill#main"
+        );
         assert_eq!(parsed.parameter_samples.len(), 1);
         assert_eq!(parsed.parameter_samples[0].key, "#_WRITE");
         assert_eq!(parsed.parameter_samples[0].expr, "@test_val");

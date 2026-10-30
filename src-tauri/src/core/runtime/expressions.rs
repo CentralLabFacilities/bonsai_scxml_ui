@@ -75,7 +75,9 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             continue;
         }
 
-        if byte.is_ascii_digit() || (byte == b'.' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit)) {
+        if byte.is_ascii_digit()
+            || (byte == b'.' && bytes.get(index + 1).is_some_and(u8::is_ascii_digit))
+        {
             let start = index;
             let mut seen_dot = byte == b'.';
             index += 1;
@@ -115,7 +117,11 @@ fn tokenize(source: &str) -> Result<Vec<Token>, String> {
         }
 
         let mut identifier_prefix = false;
-        if byte == b'@' && bytes.get(index + 1).is_some_and(|next| is_identifier_start(*next)) {
+        if byte == b'@'
+            && bytes
+                .get(index + 1)
+                .is_some_and(|next| is_identifier_start(*next))
+        {
             identifier_prefix = true;
             index += 1;
         }
@@ -361,13 +367,15 @@ impl<'a> Parser<'a> {
             self.position += 1;
             let right = self.parse_additive()?;
             let result = match (&left, &right) {
-                (RuntimeValueDto::String(left), RuntimeValueDto::String(right)) => match operator.as_str() {
-                    "<" => left < right,
-                    "<=" => left <= right,
-                    ">" => left > right,
-                    ">=" => left >= right,
-                    _ => unreachable!(),
-                },
+                (RuntimeValueDto::String(left), RuntimeValueDto::String(right)) => {
+                    match operator.as_str() {
+                        "<" => left < right,
+                        "<=" => left <= right,
+                        ">" => left > right,
+                        ">=" => left >= right,
+                        _ => unreachable!(),
+                    }
+                }
                 _ => {
                     let left = to_number(&left)?;
                     let right = to_number(&right)?;
@@ -462,12 +470,7 @@ mod tests {
         values.insert("count_child".into(), RuntimeValueDto::Number(2.0));
         values.insert("count".into(), RuntimeValueDto::Number(20.0));
 
-        let result = evaluate_runtime_expression(
-            "count + 3",
-            &values,
-            &["child".into()],
-        )
-        .unwrap();
+        let result = evaluate_runtime_expression("count + 3", &values, &["child".into()]).unwrap();
 
         assert_eq!(result, RuntimeValueDto::Number(5.0));
     }

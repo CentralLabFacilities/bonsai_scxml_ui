@@ -1,8 +1,8 @@
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use crate::file_version::file_version;
@@ -115,7 +115,9 @@ fn write_atomic_with(
 pub(crate) struct FileVersionPrecondition(Option<String>);
 
 impl FileVersionPrecondition {
-    pub(crate) fn as_deref(&self) -> Option<&str> { self.0.as_deref() }
+    pub(crate) fn as_deref(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for FileVersionPrecondition {
@@ -140,21 +142,34 @@ pub(crate) struct CheckedSaveResult {
     pub file_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub state: Option<&'static str>,
-    #[serde(rename = "observedFileVersion", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "observedFileVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub observed_file_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(rename = "durabilityUncertain", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "durabilityUncertain",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub durability_uncertain: Option<bool>,
 }
 
 impl CheckedSaveResult {
     fn failed(path: &Path, failure: SaveFailure) -> Self {
         Self {
-            status: if failure.conflict { "conflict" } else { "error" },
+            status: if failure.conflict {
+                "conflict"
+            } else {
+                "error"
+            },
             success: false,
             path: path.to_string_lossy().into_owned(),
-            file_name: path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+            file_name: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             file_version: None,
             state: Some(failure.state),
             observed_file_version: failure.observed,
@@ -186,7 +201,12 @@ impl SaveFailure {
     }
 
     fn conflict(state: &'static str, observed: Option<String>, message: &str) -> Self {
-        Self { conflict: true, state, observed, error: message.to_string() }
+        Self {
+            conflict: true,
+            state,
+            observed,
+            error: message.to_string(),
+        }
     }
 }
 
@@ -195,8 +215,7 @@ static SAVE_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn destination_lock(path: &Path) -> Arc<Mutex<()>> {
-    let mut locks = SAVE_LOCKS
-        .lock().unwrap_or_else(|error| error.into_inner());
+    let mut locks = SAVE_LOCKS.lock().unwrap_or_else(|error| error.into_inner());
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(path).and_then(Weak::upgrade) {
         return lock;
@@ -213,7 +232,12 @@ pub(crate) fn write_atomic_checked(
     bytes: &[u8],
     expected_file_version: Option<&str>,
 ) -> CheckedSaveResult {
-    write_atomic_checked_with(path, bytes, expected_file_version, CheckedSaveHooks::default())
+    write_atomic_checked_with(
+        path,
+        bytes,
+        expected_file_version,
+        CheckedSaveHooks::default(),
+    )
 }
 
 pub(crate) fn write_atomic_checked_resolving(
@@ -223,7 +247,11 @@ pub(crate) fn write_atomic_checked_resolving(
     resolve_source: impl Fn() -> io::Result<PathBuf>,
 ) -> CheckedSaveResult {
     write_atomic_checked_resolving_with(
-        path, bytes, expected_file_version, CheckedSaveHooks::default(), Some(&resolve_source),
+        path,
+        bytes,
+        expected_file_version,
+        CheckedSaveHooks::default(),
+        Some(&resolve_source),
     )
 }
 
@@ -242,7 +270,9 @@ struct CheckedSaveHooks {
 fn observed_version(destination: &Path) -> Result<Option<String>, SaveFailure> {
     match fs::metadata(destination) {
         Ok(metadata) if !metadata.is_file() => Err(SaveFailure::conflict(
-            "invalid", None, "Save destination is no longer a regular file.",
+            "invalid",
+            None,
+            "Save destination is no longer a regular file.",
         )),
         Ok(_) => fs::read(destination)
             .map(|bytes| Some(file_version(destination, &bytes)))
@@ -256,11 +286,15 @@ fn destination_permissions(destination: &Path) -> Result<fs::Permissions, SaveFa
     let metadata = fs::metadata(destination).map_err(SaveFailure::io)?;
     if metadata.permissions().readonly() {
         return Err(SaveFailure::io(io::Error::new(
-            io::ErrorKind::PermissionDenied, "Save destination is read-only.",
+            io::ErrorKind::PermissionDenied,
+            "Save destination is read-only.",
         )));
     }
     // Rename must not bypass the destination's write access policy.
-    OpenOptions::new().write(true).open(destination).map_err(SaveFailure::io)?;
+    OpenOptions::new()
+        .write(true)
+        .open(destination)
+        .map_err(SaveFailure::io)?;
     Ok(metadata.permissions())
 }
 
@@ -274,12 +308,18 @@ fn check_save_precondition(
         let source_destination = resolve_source().map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound && expected.is_some() {
                 SaveFailure::conflict("missing", None, &error.to_string())
-            } else { SaveFailure::io(error) }
+            } else {
+                SaveFailure::io(error)
+            }
         })?;
         if source_destination != destination {
             let observed = observed_version(&source_destination)?;
             return Err(SaveFailure::conflict(
-                if observed.is_some() { "changed" } else { "missing" },
+                if observed.is_some() {
+                    "changed"
+                } else {
+                    "missing"
+                },
                 observed,
                 "Workflow source mapping or destination changed. Reload or choose Save As.",
             ));
@@ -289,7 +329,11 @@ fn check_save_precondition(
     let observed = observed_version(&current_destination)?;
     if current_destination != destination || observed.as_deref() != expected {
         return Err(SaveFailure::conflict(
-            if observed.is_some() { "changed" } else { "missing" },
+            if observed.is_some() {
+                "changed"
+            } else {
+                "missing"
+            },
             observed,
             "Save destination changed since it was loaded or selected. Reload or choose Save As.",
         ));
@@ -323,7 +367,9 @@ fn write_atomic_checked_resolving_with(
     let mut save = || -> Result<CheckedSaveResult, SaveFailure> {
         check_save_precondition(path, &destination, expected, resolve_source)?;
         let parent = destination.parent().expect("resolved absolute file path");
-        let permissions = expected.map(|_| destination_permissions(&destination)).transpose()?;
+        let permissions = expected
+            .map(|_| destination_permissions(&destination))
+            .transpose()?;
         #[cfg(unix)]
         let directory = File::open(parent).map_err(SaveFailure::io)?;
         let mut temporary = TemporaryFile::create(parent).map_err(SaveFailure::io)?;
@@ -335,7 +381,10 @@ fn write_atomic_checked_resolving_with(
             #[cfg(test)]
             if hooks.fail_stage {
                 file.write_all(&bytes[..bytes.len() / 2])?;
-                return Err(io::Error::new(io::ErrorKind::Other, "injected staging failure"));
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "injected staging failure",
+                ));
             }
             file.write_all(bytes)?;
             file.sync_all()
@@ -344,7 +393,9 @@ fn write_atomic_checked_resolving_with(
         let commit = (|| -> Result<(), SaveFailure> {
             stage.map_err(SaveFailure::io)?;
             #[cfg(test)]
-            if let Some(hook) = hooks.before_final_check.take() { hook(); }
+            if let Some(hook) = hooks.before_final_check.take() {
+                hook();
+            }
             // This is deliberately the last check before publication. Portable
             // rename is not CAS: external writers must not run concurrently
             // with Save during the remaining check-to-rename interval.
@@ -353,7 +404,9 @@ fn write_atomic_checked_resolving_with(
                 destination_permissions(&destination)?;
             }
             #[cfg(test)]
-            if let Some(hook) = hooks.before_publish.take() { hook(); }
+            if let Some(hook) = hooks.before_publish.take() {
+                hook();
+            }
             if expected.is_some() {
                 fs::rename(&temporary.path, &destination).map_err(SaveFailure::io)?;
                 temporary.active = false;
@@ -364,11 +417,15 @@ fn write_atomic_checked_resolving_with(
                 fs::hard_link(&temporary.path, &destination).map_err(|error| {
                     if error.kind() == io::ErrorKind::AlreadyExists {
                         SaveFailure::conflict(
-                            "changed", observed_version(&destination).ok().flatten(),
+                            "changed",
+                            observed_version(&destination).ok().flatten(),
                             "Another writer created the selected save destination.",
                         )
                     } else {
-                        SaveFailure::io(context("atomic create-only publication failed (no fallback)", error))
+                        SaveFailure::io(context(
+                            "atomic create-only publication failed (no fallback)",
+                            error,
+                        ))
                     }
                 })?;
             }
@@ -377,21 +434,31 @@ fn write_atomic_checked_resolving_with(
         if let Err(mut failure) = commit {
             if let Err(cleanup) = temporary.cleanup() {
                 failure.error.push_str(&format!(
-                    "; could not remove temporary file '{}': {cleanup}", temporary.path.display()
+                    "; could not remove temporary file '{}': {cleanup}",
+                    temporary.path.display()
                 ));
             }
             return Err(failure);
         }
         // From here onward bytes committed, including create-only link success.
-        let cleanup_error = if temporary.active { temporary.cleanup().err() } else { None };
+        let cleanup_error = if temporary.active {
+            temporary.cleanup().err()
+        } else {
+            None
+        };
         #[cfg(unix)]
         let sync_result = directory.sync_all();
         #[cfg(not(unix))]
         let sync_result: io::Result<()> = Ok(());
         #[cfg(test)]
         let sync_result = if hooks.fail_directory_sync {
-            Err(io::Error::new(io::ErrorKind::Other, "injected parent-directory sync failure"))
-        } else { sync_result };
+            Err(io::Error::new(
+                io::ErrorKind::Other,
+                "injected parent-directory sync failure",
+            ))
+        } else {
+            sync_result
+        };
         let postcommit_error = cleanup_error.or_else(|| sync_result.err());
         Ok(CheckedSaveResult {
             status: "saved",
@@ -955,7 +1022,6 @@ mod tests {
         assert_eq!(fixture.entries(), vec![path]);
     }
 
-
     #[test]
     fn concurrent_saves_publish_only_complete_versions_and_leave_no_temporaries() {
         use std::sync::atomic::AtomicUsize;
@@ -1002,7 +1068,6 @@ mod tests {
         assert!(payloads.contains(&fs::read(&path).unwrap()));
         assert_eq!(fixture.entries(), vec![path]);
     }
-
 }
 
 #[cfg(test)]

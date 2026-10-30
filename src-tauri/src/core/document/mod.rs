@@ -6,6 +6,4 @@ mod types;
 mod wrap;
 
 pub(crate) use store::WorkflowDocumentStore;
-pub(crate) use types::{
-    WorkflowCommandDto, WorkflowCommandResultDto, WorkflowDocumentSnapshotDto,
-};
+pub(crate) use types::{WorkflowCommandDto, WorkflowCommandResultDto, WorkflowDocumentSnapshotDto};

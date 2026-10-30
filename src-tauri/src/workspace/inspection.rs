@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
-use std::sync::{Arc, LazyLock, Mutex};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::io;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::core::model::{DataModelEntryDto, Workflow, WorkflowDto, WorkflowIndex};
 use crate::core::scxml::parse_scxml;
@@ -57,8 +57,11 @@ pub(crate) fn inspect_workflow_source(
     directories: &[BehaviorDirectoryMapping],
     current_file_path: Option<&str>,
 ) -> Result<WorkflowInspectionResult, String> {
-    inspect_workflow_source_captured(src, directories, current_file_path)
-        .map_err(|failure| failure.error.unwrap_or_else(|| "Workflow inspection failed.".to_string()))
+    inspect_workflow_source_captured(src, directories, current_file_path).map_err(|failure| {
+        failure
+            .error
+            .unwrap_or_else(|| "Workflow inspection failed.".to_string())
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -161,7 +164,8 @@ fn inspect_resolved(
     if !metadata.is_file() {
         return Err(WorkflowRevalidationResult {
             state: RevalidationState::Invalid,
-            file_version: None, inspection: None,
+            file_version: None,
+            inspection: None,
             error: Some(format!("Workflow source '{path}' is not a regular file.")),
             path: Some(path),
         });
@@ -169,14 +173,19 @@ fn inspect_resolved(
     // Read/hash on every inspection, even when length and mtime match. Parsing
     // and the version both describe exactly this one byte image.
     let bytes = std::fs::read(&resolved.path).map_err(WorkflowRevalidationResult::io)?;
-    if std::fs::canonicalize(&resolved.path).map_err(WorkflowRevalidationResult::io)? != resolved.path {
+    if std::fs::canonicalize(&resolved.path).map_err(WorkflowRevalidationResult::io)?
+        != resolved.path
+    {
         return Err(WorkflowRevalidationResult::io(io::Error::new(
-            io::ErrorKind::Other, "Workflow destination was retargeted during its captured read.",
+            io::ErrorKind::Other,
+            "Workflow destination was retargeted during its captured read.",
         )));
     }
     let version = file_version(&resolved.path, &bytes);
     {
-        let guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let guard = cache()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(cached) = guard.get(&resolved.path) {
             if cached.file_version == version {
                 return Ok(Arc::clone(cached));
@@ -185,15 +194,20 @@ fn inspect_resolved(
     }
     let content = String::from_utf8(bytes).map_err(|error| {
         WorkflowRevalidationResult::invalid(
-            format!("Workflow source '{path}' is not UTF-8: {error}"), path.clone(), version.clone()
+            format!("Workflow source '{path}' is not UTF-8: {error}"),
+            path.clone(),
+            version.clone(),
         )
     })?;
     let workflow = parse_scxml(&content).map_err(|error| {
         WorkflowRevalidationResult::invalid(error, path.clone(), version.clone())
     })?;
     let result = WorkflowInspectionResult {
-        file_name: resolved.path.file_name()
-            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+        file_name: resolved
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default(),
         path,
         file_version: version,
         root_key: None,
@@ -204,7 +218,9 @@ fn inspect_resolved(
         content,
     };
     let result = Arc::new(result);
-    let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if generation == INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst) {
         guard.insert(resolved.path.clone(), Arc::clone(&result));
     }
@@ -218,11 +234,15 @@ pub(crate) fn revalidate_workflow_sources(
     directories: &[BehaviorDirectoryMapping],
 ) -> Result<Vec<WorkflowRevalidationResult>, String> {
     if requests.len() > MAX_REVALIDATION_REQUESTS {
-        return Err(format!("At most {MAX_REVALIDATION_REQUESTS} workflow sources may be revalidated per batch."));
+        return Err(format!(
+            "At most {MAX_REVALIDATION_REQUESTS} workflow sources may be revalidated per batch."
+        ));
     }
     // One bounded batch, sequential IO (concurrency 1), no recursive library
     // traversal or per-source worker/timer. Resolution is repeated each pass.
-    let mut captured = HashMap::<PathBuf, Result<Arc<WorkflowInspectionResult>, WorkflowRevalidationResult>>::new();
+    let mut captured =
+        HashMap::<PathBuf, Result<Arc<WorkflowInspectionResult>, WorkflowRevalidationResult>>::new(
+        );
     Ok(requests.iter().map(|request| {
         let mut inspect = || -> Result<(Arc<WorkflowInspectionResult>, Option<String>), WorkflowRevalidationResult> {
             let resolved = resolve_workflow_source_path_io(
@@ -289,9 +309,7 @@ fn collect_behavior_exit_events(workflow: &Workflow) -> Vec<String> {
     result
 }
 
-fn collect_inherited_slot_declarations(
-    workflow: &Workflow,
-) -> Vec<InheritedSlotDeclarationDto> {
+fn collect_inherited_slot_declarations(workflow: &Workflow) -> Vec<InheritedSlotDeclarationDto> {
     let mut seen_paths = HashSet::new();
     let mut result = Vec::new();
 
@@ -396,7 +414,10 @@ mod tests {
         });
 
         let workflow = Workflow::from_dto(workflow).unwrap();
-        assert_eq!(collect_behavior_exit_events(&workflow), vec!["behavior.success"]);
+        assert_eq!(
+            collect_behavior_exit_events(&workflow),
+            vec!["behavior.success"]
+        );
     }
 
     #[test]

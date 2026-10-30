@@ -168,7 +168,8 @@ mod tests {
                 "inputSlots": [{"key": "Entity", "typeName": "EntitySlot", "path": "/entity"}],
                 "outputSlots": [{"key": "Entity", "typeName": "EntitySlot", "path": "/entity"}]
             }]
-        })).unwrap();
+        }))
+        .unwrap();
         let workflow = build_workflow_from_editor(&request).unwrap();
         assert_eq!(workflow.states[0].input_slots.len(), 1);
         assert_eq!(workflow.states[0].output_slots.len(), 1);

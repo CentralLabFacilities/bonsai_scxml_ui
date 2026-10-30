@@ -16,7 +16,10 @@ impl XmlNode {
         self.attributes.get(name).map(String::as_str)
     }
 
-    pub fn direct_children<'a>(&'a self, local_name: &str) -> impl Iterator<Item = &'a XmlNode> + 'a {
+    pub fn direct_children<'a>(
+        &'a self,
+        local_name: &str,
+    ) -> impl Iterator<Item = &'a XmlNode> + 'a {
         let local_name = local_name.to_string();
         self.children
             .iter()
@@ -26,13 +29,10 @@ impl XmlNode {
     pub fn first_direct_child(&self, local_name: &str) -> Option<&XmlNode> {
         self.direct_children(local_name).next()
     }
-
 }
 
 pub(super) fn parse_document(input: &str) -> Result<XmlNode, String> {
-    let normalized = input
-        .replace("<!-->", "<!--")
-        .replace("</-->", "-->");
+    let normalized = input.replace("<!-->", "<!--").replace("</-->", "-->");
     let bytes = normalized.as_bytes();
     let mut cursor = 0usize;
     let mut stack: Vec<XmlNode> = Vec::new();
@@ -174,12 +174,14 @@ fn parse_opening_tag(raw: &str) -> Result<XmlNode, String> {
 
         let attribute_name = read_name(raw, &mut cursor);
         if attribute_name.is_empty() {
-            return Err(format!("Invalid attribute syntax in <{name}>") );
+            return Err(format!("Invalid attribute syntax in <{name}>"));
         }
 
         skip_whitespace(raw, &mut cursor);
         if raw.as_bytes().get(cursor) != Some(&b'=') {
-            return Err(format!("Attribute '{attribute_name}' in <{name}> is missing '='"));
+            return Err(format!(
+                "Attribute '{attribute_name}' in <{name}> is missing '='"
+            ));
         }
         cursor += 1;
         skip_whitespace(raw, &mut cursor);
@@ -189,7 +191,9 @@ fn parse_opening_tag(raw: &str) -> Result<XmlNode, String> {
             .get(cursor)
             .ok_or_else(|| format!("Attribute '{attribute_name}' in <{name}> has no value"))?;
         if quote != b'\'' && quote != b'"' {
-            return Err(format!("Attribute '{attribute_name}' in <{name}> must be quoted"));
+            return Err(format!(
+                "Attribute '{attribute_name}' in <{name}> must be quoted"
+            ));
         }
         cursor += 1;
         let value_start = cursor;
@@ -198,7 +202,9 @@ fn parse_opening_tag(raw: &str) -> Result<XmlNode, String> {
             cursor += 1;
         }
         if cursor >= raw.len() {
-            return Err(format!("Attribute '{attribute_name}' in <{name}> is not terminated"));
+            return Err(format!(
+                "Attribute '{attribute_name}' in <{name}> is not terminated"
+            ));
         }
 
         let value = decode_xml_entities(&raw[value_start..cursor])?;

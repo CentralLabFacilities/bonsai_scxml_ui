@@ -242,7 +242,10 @@ pub(crate) fn analyze_container_outgoing_transitions(
     let Some(selected_container) = nodes_by_id.get(selected_container_id).copied() else {
         return Vec::new();
     };
-    if !matches!(selected_container.node_type.as_str(), "compound" | "parallel") {
+    if !matches!(
+        selected_container.node_type.as_str(),
+        "compound" | "parallel"
+    ) {
         return Vec::new();
     }
 
@@ -298,15 +301,24 @@ pub(crate) fn analyze_container_outgoing_transitions(
                 continue;
             }
 
-            let boundary_edge = request.edges.iter().find(|edge| {
-                edge.source == anchor.id && edge.source_handle == event.id
-            });
+            let boundary_edge = request
+                .edges
+                .iter()
+                .find(|edge| edge.source == anchor.id && edge.source_handle == event.id);
             let Some(boundary_edge) = boundary_edge else {
                 continue;
             };
 
             let edge_id = if boundary_edge.id.is_empty() {
-                format!("boundary-{}-{}", anchor.id, if event.id.is_empty() { index.to_string() } else { event.id.clone() })
+                format!(
+                    "boundary-{}-{}",
+                    anchor.id,
+                    if event.id.is_empty() {
+                        index.to_string()
+                    } else {
+                        event.id.clone()
+                    }
+                )
             } else {
                 boundary_edge.id.clone()
             };

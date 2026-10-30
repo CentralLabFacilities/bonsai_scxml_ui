@@ -60,11 +60,7 @@ impl Workflow {
             initial_scxml_state_id: self.initial_scxml_state_id.clone(),
             states: self.states.iter().map(State::to_dto).collect(),
             transitions: self.transitions.iter().map(Transition::to_dto).collect(),
-            data_model: self
-                .data_model
-                .iter()
-                .map(DataModelEntry::to_dto)
-                .collect(),
+            data_model: self.data_model.iter().map(DataModelEntry::to_dto).collect(),
             slot_declarations: self
                 .slot_declarations
                 .iter()
@@ -91,7 +87,11 @@ impl State {
             events: dto.events.into_iter().map(ExitEvent::from_dto).collect(),
             input_slots: dto.input_slots.into_iter().map(Slot::from_dto).collect(),
             output_slots: dto.output_slots.into_iter().map(Slot::from_dto).collect(),
-            parameters: dto.parameters.into_iter().map(Parameter::from_dto).collect(),
+            parameters: dto
+                .parameters
+                .into_iter()
+                .map(Parameter::from_dto)
+                .collect(),
             on_entry: dto.on_entry.into_iter().map(Assignment::from_dto).collect(),
             on_exit: dto.on_exit.into_iter().map(Assignment::from_dto).collect(),
             editor: EditorMetadata::from_dto(dto.editor),
@@ -106,10 +106,7 @@ impl State {
             kind: self.kind.into(),
             full_skill_name: self.full_skill_name.clone(),
             source: self.source.clone(),
-            parent_id: self
-                .parent_id
-                .as_ref()
-                .map(|id| id.as_str().to_string()),
+            parent_id: self.parent_id.as_ref().map(|id| id.as_str().to_string()),
             initial_child_id: self
                 .initial_child_id
                 .as_ref()

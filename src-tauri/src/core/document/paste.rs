@@ -136,11 +136,16 @@ pub(super) fn paste_editor_subgraph(
 
     let transition_id_map = transition_mappings
         .into_iter()
-        .filter(|mapping| !mapping.source_id.trim().is_empty() && !mapping.target_id.trim().is_empty())
+        .filter(|mapping| {
+            !mapping.source_id.trim().is_empty() && !mapping.target_id.trim().is_empty()
+        })
         .map(|mapping| {
             (
                 TransitionId::from(mapping.source_id),
-                (TransitionId::from(mapping.target_id), mapping.target_instance_id),
+                (
+                    TransitionId::from(mapping.target_id),
+                    mapping.target_instance_id,
+                ),
             )
         })
         .collect::<HashMap<_, _>>();
@@ -215,10 +220,13 @@ pub(super) fn paste_editor_subgraph(
         let pasted_logical_sources = logical_sources
             .into_iter()
             .filter_map(|source| {
-                state_id_map.get(&source.state_id).cloned().map(|state_id| TransitionSource {
-                    state_id,
-                    handle: source.handle,
-                })
+                state_id_map
+                    .get(&source.state_id)
+                    .cloned()
+                    .map(|state_id| TransitionSource {
+                        state_id,
+                        handle: source.handle,
+                    })
             })
             .collect::<Vec<_>>();
 
@@ -243,17 +251,17 @@ pub(super) fn paste_editor_subgraph(
         let mapped_transition = transition_id_map.get(&source_transition.id);
         cloned.id = if let Some((mapped_id, _)) = mapped_transition {
             let raw = mapped_id.as_str().to_string();
-            if original.transitions.iter().any(|transition| transition.id == raw.as_str())
+            if original
+                .transitions
+                .iter()
+                .any(|transition| transition.id == raw.as_str())
                 || !used_transition_ids.insert(raw.clone())
             {
                 return Err(format!("Pasted transition id '{raw}' already exists"));
             }
             TransitionId::from(raw)
         } else {
-            next_generated_transition_id(
-                &mut used_transition_ids,
-                source_transition.id.as_str(),
-            )
+            next_generated_transition_id(&mut used_transition_ids, source_transition.id.as_str())
         };
         cloned.logical_sources = pasted_logical_sources;
         cloned.target_state_id = target_state_id.clone();
@@ -352,7 +360,10 @@ mod tests {
     #[test]
     fn clones_internal_transition_and_allocates_skill_instances() {
         let mut workflow = Workflow::default();
-        workflow.states = vec![state("a", "skills.Talk", None, true), state("b", "skills.Listen", None, false)];
+        workflow.states = vec![
+            state("a", "skills.Talk", None, true),
+            state("b", "skills.Listen", None, false),
+        ];
         workflow.initial_state_id = Some(StateId::from("a"));
         workflow.initial_scxml_state_id = Some("skills.Talk".into());
         workflow.transitions = vec![Transition {
@@ -360,7 +371,10 @@ mod tests {
             source_state_id: StateId::from("a"),
             target_state_id: Some(StateId::from("b")),
             target_scxml_id: "skills.Listen".into(),
-            logical_sources: vec![TransitionSource { state_id: StateId::from("a"), handle: "success".into() }],
+            logical_sources: vec![TransitionSource {
+                state_id: StateId::from("a"),
+                handle: "success".into(),
+            }],
             event: "success".into(),
             condition: String::new(),
             assignments: Vec::new(),
@@ -371,8 +385,14 @@ mod tests {
         let changes = paste_editor_subgraph(
             &mut workflow,
             vec![
-                PasteEditorIdMappingDto { source_id: "a".into(), target_id: "a-copy".into() },
-                PasteEditorIdMappingDto { source_id: "b".into(), target_id: "b-copy".into() },
+                PasteEditorIdMappingDto {
+                    source_id: "a".into(),
+                    target_id: "a-copy".into(),
+                },
+                PasteEditorIdMappingDto {
+                    source_id: "b".into(),
+                    target_id: "b-copy".into(),
+                },
             ],
             vec![PasteEditorTransitionMappingDto {
                 source_id: "edge-a-b".into(),
@@ -380,15 +400,32 @@ mod tests {
                 target_instance_id: None,
             }],
             vec![],
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(changes.changed_state_ids.contains(&"a-copy".to_string()));
-        assert!(changes.changed_transition_ids.contains(&"edge-copy".to_string()));
-        let copied_a = workflow.states.iter().find(|state| state.id == "a-copy").unwrap();
+        assert!(changes
+            .changed_transition_ids
+            .contains(&"edge-copy".to_string()));
+        let copied_a = workflow
+            .states
+            .iter()
+            .find(|state| state.id == "a-copy")
+            .unwrap();
         assert_eq!(copied_a.full_skill_name.as_deref(), Some("skills.Talk#1"));
         assert!(!copied_a.is_initial);
-        let copied_transition = workflow.transitions.iter().find(|transition| transition.id == "edge-copy").unwrap();
-        assert_eq!(copied_transition.target_state_id.as_ref().map(StateId::as_str), Some("b-copy"));
+        let copied_transition = workflow
+            .transitions
+            .iter()
+            .find(|transition| transition.id == "edge-copy")
+            .unwrap();
+        assert_eq!(
+            copied_transition
+                .target_state_id
+                .as_ref()
+                .map(StateId::as_str),
+            Some("b-copy")
+        );
         assert_eq!(copied_transition.logical_sources[0].state_id, "a-copy");
     }
 }

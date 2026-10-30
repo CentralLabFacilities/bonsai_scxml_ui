@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use super::helpers::{focus_node, normalize_slot_path, normalize_slot_type, problem, slot_name, slot_node_label};
+use super::helpers::{
+    focus_node, normalize_slot_path, normalize_slot_type, problem, slot_name, slot_node_label,
+};
 use super::types::{EditorProblemDto, ValidationNodeDto, ValidationRequestDto, ValidationSlotDto};
 
 pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<EditorProblemDto>) {
@@ -38,7 +40,10 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
                 problems.push(item);
                 continue;
             }
-            readers.entry(path).or_default().push(SlotAccess { node, slot, index });
+            readers
+                .entry(path)
+                .or_default()
+                .push(SlotAccess { node, slot, index });
         }
 
         for (index, slot) in node.output_slots.iter().enumerate() {
@@ -64,7 +69,10 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
                 problems.push(item);
                 continue;
             }
-            writers.entry(path).or_default().push(SlotAccess { node, slot, index });
+            writers
+                .entry(path)
+                .or_default()
+                .push(SlotAccess { node, slot, index });
         }
     }
 
@@ -81,11 +89,7 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
         .filter(|path| !path.is_empty())
         .collect();
 
-    let paths: HashSet<String> = readers
-        .keys()
-        .chain(writers.keys())
-        .cloned()
-        .collect();
+    let paths: HashSet<String> = readers.keys().chain(writers.keys()).cloned().collect();
 
     for path in paths {
         let path_readers = readers.get(&path).cloned().unwrap_or_default();

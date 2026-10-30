@@ -5,8 +5,8 @@ use crate::core::model::{StateKind, Workflow};
 use super::helpers::normalize_slot_type;
 
 use super::types::{
-    ActiveValidationRequestDto, ValidationAssignmentDto, ValidationEdgeDto,
-    ValidationEventDto, ValidationNodeDto, ValidationNodeOverlayDto, ValidationParameterDto, ValidationRequestDto,
+    ActiveValidationRequestDto, ValidationAssignmentDto, ValidationEdgeDto, ValidationEventDto,
+    ValidationNodeDto, ValidationNodeOverlayDto, ValidationParameterDto, ValidationRequestDto,
     ValidationSlotDefinitionDto, ValidationSlotDto, ValidationVariableDto,
 };
 
@@ -148,9 +148,7 @@ pub(crate) fn build_active_validation_request(
                 source: state.source.clone().unwrap_or_default(),
                 is_initial: state.is_initial,
                 is_final: state.is_final || matches!(state.kind, StateKind::Final),
-                is_behavior_exit: overlay
-                    .map(|value| value.is_behavior_exit)
-                    .unwrap_or(false)
+                is_behavior_exit: overlay.map(|value| value.is_behavior_exit).unwrap_or(false)
                     || behavior_exit_ids.contains(state.id.as_str()),
                 is_collapsed: overlay
                     .map(|value| value.is_collapsed)
@@ -366,8 +364,16 @@ mod tests {
         .unwrap();
         for state in &mut workflow.states {
             state.input_slots = vec![
-                Slot { key: "text".into(), type_name: "String".into(), ..Default::default() },
-                Slot { key: "text".into(), type_name: "Model".into(), ..Default::default() },
+                Slot {
+                    key: "text".into(),
+                    type_name: "String".into(),
+                    ..Default::default()
+                },
+                Slot {
+                    key: "text".into(),
+                    type_name: "Model".into(),
+                    ..Default::default()
+                },
                 Slot {
                     key: "retained".into(),
                     type_name: "String".into(),
@@ -390,7 +396,12 @@ mod tests {
         }
     }
 
-    fn has_empty(request: &ValidationRequestDto, node_id: &str, direction: &str, index: usize) -> bool {
+    fn has_empty(
+        request: &ValidationRequestDto,
+        node_id: &str,
+        direction: &str,
+        index: usize,
+    ) -> bool {
         validate_editor_graph(request)
             .iter()
             .any(|problem| problem.id == format!("slot-{direction}-empty-{node_id}-{index}"))
@@ -483,13 +494,19 @@ mod tests {
                     input_slot_definitions: vec![valid.clone()],
                     ..Default::default()
                 },
-                ValidationNodeOverlayDto { id: node_id.into(), ..Default::default() },
+                ValidationNodeOverlayDto {
+                    id: node_id.into(),
+                    ..Default::default()
+                },
             ],
         ] {
-            let request = build_active_validation_request(&workflow, &ActiveValidationRequestDto {
-                node_overlays: overlays,
-                ..Default::default()
-            });
+            let request = build_active_validation_request(
+                &workflow,
+                &ActiveValidationRequestDto {
+                    node_overlays: overlays,
+                    ..Default::default()
+                },
+            );
             assert!(has_empty(&request, node_id, "input", 0));
         }
     }
@@ -520,10 +537,19 @@ mod tests {
             assert_eq!(slots[2].key, "retained");
             assert_eq!(slots[2].path, "/bound");
             assert_eq!(slots[2].type_name, "String");
-            assert!(request.inherited_slot_paths.iter().any(|path| path == "outer"));
+            assert!(request
+                .inherited_slot_paths
+                .iter()
+                .any(|path| path == "outer"));
         }
-        assert_eq!(workflow.states[1].input_slots[2].inherited.as_deref(), Some("/outer"));
-        assert_eq!(workflow.states[1].input_slots[2].description, "Authored binding");
+        assert_eq!(
+            workflow.states[1].input_slots[2].inherited.as_deref(),
+            Some("/outer")
+        );
+        assert_eq!(
+            workflow.states[1].input_slots[2].description,
+            "Authored binding"
+        );
         assert_eq!(serialize_scxml(&workflow).unwrap(), saved_before);
     }
 
@@ -533,42 +559,76 @@ mod tests {
         workflow.states[0].input_slots.clear();
         workflow.states[0].output_slots[0].path = "/shared".into();
         workflow.states[1].input_slots = vec![
-            Slot { key: "text".into(), type_name: "Model".into(), path: "/shared".into(), ..Default::default() },
-            Slot { key: "text".into(), type_name: "String".into(), path: "/orphan".into(), ..Default::default() },
-            Slot { key: "text".into(), type_name: "String".into(), path: "/outer".into(), inherited: Some("/outer".into()), ..Default::default() },
+            Slot {
+                key: "text".into(),
+                type_name: "Model".into(),
+                path: "/shared".into(),
+                ..Default::default()
+            },
+            Slot {
+                key: "text".into(),
+                type_name: "String".into(),
+                path: "/orphan".into(),
+                ..Default::default()
+            },
+            Slot {
+                key: "text".into(),
+                type_name: "String".into(),
+                path: "/outer".into(),
+                inherited: Some("/outer".into()),
+                ..Default::default()
+            },
         ];
         workflow.states[1].output_slots.clear();
         let writer_id = workflow.states[0].id.as_str();
         let reader_id = workflow.states[1].id.as_str();
-        let request = build_active_validation_request(&workflow, &ActiveValidationRequestDto {
-            node_overlays: vec![
-                ValidationNodeOverlayDto {
-                    id: writer_id.into(),
-                    output_slot_definitions: vec![descriptor(0, "String")],
-                    ..Default::default()
-                },
-                ValidationNodeOverlayDto {
-                    id: reader_id.into(),
-                    input_slot_definitions: vec![
-                        descriptor(0, "Model"), descriptor(1, "String"), descriptor(2, "String"),
-                    ],
-                    ..Default::default()
-                },
-            ],
-            ancestor_writer_slot_paths: vec!["/outer".into()],
-            ..Default::default()
-        });
+        let request = build_active_validation_request(
+            &workflow,
+            &ActiveValidationRequestDto {
+                node_overlays: vec![
+                    ValidationNodeOverlayDto {
+                        id: writer_id.into(),
+                        output_slot_definitions: vec![descriptor(0, "String")],
+                        ..Default::default()
+                    },
+                    ValidationNodeOverlayDto {
+                        id: reader_id.into(),
+                        input_slot_definitions: vec![
+                            descriptor(0, "Model"),
+                            descriptor(1, "String"),
+                            descriptor(2, "String"),
+                        ],
+                        ..Default::default()
+                    },
+                ],
+                ancestor_writer_slot_paths: vec!["/outer".into()],
+                ..Default::default()
+            },
+        );
         assert!(request.nodes[0].output_slots[0].definition_missing);
-        assert!(request.nodes[1].input_slots.iter().all(|slot| slot.definition_missing));
+        assert!(request.nodes[1]
+            .input_slots
+            .iter()
+            .all(|slot| slot.definition_missing));
         let problems = validate_editor_graph(&request);
-        let mismatch = problems.iter().find(|problem| problem.title == "Slot type mismatch").unwrap();
+        let mismatch = problems
+            .iter()
+            .find(|problem| problem.title == "Slot type mismatch")
+            .unwrap();
         assert_eq!(mismatch.node_id.as_deref(), Some(reader_id));
-        assert_eq!(mismatch.focus_node_ids, vec![writer_id.to_string(), reader_id.to_string()]);
-        assert!(problems.iter().any(|problem| problem.id == "slot-no-writer-orphan"));
-        assert!(!problems.iter().any(|problem| problem.id == "slot-no-writer-shared"
-            || problem.id == "slot-no-writer-outer"
-            || problem.id.starts_with("slot-input-empty-")
-            || problem.id.starts_with("slot-output-empty-")));
+        assert_eq!(
+            mismatch.focus_node_ids,
+            vec![writer_id.to_string(), reader_id.to_string()]
+        );
+        assert!(problems
+            .iter()
+            .any(|problem| problem.id == "slot-no-writer-orphan"));
+        assert!(!problems
+            .iter()
+            .any(|problem| problem.id == "slot-no-writer-shared"
+                || problem.id == "slot-no-writer-outer"
+                || problem.id.starts_with("slot-input-empty-")
+                || problem.id.starts_with("slot-output-empty-")));
         assert_eq!(request.nodes[1].input_slots[1].path, "/orphan");
     }
 }

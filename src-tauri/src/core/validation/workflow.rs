@@ -11,9 +11,7 @@ pub(super) fn validate_workflow(
         .nodes
         .iter()
         .filter(|node| {
-            node.parent_id.is_none()
-                && node.node_type != "slot"
-                && node.node_type != "parallelLane"
+            node.parent_id.is_none() && node.node_type != "slot" && node.node_type != "parallelLane"
         })
         .collect();
 
@@ -61,9 +59,7 @@ pub(super) fn validate_workflow(
             .flatten()
             .copied()
             .filter(|node| {
-                node.node_type != "slot"
-                    && node.node_type != "parallelLane"
-                    && !node.is_reference
+                node.node_type != "slot" && node.node_type != "parallelLane" && !node.is_reference
             })
             .collect();
         let initial_children: Vec<&ValidationNodeDto> = children

@@ -89,7 +89,6 @@ pub(crate) struct TargetedTransitionCommandDto {
     pub target_instance_id: Option<String>,
 }
 
-
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ParallelLaneMoveContextDto {
@@ -101,7 +100,6 @@ pub(crate) struct ParallelLaneMoveContextDto {
     pub member_state_ids: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WrapEditorGroupDto {
@@ -112,14 +110,12 @@ pub(crate) struct WrapEditorGroupDto {
     pub state_ids: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PasteEditorIdMappingDto {
     pub source_id: String,
     pub target_id: String,
 }
-
 
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

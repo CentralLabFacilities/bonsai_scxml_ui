@@ -155,14 +155,14 @@ impl<'a> ExportIndex<'a> {
                     // be moved to the lane. Transitions internal to the
                     // Parallel retain their existing owner semantics.
                     if let Some(parallel_id) = parent.parent_id.as_deref() {
-                        if self.nodes_by_id.get(parallel_id)
+                        if self
+                            .nodes_by_id
+                            .get(parallel_id)
                             .is_some_and(|parallel| parallel.node_type == "parallel")
                             && !self.is_inside_container(target_id, parallel_id)
                         {
                             let semantic_lane_id = self.semantic_state_id(&parent.id);
-                            owner = self.nodes_by_id
-                                .get(semantic_lane_id.as_str())?
-                                .id.as_str();
+                            owner = self.nodes_by_id.get(semantic_lane_id.as_str())?.id.as_str();
                             exited_parallel_via_lane.insert(parallel_id);
                         }
                     }
@@ -182,7 +182,6 @@ impl<'a> ExportIndex<'a> {
 
         Some(owner)
     }
-
 }
 
 #[cfg(test)]

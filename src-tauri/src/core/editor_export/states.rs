@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::model::{
-    EditorEdgeTargetDto, EditorMetadataDto, EditorPositionDto, ParameterDto, StateDto,
-    StateKindDto,
+    EditorEdgeTargetDto, EditorMetadataDto, EditorPositionDto, ParameterDto, StateDto, StateKindDto,
 };
 
 use super::{
@@ -106,14 +105,17 @@ fn state_from_editor_node(
 pub(crate) fn build_inserted_state(node: &EditorExportNodeDto) -> StateDto {
     let kind = node_kind(node);
     let allows_initial_child = matches!(kind, StateKindDto::Compound | StateKindDto::ParallelLane);
-    let initial_child_scxml_id = (allows_initial_child && !node.initial_sub_state.trim().is_empty())
-        .then(|| node.initial_sub_state.clone());
+    let initial_child_scxml_id = (allows_initial_child
+        && !node.initial_sub_state.trim().is_empty())
+    .then(|| node.initial_sub_state.clone());
 
     state_from_editor_node(
         node,
         kind,
         node.parent_id.clone(),
-        allows_initial_child.then(|| node.initial_child_id.clone()).flatten(),
+        allows_initial_child
+            .then(|| node.initial_child_id.clone())
+            .flatten(),
         initial_child_scxml_id,
         Vec::new(),
     )
@@ -142,7 +144,8 @@ pub(super) fn build_states(
             };
         }
 
-        let allows_initial_child = matches!(kind, StateKindDto::Compound | StateKindDto::ParallelLane);
+        let allows_initial_child =
+            matches!(kind, StateKindDto::Compound | StateKindDto::ParallelLane);
         let requested_initial_id = node
             .initial_child_id
             .as_deref()
@@ -160,9 +163,12 @@ pub(super) fn build_states(
             .then(|| initial_child.map(|child| child.id.clone()))
             .flatten();
         let initial_child_scxml_id = allows_initial_child
-            .then(|| initial_child.map(state_name).or_else(|| {
-                (!node.initial_sub_state.trim().is_empty()).then(|| node.initial_sub_state.clone())
-            }))
+            .then(|| {
+                initial_child.map(state_name).or_else(|| {
+                    (!node.initial_sub_state.trim().is_empty())
+                        .then(|| node.initial_sub_state.clone())
+                })
+            })
             .flatten();
 
         states.push(state_from_editor_node(

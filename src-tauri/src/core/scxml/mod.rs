@@ -41,7 +41,10 @@ mod tests {
     #[test]
     fn parses_core_workflow_semantics() {
         let workflow = parse_scxml(SAMPLE).expect("SCXML should parse");
-        assert_eq!(workflow.initial_scxml_state_id.as_deref(), Some("ExecSetup"));
+        assert_eq!(
+            workflow.initial_scxml_state_id.as_deref(),
+            Some("ExecSetup")
+        );
         assert_eq!(workflow.data_model.len(), 1);
         assert_eq!(workflow.slot_declarations.len(), 2);
         assert_eq!(workflow.states.len(), 3);
@@ -60,12 +63,15 @@ mod tests {
     #[test]
     fn reads_legacy_and_prefixed_editor_metadata_and_writes_only_prefixed() {
         let legacy = SAMPLE;
-        let prefixed = legacy.replace("<metadata>", "<editor:metadata>")
+        let prefixed = legacy
+            .replace("<metadata>", "<editor:metadata>")
             .replace("</metadata>", "</editor:metadata>");
 
         for source in [legacy, prefixed.as_str()] {
             let workflow = parse_scxml(source).expect("both metadata formats must parse");
-            let state = workflow.states.iter()
+            let state = workflow
+                .states
+                .iter()
                 .find(|state| state.scxml_id == "ExecSetup")
                 .expect("compound state");
             assert_eq!(state.editor.x, 100.0);
@@ -76,9 +82,16 @@ mod tests {
             assert!(saved.contains("</editor:metadata>"));
             assert!(!saved.contains("<metadata>"));
             let reopened = parse_scxml(&saved).expect("prefixed output must reopen");
-            assert_eq!(reopened.states.iter()
-                .find(|state| state.scxml_id == "ExecSetup")
-                .unwrap().editor.x, 100.0);
+            assert_eq!(
+                reopened
+                    .states
+                    .iter()
+                    .find(|state| state.scxml_id == "ExecSetup")
+                    .unwrap()
+                    .editor
+                    .x,
+                100.0
+            );
         }
     }
 

@@ -125,10 +125,13 @@ fn check_revision(state: &StoreState, expected_revision: Option<u64>) -> Result<
 }
 
 fn snapshot_from_state(state: &StoreState) -> Option<WorkflowDocumentSnapshotDto> {
-    state.active.as_ref().map(|stored| WorkflowDocumentSnapshotDto {
-        revision: state.revision,
-        workflow: stored.workflow.to_dto(),
-    })
+    state
+        .active
+        .as_ref()
+        .map(|stored| WorkflowDocumentSnapshotDto {
+            revision: state.revision,
+            workflow: stored.workflow.to_dto(),
+        })
 }
 
 fn command_result(
@@ -213,11 +216,11 @@ fn command_result(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::types::{
         ParallelLaneMoveContextDto, StateSlotsCommandDto, TargetedTransitionCommandDto,
         WrapEditorGroupDto,
     };
+    use super::*;
     use crate::core::editor_export::{
         build_workflow_from_editor,
         types::{
@@ -350,7 +353,10 @@ mod tests {
         assert_eq!(result.revision, 2);
 
         let snapshot = store.snapshot().unwrap().unwrap();
-        assert_eq!(snapshot.workflow.initial_state_id.as_deref(), Some("parallel"));
+        assert_eq!(
+            snapshot.workflow.initial_state_id.as_deref(),
+            Some("parallel")
+        );
         assert_eq!(snapshot.workflow.states.len(), 3);
         for lane_id in ["lane-1", "lane-2"] {
             let lane = snapshot
@@ -446,7 +452,6 @@ mod tests {
         assert_eq!(replacement.logical_sources[0].state_id, "a");
         assert_eq!(replacement.logical_sources[0].handle, "error");
     }
-
 
     #[test]
     fn replacing_nested_targeted_transitions_lets_rust_own_hoisting() {
@@ -570,7 +575,10 @@ mod tests {
         assert!(child.is_initial);
         assert_eq!(child.editor.x, 42.0);
         assert_eq!(child.editor.y, 84.0);
-        assert_eq!(snapshot.workflow.states[0].initial_child_id.as_deref(), Some("child"));
+        assert_eq!(
+            snapshot.workflow.states[0].initial_child_id.as_deref(),
+            Some("child")
+        );
     }
 
     #[test]
@@ -616,14 +624,14 @@ mod tests {
 
         assert_eq!(result.patch.removed_state_ids, vec!["child"]);
         assert_eq!(result.patch.removed_transition_ids, vec!["hoisted"]);
-        assert!(result
-            .patch
-            .states
-            .iter()
-            .any(|state| state.id == "a"));
+        assert!(result.patch.states.iter().any(|state| state.id == "a"));
 
         let snapshot = store.snapshot().unwrap().unwrap();
-        assert!(snapshot.workflow.states.iter().all(|state| state.id != "child"));
+        assert!(snapshot
+            .workflow
+            .states
+            .iter()
+            .all(|state| state.id != "child"));
         assert!(snapshot
             .workflow
             .transitions
@@ -728,19 +736,27 @@ mod tests {
         );
         assert!(rejected.unwrap_err().contains("already in use"));
         let snapshot = store.snapshot().unwrap().unwrap();
-        assert_eq!(snapshot.revision, 1, "failed rename must not advance revision");
+        assert_eq!(
+            snapshot.revision, 1,
+            "failed rename must not advance revision"
+        );
         assert_eq!(snapshot.workflow.states[1].scxml_id, "B");
 
-        store.apply(
-            Some(1),
-            WorkflowCommandDto::RenameState {
-                state_id: "b".into(),
-                scxml_id: "C".into(),
-                label: None,
-                full_skill_name: Some("C".into()),
-            },
-        ).unwrap();
-        assert_eq!(store.snapshot().unwrap().unwrap().workflow.states[1].scxml_id, "C");
+        store
+            .apply(
+                Some(1),
+                WorkflowCommandDto::RenameState {
+                    state_id: "b".into(),
+                    scxml_id: "C".into(),
+                    label: None,
+                    full_skill_name: Some("C".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            store.snapshot().unwrap().unwrap().workflow.states[1].scxml_id,
+            "C"
+        );
     }
 
     #[test]
@@ -852,11 +868,7 @@ mod tests {
         assert_eq!(slot_result.patch.states.len(), 1);
         assert_eq!(slot_result.patch.states[0].id, "a");
         assert_eq!(
-            slot_result
-                .patch
-                .slot_declarations
-                .as_ref()
-                .map(Vec::len),
+            slot_result.patch.slot_declarations.as_ref().map(Vec::len),
             Some(2)
         );
 
@@ -970,16 +982,15 @@ mod tests {
         });
         assert_eq!(store.replace(workflow).unwrap(), 1);
 
-        let node = |id: &str, node_type: &str, parent_id: Option<&str>, name: &str| {
-            EditorExportNodeDto {
+        let node =
+            |id: &str, node_type: &str, parent_id: Option<&str>, name: &str| EditorExportNodeDto {
                 id: id.into(),
                 node_type: node_type.into(),
                 parent_id: parent_id.map(str::to_string),
                 label: name.into(),
                 full_skill_name: name.into(),
                 ..EditorExportNodeDto::default()
-            }
-        };
+            };
         let mut container = node("container", "compound", None, "Container");
         container.initial_child_id = Some("talk".into());
         let mut talk = node("talk", "custom", Some("container"), "Talk");
@@ -1036,10 +1047,7 @@ mod tests {
             .find(|state| state.id == "outside")
             .unwrap();
         assert_eq!(outside.editor.edge_targets.len(), 1);
-        assert_eq!(
-            outside.editor.edge_targets[0].target_instance_id,
-            "ref-1"
-        );
+        assert_eq!(outside.editor.edge_targets[0].target_instance_id, "ref-1");
         assert_eq!(outside.editor.edge_targets[0].event, "Talk.error");
     }
 
@@ -1274,7 +1282,6 @@ mod tests {
         assert_eq!(snapshot.workflow.initial_state_id.as_deref(), Some("root"));
     }
 
-
     #[test]
     fn wrapping_states_in_compound_is_owned_by_rust() {
         let store = WorkflowDocumentStore::default();
@@ -1307,7 +1314,10 @@ mod tests {
 
         assert_eq!(result.revision, 2);
         let snapshot = store.snapshot().unwrap().unwrap();
-        assert_eq!(snapshot.workflow.initial_state_id.as_deref(), Some("compound"));
+        assert_eq!(
+            snapshot.workflow.initial_state_id.as_deref(),
+            Some("compound")
+        );
         let container = snapshot
             .workflow
             .states
@@ -1369,7 +1379,6 @@ mod tests {
             ..EditorExportNodeDto::default()
         };
 
-
         let result = store
             .apply(
                 Some(1),
@@ -1387,11 +1396,25 @@ mod tests {
         assert_eq!(lane_patch.wrapper_state_id, None);
         assert_eq!(lane_patch.initial_child_id.as_deref(), Some("a"));
         let snapshot = store.snapshot().unwrap().unwrap();
-        let lane = snapshot.workflow.states.iter().find(|state| state.id == "lane").unwrap();
+        let lane = snapshot
+            .workflow
+            .states
+            .iter()
+            .find(|state| state.id == "lane")
+            .unwrap();
         assert_eq!(lane.initial_child_id.as_deref(), Some("a"));
-        assert!(!snapshot.workflow.states.iter().any(|state| state.scxml_id.starts_with("lane_")));
+        assert!(!snapshot
+            .workflow
+            .states
+            .iter()
+            .any(|state| state.scxml_id.starts_with("lane_")));
         for child_id in ["a", "b"] {
-            let child = snapshot.workflow.states.iter().find(|state| state.id == child_id).unwrap();
+            let child = snapshot
+                .workflow
+                .states
+                .iter()
+                .find(|state| state.id == child_id)
+                .unwrap();
             assert_eq!(child.parent_id.as_deref(), Some("lane"));
         }
     }
@@ -1505,8 +1528,17 @@ mod tests {
         let snapshot = store.snapshot().unwrap().unwrap();
         // Once the lane contains only the same-named atomic state, Rust
         // flattens that visual region back to the atomic SCXML branch.
-        assert!(!snapshot.workflow.states.iter().any(|state| state.id == "lane-a"));
-        let a = snapshot.workflow.states.iter().find(|state| state.id == "a").unwrap();
+        assert!(!snapshot
+            .workflow
+            .states
+            .iter()
+            .any(|state| state.id == "lane-a"));
+        let a = snapshot
+            .workflow
+            .states
+            .iter()
+            .find(|state| state.id == "a")
+            .unwrap();
         assert_eq!(a.parent_id.as_deref(), Some("parallel"));
         let b = snapshot
             .workflow
@@ -1619,7 +1651,9 @@ mod tests {
         assert_eq!(result.revision, 2);
         assert_eq!(result.patch.parallel_lane_updates.len(), 1);
         assert_eq!(
-            result.patch.parallel_lane_updates[0].initial_child_id.as_deref(),
+            result.patch.parallel_lane_updates[0]
+                .initial_child_id
+                .as_deref(),
             Some("a")
         );
 
@@ -1631,9 +1665,22 @@ mod tests {
             .find(|state| state.id == "b")
             .unwrap();
         assert_eq!(b.parent_id.as_deref(), Some("lane"));
-        assert!(!snapshot.workflow.states.iter().any(|state| state.id == "wrapper"));
-        assert!(result.patch.removed_state_ids.iter().any(|id| id == "wrapper"));
-        let a = snapshot.workflow.states.iter().find(|state| state.id == "a").unwrap();
+        assert!(!snapshot
+            .workflow
+            .states
+            .iter()
+            .any(|state| state.id == "wrapper"));
+        assert!(result
+            .patch
+            .removed_state_ids
+            .iter()
+            .any(|id| id == "wrapper"));
+        let a = snapshot
+            .workflow
+            .states
+            .iter()
+            .find(|state| state.id == "a")
+            .unwrap();
         assert_eq!(a.parent_id.as_deref(), Some("lane"));
         assert_eq!((a.editor.x, a.editor.y), (35.0, 45.0));
         assert_eq!((b.editor.x, b.editor.y), (135.0, 30.0));
@@ -1645,6 +1692,4 @@ mod tests {
             .unwrap();
         assert_eq!(lane.initial_child_id.as_deref(), Some("a"));
     }
-
-
 }

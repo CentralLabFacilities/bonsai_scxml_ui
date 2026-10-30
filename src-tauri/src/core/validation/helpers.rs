@@ -1,9 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 
-use super::types::{
-    EditorProblemDto, ValidationNodeDto, ValidationSlotDto, ValidationVariableDto,
-};
+use super::types::{EditorProblemDto, ValidationNodeDto, ValidationSlotDto, ValidationVariableDto};
 
 pub(super) fn node_label(node: &ValidationNodeDto) -> &str {
     if !node.label.trim().is_empty() {
@@ -239,7 +237,10 @@ pub(super) fn is_identifier_continue(ch: char) -> bool {
 }
 
 pub(super) fn is_expression_keyword(value: &str) -> bool {
-    matches!(value, "true" | "false" | "null" | "undefined" | "NaN" | "Infinity")
+    matches!(
+        value,
+        "true" | "false" | "null" | "undefined" | "NaN" | "Infinity"
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

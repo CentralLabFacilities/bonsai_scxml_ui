@@ -20,7 +20,11 @@ pub(crate) fn file_version(canonical_path: &Path, bytes: &[u8]) -> String {
     }
     #[cfg(not(any(unix, windows)))]
     identity.update(canonical_path.to_string_lossy().as_bytes());
-    format!("sha256:{:x}:{:x}", identity.finalize(), Sha256::digest(bytes))
+    format!(
+        "sha256:{:x}:{:x}",
+        identity.finalize(),
+        Sha256::digest(bytes)
+    )
 }
 
 #[cfg(test)]
@@ -34,8 +38,7 @@ mod tests {
         assert_eq!(file_version(a, b"a\r\n"), file_version(a, b"a\r\n"));
         assert_ne!(file_version(a, b"a\r\n"), file_version(a, b"a\n"));
         assert_ne!(file_version(a, b"a"), file_version(b, b"a"));
-        assert!(file_version(a, b"abc").ends_with(
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        ));
+        assert!(file_version(a, b"abc")
+            .ends_with("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
     }
 }

@@ -300,10 +300,7 @@ pub(crate) struct ResolvedRuntimeParameterSampleDto {
 pub(crate) struct RuntimeParameterTimelineDto {
     #[serde(default)]
     pub snapshots: Vec<
-        BTreeMap<
-            String,
-            BTreeMap<String, BTreeMap<String, ResolvedRuntimeParameterSampleDto>>,
-        >,
+        BTreeMap<String, BTreeMap<String, BTreeMap<String, ResolvedRuntimeParameterSampleDto>>>,
     >,
     #[serde(default)]
     pub samples: Vec<ResolvedRuntimeParameterSampleDto>,

@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::core::editor_export::{
-    build_inserted_state, build_workflow_from_editor, EditorExportRequestDto,
-};
 use crate::core::editor_export::types::{
     EditorExportEdgeDto, EditorExportNodeDto, EditorExportSlotDeclarationDto, EditorExportSlotDto,
+};
+use crate::core::editor_export::{
+    build_inserted_state, build_workflow_from_editor, EditorExportRequestDto,
 };
 use crate::core::model::{
     Assignment, DataModelEntry, EditorPosition, Parameter, Slot, SlotDeclaration, State, StateId,
@@ -16,11 +16,11 @@ use super::reparent::{
     move_editor_state, recalculate_transition_owners, reconcile_parallel_lane_command,
     update_editor_position,
 };
-use super::wrap::wrap_editor_states;
 use super::types::{
     ParallelLaneEditorPatchDto, StateSlotsCommandDto, TargetedTransitionCommandDto,
     WorkflowCommandDto,
 };
+use super::wrap::wrap_editor_states;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct WorkflowCommandChanges {
@@ -54,18 +54,9 @@ pub(crate) fn apply_command(
             scxml_id,
             label,
             full_skill_name,
-        } => rename_state(
-            workflow,
-            index,
-            state_id,
-            scxml_id,
-            label,
-            full_skill_name,
-        ),
+        } => rename_state(workflow, index, state_id, scxml_id, label, full_skill_name),
         WorkflowCommandDto::AddState { state } => add_state(workflow, index, state),
-        WorkflowCommandDto::InsertEditorStates { nodes } => {
-            insert_editor_states(workflow, nodes)
-        }
+        WorkflowCommandDto::InsertEditorStates { nodes } => insert_editor_states(workflow, nodes),
         WorkflowCommandDto::MoveEditorState {
             state_id,
             parent_state_id,
@@ -93,15 +84,8 @@ pub(crate) fn apply_command(
             state_mappings,
             transition_mappings,
             positions,
-        } => paste_editor_subgraph(
-            workflow,
-            state_mappings,
-            transition_mappings,
-            positions,
-        ),
-        WorkflowCommandDto::RemoveStates { state_ids } => {
-            remove_states(workflow, index, state_ids)
-        }
+        } => paste_editor_subgraph(workflow, state_mappings, transition_mappings, positions),
+        WorkflowCommandDto::RemoveStates { state_ids } => remove_states(workflow, index, state_ids),
         WorkflowCommandDto::UpdateStateEditorPosition { state_id, x, y } => {
             update_state_editor_position(workflow, index, state_id, x, y)
         }
@@ -126,27 +110,16 @@ pub(crate) fn apply_command(
         WorkflowCommandDto::ReplaceSlotsSnapshot {
             states,
             extra_slot_declarations,
-        } => replace_slots_snapshot(
-            workflow,
-            index,
-            states,
-            extra_slot_declarations,
-        ),
+        } => replace_slots_snapshot(workflow, index, states, extra_slot_declarations),
         WorkflowCommandDto::ReplaceTargetedTransitions {
             source_state_id,
             transitions,
-        } => replace_targeted_transitions(
-            workflow,
-            index,
-            source_state_id,
-            transitions,
-        ),
+        } => replace_targeted_transitions(workflow, index, source_state_id, transitions),
         WorkflowCommandDto::ReplaceEditorTransitions { nodes, edges } => {
             replace_editor_transitions(workflow, nodes, edges)
-        },
+        }
     }
 }
-
 
 fn replace_editor_transitions(
     workflow: &mut Workflow,
@@ -464,7 +437,10 @@ fn set_state_initial_child(
     let parent_position = index
         .state_position(&parent_id)
         .ok_or_else(|| format!("Unknown parent state '{parent_id}'"))?;
-    if !matches!(workflow.states[parent_position].kind, StateKind::Compound | StateKind::ParallelLane) {
+    if !matches!(
+        workflow.states[parent_position].kind,
+        StateKind::Compound | StateKind::ParallelLane
+    ) {
         return Err("Only Compound states and Parallel regions can have an initial child".into());
     }
     let selected_id = state_id.map(StateId::from);
@@ -476,8 +452,7 @@ fn set_state_initial_child(
         if state.parent_id.as_ref() != Some(&parent_id) {
             return Err(format!(
                 "State '{}' is not a direct child of '{}'",
-                state.scxml_id,
-                workflow.states[parent_position].scxml_id
+                state.scxml_id, workflow.states[parent_position].scxml_id
             ));
         }
         Some(state.scxml_id.clone())
@@ -533,9 +508,10 @@ fn rename_state(
     // a rename to create a new ambiguous SCXML target (ids are global, even
     // across compounds/parallel lanes).
     if normalized_scxml_id != previous_scxml_id
-        && workflow.states.iter().any(|state| {
-            state.id != id && state.scxml_id == normalized_scxml_id
-        })
+        && workflow
+            .states
+            .iter()
+            .any(|state| state.id != id && state.scxml_id == normalized_scxml_id)
     {
         return Err(format!(
             "SCXML state id '{}' is already in use",
@@ -652,10 +628,7 @@ fn rename_state(
     })
 }
 
-fn merge_command_changes(
-    target: &mut WorkflowCommandChanges,
-    source: WorkflowCommandChanges,
-) {
+fn merge_command_changes(target: &mut WorkflowCommandChanges, source: WorkflowCommandChanges) {
     target.changed_state_ids.extend(source.changed_state_ids);
     target
         .changed_transition_ids
@@ -687,10 +660,12 @@ fn insert_editor_states(
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
 
-        let next_index = pending.iter().position(|node| match node.parent_id.as_deref() {
-            None => true,
-            Some(parent_id) => existing_ids.contains(parent_id),
-        });
+        let next_index = pending
+            .iter()
+            .position(|node| match node.parent_id.as_deref() {
+                None => true,
+                Some(parent_id) => existing_ids.contains(parent_id),
+            });
 
         let Some(next_index) = next_index else {
             let unresolved = pending
@@ -739,7 +714,6 @@ fn insert_editor_states(
     Ok(changes)
 }
 
-
 fn add_state(
     workflow: &mut Workflow,
     index: &WorkflowIndex,
@@ -766,11 +740,9 @@ fn add_state(
     let new_scxml_id = state.scxml_id.clone();
     let parent_id = state.parent_id.clone();
     let scope_needs_initial = if let Some(parent_id) = parent_id.as_ref() {
-        index
-            .state(workflow, parent_id)
-            .is_some_and(|parent| {
-                parent.kind == StateKind::Compound && parent.initial_child_id.is_none()
-            })
+        index.state(workflow, parent_id).is_some_and(|parent| {
+            parent.kind == StateKind::Compound && parent.initial_child_id.is_none()
+        })
     } else {
         workflow.initial_state_id.is_none()
     };
@@ -935,15 +907,13 @@ fn remove_states(
         }
         let state_id = state.id.clone();
         state.editor.edge_targets.retain(|route| {
-            let targets_removed_state =
-                removed_scxml_ids.contains(&route.target_scxml_id);
-            let originates_from_removed_child = removed_state_info.iter().any(
-                |(scxml_id, ancestors)| {
+            let targets_removed_state = removed_scxml_ids.contains(&route.target_scxml_id);
+            let originates_from_removed_child =
+                removed_state_info.iter().any(|(scxml_id, ancestors)| {
                     !scxml_id.is_empty()
                         && route.event.starts_with(&format!("{scxml_id}."))
                         && ancestors.contains(&state_id)
-                },
-            );
+                });
             !targets_removed_state && !originates_from_removed_child
         });
     }
@@ -984,10 +954,12 @@ fn remove_states(
         .states
         .iter()
         .filter_map(|state| {
-            state
-                .parent_id
-                .as_ref()
-                .map(|parent_id| (parent_id.clone(), (state.id.clone(), state.scxml_id.clone())))
+            state.parent_id.as_ref().map(|parent_id| {
+                (
+                    parent_id.clone(),
+                    (state.id.clone(), state.scxml_id.clone()),
+                )
+            })
         })
         .fold(HashMap::new(), |mut acc, (parent_id, child)| {
             acc.entry(parent_id).or_insert(child);
@@ -1022,9 +994,9 @@ fn remove_states(
         .collect::<Vec<_>>();
     for state in workflow.states.iter_mut() {
         let should_be_initial = if let Some(parent_id) = state.parent_id.as_ref() {
-            parent_initials
-                .iter()
-                .any(|(candidate_parent, child_id)| candidate_parent == parent_id && child_id == &state.id)
+            parent_initials.iter().any(|(candidate_parent, child_id)| {
+                candidate_parent == parent_id && child_id == &state.id
+            })
         } else {
             root_initial.as_ref() == Some(&state.id)
         };
@@ -1163,8 +1135,8 @@ fn replace_targeted_transitions(
             .logical_sources
             .iter()
             .any(|logical| logical.state_id == source_id);
-        let legacy_direct_match = existing.logical_sources.is_empty()
-            && existing.source_state_id == source_id;
+        let legacy_direct_match =
+            existing.logical_sources.is_empty() && existing.source_state_id == source_id;
 
         if logical_source_match {
             changed_transition_ids.push(existing.id.as_str().to_string());
@@ -1200,7 +1172,9 @@ fn replace_targeted_transitions(
             return Err("Transition id must not be empty".to_string());
         }
         if !seen_ids.insert(transition_id.clone()) {
-            return Err(format!("Duplicate replacement transition id '{transition_id}'"));
+            return Err(format!(
+                "Duplicate replacement transition id '{transition_id}'"
+            ));
         }
         if preserved_ids.contains(&transition_id) {
             return Err(format!(

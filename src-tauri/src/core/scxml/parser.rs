@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
 use crate::core::model::{
-    AssignmentDto, DataModelEntryDto, EditorEdgeTargetDto, EditorMetadataDto,
-    EditorPositionDto, ExitEventDto, ParameterDto, SlotDeclarationDto, StateDto,
-    StateKindDto, TransitionDto, Workflow, WorkflowDto,
+    AssignmentDto, DataModelEntryDto, EditorEdgeTargetDto, EditorMetadataDto, EditorPositionDto,
+    ExitEventDto, ParameterDto, SlotDeclarationDto, StateDto, StateKindDto, TransitionDto,
+    Workflow, WorkflowDto,
 };
 
 use super::xml::{parse_document, XmlNode};
@@ -140,7 +140,10 @@ fn parse_state(
     let mut events = Vec::new();
     for transition in element.direct_children("transition") {
         if let Some(event) = non_empty(transition.attr("event")) {
-            if !events.iter().any(|existing: &ExitEventDto| existing.id == event) {
+            if !events
+                .iter()
+                .any(|existing: &ExitEventDto| existing.id == event)
+            {
                 events.push(ExitEventDto {
                     id: event,
                     description: String::new(),
@@ -183,8 +186,16 @@ fn parse_state(
             target_state_id: None,
             target_scxml_id: non_empty(transition.attr("target")).unwrap_or_default(),
             logical_sources: vec![],
-            event: transition.attr("event").unwrap_or_default().trim().to_string(),
-            condition: transition.attr("cond").unwrap_or_default().trim().to_string(),
+            event: transition
+                .attr("event")
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            condition: transition
+                .attr("cond")
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
             assignments: parse_direct_assignments(transition),
             sent_events: parse_direct_sends(transition),
             target_instance_id: None,
@@ -203,13 +214,7 @@ fn parse_state(
 
     if element.local_name() == "parallel" {
         for child in direct_state_children {
-            parse_state(
-                child,
-                Some(internal_id.clone()),
-                true,
-                None,
-                context,
-            )?;
+            parse_state(child, Some(internal_id.clone()), true, None, context)?;
         }
     } else {
         for child in direct_state_children {
@@ -408,7 +413,9 @@ fn resolve_state_references(
 
         if !transition.event.is_empty() && !transition.target_scxml_id.is_empty() {
             let occurrence_key = (transition.event.clone(), transition.target_scxml_id.clone());
-            let occurrence = transition_occurrences.entry(occurrence_key.clone()).or_default();
+            let occurrence = transition_occurrences
+                .entry(occurrence_key.clone())
+                .or_default();
             transition.target_instance_id = route_index
                 .get(&(occurrence_key.0, occurrence_key.1, *occurrence))
                 .cloned();
@@ -479,7 +486,10 @@ fn is_state_element(node: &XmlNode) -> bool {
 }
 
 fn is_named_final_state(scxml_id: &str) -> bool {
-    matches!(base_state_name(scxml_id).to_ascii_lowercase().as_str(), "end" | "fatal")
+    matches!(
+        base_state_name(scxml_id).to_ascii_lowercase().as_str(),
+        "end" | "fatal"
+    )
 }
 
 fn base_state_name(scxml_id: &str) -> String {

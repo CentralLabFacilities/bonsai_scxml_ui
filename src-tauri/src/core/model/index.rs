@@ -180,26 +180,29 @@ mod tests {
         };
         let index = WorkflowIndex::new(&workflow);
 
-        assert_eq!(index.children_of(Some(&StateId::from("root"))), &[StateId::from("child")]);
-        assert_eq!(index.outgoing_from(&StateId::from("child")), &[TransitionId::from("t1")]);
-        assert_eq!(index.incoming_to(&StateId::from("root")), &[TransitionId::from("t1")]);
         assert_eq!(
-            index.state(&workflow, &StateId::from("child")).map(|state| state.scxml_id.as_str()),
+            index.children_of(Some(&StateId::from("root"))),
+            &[StateId::from("child")]
+        );
+        assert_eq!(
+            index.outgoing_from(&StateId::from("child")),
+            &[TransitionId::from("t1")]
+        );
+        assert_eq!(
+            index.incoming_to(&StateId::from("root")),
+            &[TransitionId::from("t1")]
+        );
+        assert_eq!(
+            index
+                .state(&workflow, &StateId::from("child"))
+                .map(|state| state.scxml_id.as_str()),
             Some("Child")
         );
         assert_eq!(
             index.parent_of(&workflow, &StateId::from("child")),
             Some(&StateId::from("root"))
         );
-        assert!(index.is_ancestor_of(
-            &workflow,
-            &StateId::from("root"),
-            &StateId::from("child")
-        ));
-        assert!(!index.is_ancestor_of(
-            &workflow,
-            &StateId::from("child"),
-            &StateId::from("root")
-        ));
+        assert!(index.is_ancestor_of(&workflow, &StateId::from("root"), &StateId::from("child")));
+        assert!(!index.is_ancestor_of(&workflow, &StateId::from("child"), &StateId::from("root")));
     }
 }

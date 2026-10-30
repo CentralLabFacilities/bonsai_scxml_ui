@@ -451,7 +451,7 @@ fn escape_attr(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{escape_attr, serialize_scxml};
-    use crate::core::model::{StateId, Workflow, StateKind};
+    use crate::core::model::{StateId, StateKind, Workflow};
     use crate::core::scxml::parse_scxml;
 
     #[test]
@@ -595,7 +595,9 @@ mod tests {
             r#"<scxml initial="P"><parallel id="P"><state id="RegionA" initial="A"><state id="A"/></state><state id="RegionB" initial="B"><state id="B"/></state></parallel></scxml>"#,
         ).unwrap();
         // Simulate stale editor data from an older Parallel implementation.
-        let parallel = workflow.states.iter_mut()
+        let parallel = workflow
+            .states
+            .iter_mut()
             .find(|state| state.kind == StateKind::Parallel)
             .unwrap();
         parallel.initial_child_scxml_id = Some("RegionA".to_string());

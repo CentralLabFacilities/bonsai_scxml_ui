@@ -153,7 +153,6 @@ fn build_behavior_tree(
     Ok(entries)
 }
 
-
 #[cfg(test)]
 mod behavior_directory_tests {
     use super::{expand_home, resolve_behavior_directory};
@@ -161,17 +160,28 @@ mod behavior_directory_tests {
     #[test]
     fn expands_home_prefixed_paths() {
         if let Ok(home) = std::env::var("HOME") {
-            assert_eq!(expand_home("~/example"), std::path::PathBuf::from(home).join("example"));
+            assert_eq!(
+                expand_home("~/example"),
+                std::path::PathBuf::from(home).join("example")
+            );
         }
     }
 
     #[test]
     fn reports_existing_directories_but_not_missing_paths_or_files() {
         let cwd = std::env::current_dir().expect("current directory");
-        assert_eq!(resolve_behavior_directory(cwd.to_str().unwrap()),
-            Some(cwd.canonicalize().unwrap().to_string_lossy().into_owned()));
-        assert_eq!(resolve_behavior_directory(
-            cwd.join("__bonsai_nonexistent_behavior_directory__").to_str().unwrap()), None);
+        assert_eq!(
+            resolve_behavior_directory(cwd.to_str().unwrap()),
+            Some(cwd.canonicalize().unwrap().to_string_lossy().into_owned())
+        );
+        assert_eq!(
+            resolve_behavior_directory(
+                cwd.join("__bonsai_nonexistent_behavior_directory__")
+                    .to_str()
+                    .unwrap()
+            ),
+            None
+        );
         assert_eq!(resolve_behavior_directory(file!()), None);
     }
 }

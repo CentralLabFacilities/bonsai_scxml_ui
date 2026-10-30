@@ -12,12 +12,8 @@ pub(crate) fn prepare_runtime_replay(request: RuntimeReplayRequestDto) -> Runtim
     let resolved_steps = resolve_runtime_trace(&request, &contexts);
     let slot_timeline = resolve_runtime_slot_timeline(&request, &contexts);
     let parameter_timeline = resolve_runtime_parameter_timeline(&request, &contexts);
-    let changes_timeline = build_runtime_changes_timeline(
-        &request,
-        &contexts,
-        &slot_timeline,
-        &parameter_timeline,
-    );
+    let changes_timeline =
+        build_runtime_changes_timeline(&request, &contexts, &slot_timeline, &parameter_timeline);
     let (trace_edge_ids_by_tab, trace_node_ids_by_tab) =
         build_trace_indexes(&resolved_steps, &contexts);
     let slot_edge_ids_by_step = build_slot_edge_index(&changes_timeline);
@@ -37,10 +33,10 @@ pub(crate) fn prepare_runtime_replay(request: RuntimeReplayRequestDto) -> Runtim
 mod tests {
     use super::prepare_runtime_replay;
     use crate::core::runtime::types::{
-        RuntimeDataSampleDto, RuntimeLogDto, RuntimeParameterSampleDto,
-        RuntimeReplayContextDto, RuntimeReplayDataModelEntryDto, RuntimeReplayNodeDto,
-        RuntimeReplayRequestDto, RuntimeReplaySlotEdgeDto, RuntimeReplayTransitionEdgeDto,
-        RuntimeReplayTransitionSourceDto, RuntimeSlotSampleDto, RuntimeStepDto,
+        RuntimeDataSampleDto, RuntimeLogDto, RuntimeParameterSampleDto, RuntimeReplayContextDto,
+        RuntimeReplayDataModelEntryDto, RuntimeReplayNodeDto, RuntimeReplayRequestDto,
+        RuntimeReplaySlotEdgeDto, RuntimeReplayTransitionEdgeDto, RuntimeReplayTransitionSourceDto,
+        RuntimeSlotSampleDto, RuntimeStepDto,
     };
 
     #[test]
@@ -128,7 +124,10 @@ mod tests {
         };
 
         let cache = prepare_runtime_replay(request);
-        assert_eq!(cache.resolved_steps[0].edge_id.as_deref(), Some("transition-1"));
+        assert_eq!(
+            cache.resolved_steps[0].edge_id.as_deref(),
+            Some("transition-1")
+        );
         assert_eq!(cache.slot_timeline.samples[0].paths, vec!["model"]);
         assert!(cache.parameter_timeline.samples[0].resolved);
         assert!(cache.changes_timeline.data_samples[0].evaluated);

@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
 use super::types::{
-    AncestorSlotAccessDto, SlotAncestryRequestDto, SlotAncestryResponseDto,
-    SlotDeclarationDto, SlotTabDto,
+    AncestorSlotAccessDto, SlotAncestryRequestDto, SlotAncestryResponseDto, SlotDeclarationDto,
+    SlotTabDto,
 };
 
 fn normalize_slot_path(value: &str) -> String {
@@ -124,9 +124,7 @@ struct DeclarationView<'a> {
     description: &'a str,
 }
 
-pub(crate) fn resolve_slot_ancestry(
-    request: &SlotAncestryRequestDto,
-) -> SlotAncestryResponseDto {
+pub(crate) fn resolve_slot_ancestry(request: &SlotAncestryRequestDto) -> SlotAncestryResponseDto {
     let Some(active_tab_id) = request.active_tab_id.as_deref() else {
         return SlotAncestryResponseDto::default();
     };
@@ -327,8 +325,16 @@ pub(crate) fn resolve_slot_ancestry(
                 .ancestor_depth
                 .cmp(&left.ancestor_depth)
                 .then_with(|| {
-                    let left_rank = if left.hierarchy_kind == "writer" { 0 } else { 1 };
-                    let right_rank = if right.hierarchy_kind == "writer" { 0 } else { 1 };
+                    let left_rank = if left.hierarchy_kind == "writer" {
+                        0
+                    } else {
+                        1
+                    };
+                    let right_rank = if right.hierarchy_kind == "writer" {
+                        0
+                    } else {
+                        1
+                    };
                     left_rank.cmp(&right_rank)
                 })
                 .then_with(|| left.skill_name.cmp(&right.skill_name))
@@ -470,8 +476,12 @@ mod tests {
 
         let result = resolve_slot_ancestry(&request);
         let entries = result.by_path.get("pick/model").unwrap();
-        assert!(entries.iter().any(|entry| entry.node_id.as_deref() == Some("root-writer")));
-        assert!(entries.iter().any(|entry| entry.hierarchy_kind == "inherit"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.node_id.as_deref() == Some("root-writer")));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.hierarchy_kind == "inherit"));
     }
 }
 
@@ -522,8 +532,9 @@ fn slot_tab_from_workflow(
             let mut inherited_slots = Vec::new();
             if matches!(state.kind, crate::core::model::StateKind::Submachine) {
                 inherited_slots.extend(state.input_slots.iter().filter_map(|slot| {
-                    slot.inherited.as_ref().map(|inherited| {
-                        super::types::InheritedSlotUsageDto {
+                    slot.inherited
+                        .as_ref()
+                        .map(|inherited| super::types::InheritedSlotUsageDto {
                             key: slot.key.clone(),
                             type_name: slot.type_name.clone(),
                             description: slot.description.clone(),
@@ -533,12 +544,12 @@ fn slot_tab_from_workflow(
                                 slot.path.clone()
                             },
                             access: "read".into(),
-                        }
-                    })
+                        })
                 }));
                 inherited_slots.extend(state.output_slots.iter().filter_map(|slot| {
-                    slot.inherited.as_ref().map(|inherited| {
-                        super::types::InheritedSlotUsageDto {
+                    slot.inherited
+                        .as_ref()
+                        .map(|inherited| super::types::InheritedSlotUsageDto {
                             key: slot.key.clone(),
                             type_name: slot.type_name.clone(),
                             description: slot.description.clone(),
@@ -548,8 +559,7 @@ fn slot_tab_from_workflow(
                                 slot.path.clone()
                             },
                             access: "write".into(),
-                        }
-                    })
+                        })
                 }));
             }
 
