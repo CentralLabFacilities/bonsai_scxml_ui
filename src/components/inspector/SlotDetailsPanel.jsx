@@ -232,7 +232,9 @@ function SkillSlotSection({
 /** One inspector editor for one logical binding, without changing the two
  * SCXML request arrays or their independent React Flow handle identities. */
 function SharedSkillSlotSection({ nodeId, data, availableSlotPaths, onUpdateRead, onUpdateWrite }) {
-    const rows = getGroupedSkillSlotRequests(data);
+    const rows = getGroupedSkillSlotRequests(data).filter((row) =>
+        !row.handles.some((handle) => handle.definitionMissing)
+    );
     return rows.map((row) => {
         const primary = row.handles.find((handle) => handle.access === "read") || row.handles[0];
         const read = row.handles.find((handle) => handle.access === "read");

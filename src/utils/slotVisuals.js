@@ -73,7 +73,10 @@ export function getStateSlotEntries(data = {}, nodeType = "custom") {
         .filter((slot) => slot.access === "read" || slot.access === "write") : [];
 
     // Keep source-array indices: connections refer to these exact handle IDs.
+    // Hide slots no longer in the skill definition (definitionMissing) from
+    // the visual dock; they remain in node data for SCXML round-trip.
     return [...regularSlots, ...inheritedSlots].filter((slot) =>
+        !slot.definitionMissing &&
         String(slot.key || (isSubMachine && slot.path) || "").trim()
     );
 }

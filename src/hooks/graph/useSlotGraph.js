@@ -152,12 +152,14 @@ export function useSlotGraph({
             ...slot, path: slot?.inherited?.xpath || slot?.path,
         }));
         targetNodes.forEach((node) => {
-            (node.data.inSlots || []).forEach((slot) =>
-                registerSlotUsage(slot, { accessNodeId: node.id })
-            );
-            (node.data.outSlots || []).forEach((slot) =>
-                registerSlotUsage(slot, { accessNodeId: node.id })
-            );
+            (node.data.inSlots || []).forEach((slot) => {
+                if (slot?.definitionMissing) return;
+                registerSlotUsage(slot, { accessNodeId: node.id });
+            });
+            (node.data.outSlots || []).forEach((slot) => {
+                if (slot?.definitionMissing) return;
+                registerSlotUsage(slot, { accessNodeId: node.id });
+            });
         });
 
         targetNodes.forEach((node) => {
