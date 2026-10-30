@@ -85,7 +85,7 @@ pub(crate) fn build_active_validation_request(
         .map(|transition| transition.source_state_id.as_str())
         .collect::<HashSet<_>>();
 
-    let nodes = workflow
+    let mut nodes = workflow
         .states
         .iter()
         .map(|state| {
@@ -182,6 +182,41 @@ pub(crate) fn build_active_validation_request(
             }
         })
         .collect::<Vec<_>>();
+
+    // Include overlay nodes that are not yet in the stored workflow (e.g.
+    // newly added nodes that haven't been committed). Without this, parameter
+    // validation misses required-but-unset parameters on fresh nodes.
+    let workflow_state_ids: HashSet<&str> = workflow
+        .states
+        .iter()
+        .map(|state| state.id.as_str())
+        .collect();
+    for overlay in &context.node_overlays {
+        if workflow_state_ids.contains(overlay.id.as_str()) {
+            continue;
+        }
+        nodes.push(ValidationNodeDto {
+            id: overlay.id.clone(),
+            node_type: "custom".to_string(),
+            parent_id: None,
+            label: overlay.id.clone(),
+            full_skill_name: String::new(),
+            source: String::new(),
+            is_initial: false,
+            is_final: false,
+            is_behavior_exit: overlay.is_behavior_exit,
+            is_collapsed: overlay.is_collapsed,
+            is_reference: false,
+            events: overlay.events.clone(),
+            parameters: overlay.parameters.clone(),
+            on_entry: overlay.on_entry.clone(),
+            on_exit: overlay.on_exit.clone(),
+            input_slots: Vec::new(),
+            output_slots: Vec::new(),
+            has_local_data_model: overlay.has_local_data_model,
+            local_data_model: overlay.local_data_model.clone(),
+        });
+    }
 
     let mut edges = Vec::new();
     for transition in &workflow.transitions {
