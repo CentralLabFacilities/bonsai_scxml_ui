@@ -37,3 +37,7 @@ Containerfile.dev
 .pixi
 pixi
 !.pixi/config.toml
+
+#
+AGENTS.md
+docs/

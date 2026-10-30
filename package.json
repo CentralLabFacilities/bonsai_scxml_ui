@@ -3,23 +3,23 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "bun@1.3.11",
+  "packageManager": "bun@1.4.4",
   "scripts": {
-    "dev": "bun node_modules/vite/bin/vite.js",
+    "dev": "vite",
     "tauri:dev": "tauri dev",
-    "build": "bun node_modules/vite/bin/vite.js build",
+    "build": "vite build",
     "tauri:build": "bun run build && tauri build",
     "build:binary": "mkdir -p target/dist && bun run build --outDir target/dist && bun run src/embed-assets.js target/dist target/embedded-assets.js && bun build src/server.js --compile --target=bun-linux-x64 --outfile target/bonsai-ui && rm -rf target/dist",
-    "lint": "bun node_modules/eslint/bin/eslint.js . --max-warnings=0",
-    "test": "bun scripts/verify.mjs unit",
-    "test:rust": "bun scripts/verify.mjs rust",
-    "test:browser": "bun scripts/verify.mjs browser",
-    "test:browser:update": "bun scripts/verify.mjs browser --update-snapshots",
-    "verify": "bun scripts/verify.mjs",
-    "preview": "bun node_modules/vite/bin/vite.js preview"
+    "lint": "eslint . --max-warnings=0",
+    "test": "bun test",
+    "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib --no-default-features --locked",
+    "test:browser": "playwright test",
+    "test:browser:update": "playwright test --update-snapshots",
+    "verify": "bun run lint && bun run test && bun run test:rust && bun run build && bun run test:browser",
+    "preview": "vite preview"
   },
   "engines": {
-    "node": "^20.19.0 || ^22.13.0 || >=24"
+    "node": ">=24"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

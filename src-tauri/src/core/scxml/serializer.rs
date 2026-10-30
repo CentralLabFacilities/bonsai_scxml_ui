@@ -451,7 +451,7 @@ fn escape_attr(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{escape_attr, serialize_scxml};
-    use crate::core::model::{StateId, Workflow};
+    use crate::core::model::{StateId, Workflow, StateKind};
     use crate::core::scxml::parse_scxml;
 
     #[test]
