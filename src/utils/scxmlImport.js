@@ -1,4 +1,6 @@
 import { MarkerType } from "@xyflow/react";
+import { resolveSkillInspectionParams } from "./skillInspectionParams.js";
+import { matchImportedSlotDeclaration } from "./scxmlSlotMatching.js";
 import { parseScxmlWorkflow } from "../tauri-client.js";
 import { workflowDtoToScxmlDocument } from "./scxmlRustDocument.js";
 import { getLayoutedElements } from "./layoutUtils";
@@ -728,40 +730,8 @@ export const parseScxmlFile = async (
         slot?.state === baseSkillName ||
         slot?.state === "*";
 
-    const findSlotMatch = (fullSkillName, baseSkillName, slotKey) => {
-        // Slot declarations in SCXML do not necessarily use the same key as the
-        // concrete read/write requests returned by the configured skill. For
-        // example, slots.SlotIO may declare one logical slot as "StringSlot"
-        // while the skill API exposes the access requests as "Read" and
-        // "Write". Resolve the declaration by state first, and only use the
-        // key to disambiguate when the state has more than one declaration.
-        const groups = [
-            parsedSlots.filter((ps) => ps.state === fullSkillName),
-            parsedSlots.filter((ps) => ps.state === baseSkillName),
-            parsedSlots.filter((ps) => ps.state === "*"),
-        ];
-
-        for (const candidates of groups) {
-            if (candidates.length === 0) continue;
-
-            const exactKeyMatch = candidates.find((ps) => ps.key === slotKey);
-            if (exactKeyMatch) return exactKeyMatch;
-
-            // An explicit state may use a logical declaration key different
-            // from the API's read/write keys. However, a wildcard declaration
-            // is not an implicit connection to every skill in the workflow:
-            // automatically created default slots have state="*" and must not
-            // attach to unrelated requests when the document is reopened.
-            if (candidates.length === 1 && candidates[0].state !== "*") return candidates[0];
-
-            // Multiple declarations without a matching key are ambiguous. Do
-            // not guess a path, because that could connect the request to the
-            // wrong logical slot.
-            return undefined;
-        }
-
-        return undefined;
-    };
+    const findSlotMatch = (fullSkillName, baseSkillName, slotKey) =>
+        matchImportedSlotDeclaration(parsedSlots, { fullSkillName, baseSkillName, slotKey });
 
     const mergeDeclaredSlotRequests = (configured = [], fallback = [], declaredKeys) => {
         const merged = [...(Array.isArray(configured) ? configured : [])];
@@ -829,11 +799,15 @@ export const parseScxmlFile = async (
             )
         );
 
+        const { params: inspectionParams, unresolved: unresolvedParams } =
+            resolveSkillInspectionParams(localParams, globalDataEntries, baseSkillApiData.params || []);
         const hasConfiguredParameters = Object.keys(localParams).length > 0;
         let skillApiData = behaviorExit
             ? {}
             : hasConfiguredParameters
-                ? (await fetchSkillData(baseSkillName, localParams)) || baseSkillApiData
+                ? unresolvedParams.length === 0
+                    ? (await fetchSkillData(baseSkillName, inspectionParams, { fallbackToBase: false })) || baseSkillApiData
+                    : baseSkillApiData
                 : baseSkillApiData;
 
         if (!behaviorExit && !srcAttr) {

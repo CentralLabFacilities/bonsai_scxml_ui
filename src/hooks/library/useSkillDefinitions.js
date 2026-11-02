@@ -151,13 +151,15 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
         };
     }, [loadSkills, pollIntervalMs]);
 
-    const fetchSkillData = useCallback(async function fetchDefinition(fullSkillName, params = null) {
+    const fetchSkillData = useCallback(async function fetchDefinition(
+        fullSkillName, params = null, { fallbackToBase = true } = {},
+    ) {
         const apiParams = normalizeSkillApiParams(params);
         const hasParams = Object.keys(apiParams).length > 0;
         const normalizedParamEntries = Object.entries(apiParams).sort(
             ([left], [right]) => left.localeCompare(right)
         );
-        const cacheKey = `${fullSkillName}\u0001${JSON.stringify(normalizedParamEntries)}`;
+        const cacheKey = `${fullSkillName}\u0001${JSON.stringify(normalizedParamEntries)}\u0001${fallbackToBase}`;
 
         if (skillDataCacheRef.current.has(cacheKey)) {
             return skillDataCacheRef.current.get(cacheKey);
@@ -187,7 +189,8 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
                 if (response.ok) return cacheData(await response.json());
                 if (!hasParams) throw new Error(`Server returned ${response.status}`);
                 console.warn(
-                    `Parameterized skill configuration failed for ${fullSkillName} (${response.status}); falling back to the base skill definition.`
+                    `Parameterized skill configuration failed for ${fullSkillName} (${response.status}); ` +
+                    (fallbackToBase ? "falling back to the base skill definition." : "keeping the existing slot configuration.")
                 );
             } catch (error) {
                 if (!hasParams) {
@@ -195,11 +198,16 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
                     return null;
                 }
                 console.warn(
-                    `Parameterized skill configuration failed for ${fullSkillName}; falling back to the base skill definition.`,
+                    `Parameterized skill configuration failed for ${fullSkillName}; ` +
+                    (fallbackToBase ? "falling back to the base skill definition." : "keeping the existing slot configuration."),
                     error
                 );
             }
 
+            // A parameterized request can fail because its value does not
+            // satisfy the Java configurator. Returning the base definition
+            // here would falsely reintroduce conditional slot requirements.
+            if (!fallbackToBase) return null;
             return cacheData(await fetchDefinition(fullSkillName));
         })();
         // Store the promise before another same-key request can start. The

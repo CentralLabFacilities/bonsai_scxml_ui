@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 
 import { normalizeSlotType } from "../../utils/editorGraph.js";
 import { fillMissingSharedSlotBindings } from "../../utils/sharedSlotBindings.js";
+import { resolveSkillInspectionParams } from "../../utils/skillInspectionParams.js";
 import { reconcileRefreshedSkillEvents, reconcileRefreshedSlotRequests } from "../../utils/skillDefinitionRefresh.js";
 import { getLogicalEdgeSourceHandle, getLogicalEdgeSourceId } from "../../utils/transitionSemantics.js";
 
@@ -170,7 +171,24 @@ export function useDynamicSkillConfiguration({
                 ? parameterOverride
                 : node.data?.params || [];
 
-            const params = getConsumedParameters(parameterList);
+            const rawParams = getConsumedParameters(parameterList);
+            const document = getDocumentSnapshot();
+            const { params, unresolved } = resolveSkillInspectionParams(
+                rawParams,
+                [...(document.inheritedGlobalDataModel || []), ...(document.globalDataModel || [])],
+                parameterList,
+            );
+            // The inspection endpoint accepts concrete Java configuration
+            // values, not SCXML expressions. Never send @variable as a literal
+            // or fall back to the no-parameter slot definition for an unknown
+            // runtime value. The saved SCXML reference stays untouched.
+            if (unresolved.length) {
+                console.warn(
+                    `Cannot preview conditional slots for ${fullSkillName}: ` +
+                    `runtime variable values are unknown (${unresolved.join(", ")}).`,
+                );
+                return false;
+            }
 
             const requestVersions = requestVersionsRef.current;
             const requestVersion = ++requestSequenceRef.current;
@@ -180,11 +198,11 @@ export function useDynamicSkillConfiguration({
                 version: requestVersion,
                 documentIdentity,
                 nodeIdentity: getNodeIdentity(node),
-                parameters: getParameterSnapshot(params),
+                parameters: getParameterSnapshot(rawParams),
             };
 
             try {
-                const data = await fetchSkillData(fullSkillName, params);
+                const data = await fetchSkillData(fullSkillName, params, { fallbackToBase: false });
                 if (!data) return;
 
                 const currentNodes = getDocumentSnapshot().nodes;
