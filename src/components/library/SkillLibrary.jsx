@@ -391,7 +391,12 @@ function SkillLibrary({
                         placeholder="Search skills..."
                         aria-label="Search skills"
                         value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
+                        onChange={(e) => {
+                            setSearchText(e.target.value);
+                            setActiveFilter("Everything");
+                            setSelectedPackage(null);
+                            setSelectedSubPackage(null);
+                        }}
                     />
                     {searchText ? (
                         <button type="button" className="search-clear-button" title="Clear skill search"
