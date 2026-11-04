@@ -180,9 +180,6 @@ test.beforeEach(async () => {
             selectedNodeId,
             setSelectedNodeId,
             isDraggingNode,
-            fitView: () => calls.push({ command: "fit" }),
-            getViewport: () => native.viewport || { x: 0, y: 0, zoom: 1 },
-            setViewport: (value) => calls.push({ command: "viewport", value }),
             syncRustDocument: async (snapshot) => {
                 calls.push({ command: "sync", snapshot });
             },
@@ -263,6 +260,29 @@ const edit = async (value = "2") =>
         ),
     );
 const openTab = async (id = "a") => React.act(async () => current.tabs.openTab(loadedTab(id)));
+const beginCanvas = async (viewport = { x: 0, y: 0, zoom: 1 }) => {
+    const identity = current.tabs.getActiveDocumentIdentity();
+    let camera = viewport;
+    let reads = 0;
+    const instance = { getViewport: () => { reads += 1; return camera; } };
+    let placement;
+    await React.act(async () => {
+        placement = current.tabs.beginCanvasPlacement(identity, instance);
+    });
+    return {
+        identity, instance, placement,
+        setViewport: (next) => { camera = next; },
+        get reads() { return reads; },
+    };
+};
+const completeCanvas = async (canvas, viewport) => {
+    canvas.setViewport(viewport);
+    let result;
+    await React.act(async () => {
+        result = current.tabs.completeCanvasPlacement(canvas.identity, canvas.instance, viewport);
+    });
+    return result;
+};
 const begin = async (callback) => {
     let promise;
     await React.act(async () => {
@@ -1867,25 +1887,202 @@ test("a pending local pointer edit fences clean-tab automatic reload before the 
     }
 });
 
-test("external reload preserves the live viewport and stale load frames cannot fit a newer incarnation", async () => {
-    const originalFrame = window.requestAnimationFrame;
-    const frames = [];
-    window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
-    try {
-        await openTab("a");
-        native.viewport = { x: 119, y: -87, zoom: 0.73 };
-        useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")]]));
-        await checkDisk();
-        assert.deepEqual(current.tabs.activeTab.viewport, native.viewport);
-        await React.act(async () => {
-            while (frames.length) frames.shift()(0);
-        });
-        assert.equal(calls.some((call) => call.command === "fit"), false);
-        assert.deepEqual(calls.findLast((call) => call.command === "viewport").value, native.viewport);
-        assert.equal(current.tabs.activeTabId, "a");
-    } finally {
-        window.requestAnimationFrame = originalFrame;
-    }
+test("initial placement and first-open fitting publish current identity and a non-animated caller policy", async () => {
+    assert.equal(current.tabs.canvasPlacement.identity, current.tabs.getActiveDocumentIdentity());
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, { x: 0, y: 0, zoom: 1 });
+    assert.equal(current.tabs.isCanvasPlacementReady(), false);
+    const scope = [{ id: "a" }];
+    await React.act(async () => current.tabs.openTab(loadedTab("a"), {
+        fitOptions: { padding: 0.35, duration: 900, nodes: scope },
+    }));
+    const canvas = await beginCanvas();
+    assert.equal(canvas.placement.viewport, null);
+    assert.deepEqual(canvas.placement.fitOptions, { padding: 0.35, duration: 0, nodes: scope });
+    const camera = { x: 22, y: -14, zoom: 0.7 };
+    assert.equal(await completeCanvas(canvas, camera), true);
+    assert.equal(current.tabs.canvasReadyIdentity, canvas.identity);
+    assert.equal(current.tabs.isCanvasPlacementReady(), true);
+    canvas.setViewport({ x: -40, y: 12, zoom: 0.45 });
+    await openTab("b");
+    await React.act(async () => current.tabs.switchTab("a"));
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, { x: -40, y: 12, zoom: 0.45 });
+    assert.equal(current.tabs.canvasPlacement.fitOptions, null);
+});
+
+test("rapid pending A-B-A activations preserve saved cameras and reject retained completion, movement and release", async () => {
+    const aCamera = { x: 190, y: -80, zoom: 0.6 };
+    const bCamera = { x: -55, y: 140, zoom: 1.4 };
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), viewport: aCamera }));
+    const oldA = await beginCanvas();
+    const aWaiting = current.tabs.waitForCanvasPlacement(oldA.identity);
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("b"), viewport: bCamera }));
+    assert.equal(await aWaiting, false);
+    const oldB = await beginCanvas();
+    const bWaiting = current.tabs.waitForCanvasPlacement(oldB.identity);
+    await React.act(async () => current.tabs.switchTab("a"));
+    assert.equal(await bWaiting, false);
+    const finalA = await beginCanvas();
+    assert.notEqual(finalA.identity, oldA.identity);
+    assert.deepEqual(finalA.placement.viewport, aCamera);
+    assert.deepEqual(current.tabs.getTabSnapshot("b").viewport, bCamera);
+    assert.equal(oldA.reads, 0);
+    assert.equal(oldB.reads, 0);
+    await React.act(async () => {
+        for (const stale of [oldA, oldB]) {
+            assert.equal(current.tabs.completeCanvasPlacement(stale.identity, stale.instance,
+                { x: 0, y: 0, zoom: 1 }), false);
+            assert.equal(current.tabs.recordCanvasViewport(stale.identity, stale.instance,
+                { x: 0, y: 0, zoom: 1 }), false);
+            current.tabs.releaseCanvasPlacement(stale.identity, stale.instance);
+        }
+    });
+    assert.equal(await current.tabs.waitForCanvasPlacement(oldA.identity), false);
+    assert.equal(current.tabs.isCanvasPlacementReady(), false);
+    const ready = current.tabs.waitForCanvasPlacement(finalA.identity);
+    assert.equal(await completeCanvas(finalA, aCamera), true);
+    assert.equal(await ready, true);
+    assert.equal(await current.tabs.waitForCanvasPlacement(), true);
+    await React.act(async () => current.tabs.closeTab("a"));
+    assert.equal(current.tabs.activeTabId, "b");
+    assert.equal(await completeCanvas(finalA, { x: 0, y: 0, zoom: 1 }), false);
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, bCamera);
+    const pendingB = await beginCanvas();
+    const closing = current.tabs.waitForCanvasPlacement();
+    await React.act(async () => current.tabs.closeTab("b"));
+    assert.equal(await closing, false);
+    assert.equal(pendingB.reads, 0);
+    assert.equal(await completeCanvas(pendingB, { x: 0, y: 0, zoom: 1 }), false);
+});
+
+test("Code View absence and pending remounts retain the last valid camera without reading a reset store", async () => {
+    await openTab("a");
+    const camera = { x: 119, y: -87, zoom: 0.73 };
+    const mounted = await beginCanvas();
+    await completeCanvas(mounted, camera);
+    await React.act(async () => current.tabs.releaseCanvasPlacement(mounted.identity, mounted.instance));
+    const reads = mounted.reads;
+    mounted.setViewport({ x: 0, y: 0, zoom: 1 });
+    assert.equal(current.tabs.isCanvasPlacementReady(), false);
+    const remounted = await beginCanvas();
+    assert.equal(remounted.identity, mounted.identity);
+    assert.deepEqual(remounted.placement.viewport, camera);
+    const pending = current.tabs.waitForCanvasPlacement();
+    await React.act(async () => current.tabs.releaseCanvasPlacement(remounted.identity, remounted.instance));
+    assert.equal(await pending, false);
+    assert.equal(remounted.reads, 0);
+    await openTab("b");
+    await React.act(async () => current.tabs.switchTab("a"));
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, camera);
+    assert.equal(mounted.reads, reads);
+    const final = await beginCanvas();
+    await completeCanvas(final, camera);
+    await React.act(async () => current.tabs.releaseCanvasPlacement(mounted.identity, mounted.instance));
+    assert.equal(current.tabs.canvasReadyIdentity, final.identity);
+    assert.equal(current.tabs.isCanvasPlacementReady(), true);
+});
+
+test("same-identity canvas remount rejects a released instance without clearing its replacement", async () => {
+    await openTab("a");
+    const camera = { x: 13, y: 26, zoom: 0.8 };
+    const first = await beginCanvas();
+    await completeCanvas(first, camera);
+    await React.act(async () => current.tabs.releaseCanvasPlacement(first.identity, first.instance));
+    const next = await beginCanvas();
+    assert.equal(first.identity, next.identity);
+    assert.equal(await completeCanvas(first, { x: 0, y: 0, zoom: 1 }), false);
+    await completeCanvas(next, camera);
+    await React.act(async () => {
+        current.tabs.releaseCanvasPlacement(first.identity, first.instance);
+        assert.equal(current.tabs.recordCanvasViewport(first.identity, first.instance,
+            { x: 0, y: 0, zoom: 1 }), false);
+    });
+    assert.equal(current.tabs.canvasReadyIdentity, next.identity);
+    assert.equal(current.tabs.isCanvasPlacementReady(), true);
+});
+
+test("external reload preserves a settled live viewport and rejects the old same-ID document owner", async () => {
+    await openTab("a");
+    const old = await beginCanvas();
+    await completeCanvas(old, { x: 10, y: 20, zoom: 1.1 });
+    const camera = { x: 119, y: -87, zoom: 0.73 };
+    old.setViewport(camera);
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")]]));
+    await checkDisk();
+    assert.deepEqual(current.tabs.activeTab.viewport, camera);
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, camera);
+    assert.equal(current.tabs.canvasPlacement.fitOptions, null);
+    assert.notEqual(current.tabs.getActiveDocumentIdentity(), old.identity);
+    assert.equal(current.tabs.isCanvasPlacementReady(), false);
+    const reloaded = await beginCanvas();
+    assert.equal(await completeCanvas(old, { x: 0, y: 0, zoom: 1 }), false);
+    await completeCanvas(reloaded, camera);
+    await React.act(async () => current.tabs.releaseCanvasPlacement(old.identity, old.instance));
+    assert.equal(current.tabs.isCanvasPlacementReady(), true);
+    assert.equal(current.tabs.activeTabId, "a");
+});
+
+test("preserveViewport reload retains saved cameras while placement is pending or absent", async () => {
+    const camera = { x: -220, y: 75, zoom: 0.55 };
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), viewport: camera }));
+    const pending = await beginCanvas();
+    const waiting = current.tabs.waitForCanvasPlacement();
+    await React.act(async () => current.tabs.replaceTabDocument("a", {
+        ...loadedTab("a"), nodes: [node("a")],
+    }, { preserveViewport: true }));
+    assert.equal(await waiting, false);
+    assert.equal(pending.reads, 0);
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, camera);
+    assert.equal(await completeCanvas(pending, { x: 0, y: 0, zoom: 1 }), false);
+    const settled = await beginCanvas();
+    await completeCanvas(settled, camera);
+    await React.act(async () => current.tabs.releaseCanvasPlacement(settled.identity, settled.instance));
+    settled.setViewport({ x: 0, y: 0, zoom: 1 });
+    await React.act(async () => current.tabs.replaceTabDocument("a", loadedTab("a"), { preserveViewport: true }));
+    assert.deepEqual(current.tabs.canvasPlacement.viewport, camera);
+    assert.equal(current.tabs.activeTab.isModified, false);
+});
+
+test("unmount cancels navigation waiting for canvas placement", async () => {
+    await openTab("a");
+    const pending = current.tabs.waitForCanvasPlacement();
+    await React.act(async () => root.render(null));
+    assert.equal(await pending, false);
+});
+
+test("camera lifecycle is presentation-only while semantic current-tab patches still change the save fingerprint", async () => {
+    await openTab("a");
+    const before = current.tabs.getTabSnapshot();
+    const synchronizations = calls.filter((call) => call.command === "sync").length;
+    const canvas = await beginCanvas();
+    await completeCanvas(canvas, { x: 20, y: -70, zoom: 0.9 });
+    const camera = { x: 85, y: 110, zoom: 0.4 };
+    canvas.setViewport(camera);
+    await React.act(async () => {
+        assert.equal(current.tabs.recordCanvasViewport(canvas.identity, canvas.instance, camera), true);
+        assert.equal(current.tabs.recordCanvasViewport(canvas.identity, canvas.instance,
+            { x: NaN, y: 0, zoom: 1 }), false);
+        current.tabs.releaseCanvasPlacement(canvas.identity, canvas.instance);
+    });
+    assert.equal(current.tabs.getTabSnapshot().fingerprint, before.fingerprint);
+    assert.equal(current.tabs.activeFingerprint, before.fingerprint);
+    assert.equal(current.tabs.activeTab.isModified, false);
+    assert.equal(calls.filter((call) => call.command === "sync").length, synchronizations);
+    await React.act(async () => assert.equal(current.history.undo(), false));
+    await openTab("b");
+    assert.deepEqual(current.tabs.getTabSnapshot("a").viewport, camera);
+    assert.equal(current.tabs.getTabSnapshot("a").fingerprint, before.fingerprint);
+    await React.act(async () => current.tabs.switchTab("a"));
+    const patchedNodes = current.graph.nodes.map((item) => ({
+        ...item, data: { ...item.data, params: [{ key: "rate", expr: "99" }] },
+    }));
+    await React.act(async () => current.tabs.openTab(loadedTab("child"), {
+        currentTabPatch: { nodes: patchedNodes },
+    }));
+    const patched = current.tabs.getTabSnapshot("a");
+    assert.notEqual(patched.fingerprint, before.fingerprint);
+    assert.equal(patched.isModified, true);
+    assert.equal(patched.nodes[0].data.params[0].expr, "99");
+    assert.deepEqual(patched.viewport, camera);
 });
 
 test("inactive dirty conflicts stay visible on their tab without activating it or replacing local content", async () => {

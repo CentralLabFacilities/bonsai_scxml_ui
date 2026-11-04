@@ -237,11 +237,11 @@ export function useLiveExecution({
     visibleNodes = EMPTY,
     visibleEdges = EMPTY,
     fitView,
-    getViewport,
-    setViewport,
     switchTab,
     suspendFollow = false,
     getActiveDocumentIdentity,
+    canvasReadyIdentity,
+    isCanvasPlacementReady,
 }) {
     const workflow = liveExecution?.workflow;
     const tabsSnapshot = liveExecution?.tabsSnapshot;
@@ -486,7 +486,8 @@ export function useLiveExecution({
         follow.action = action;
         if (changed || explicitlyEnabled) {
             follow.pending = { tabId: activeTabId, generation: activeDocumentGeneration,
-                fingerprint: activeFingerprint, expectedTabId: null };
+                fingerprint: activeFingerprint, expectedTabId: null,
+                identity: getActiveDocumentIdentity?.() };
         }
         const request = follow.pending;
         if (!wantsCamera || !liveActive || !request || !rootValid) {
@@ -494,8 +495,17 @@ export function useLiveExecution({
             return undefined;
         }
         const arrived = request.expectedTabId === activeTabId;
+        const currentIdentity = getActiveDocumentIdentity?.();
+        if (arrived) {
+            request.identity = currentIdentity;
+            request.expectedTabId = null;
+            request.tabId = activeTabId;
+            request.generation = activeDocumentGeneration;
+            request.fingerprint = activeFingerprint;
+        }
         if (!arrived && (request.tabId !== activeTabId || request.generation !== activeDocumentGeneration ||
-            request.fingerprint !== activeFingerprint)) {
+            request.fingerprint !== activeFingerprint ||
+            (getActiveDocumentIdentity && request.identity !== currentIdentity))) {
             follow.pending = null; // Manual switch/edit must not be fought by a late frame.
             return undefined;
         }
@@ -518,6 +528,7 @@ export function useLiveExecution({
                 switchTab(projection.targetTabId);
             });
         } else if ((focusedParallel || activeTransition?.cameraIds.length || projection.cameraIds.length) && fitView) {
+            if (isCanvasPlacementReady && !isCanvasPlacementReady(identity)) return undefined;
             const fit = () => {
                 follow.pending = null;
                 const ids = focusedParallel ? [focusedParallel.node.id]
@@ -529,8 +540,7 @@ export function useLiveExecution({
                 fitView({ nodes: ids.map((id) => ({ id })), padding: 0.55,
                     duration: 300, maxZoom: 1.15 });
             };
-            // Tab restoration owns two frames; fit after its viewport restore.
-            schedule(() => arrived ? schedule(fit) : fit());
+            schedule(fit);
         }
         return () => {
             cancelled = true;
@@ -538,8 +548,8 @@ export function useLiveExecution({
         };
     }, [model, statesKey, wantsCamera, action, liveActive, rootValid, activeTabId,
         activeDocumentGeneration, activeFingerprint, suspendFollow, projection, activeTransition,
-        liveExecution?.focusRequest, fitView, getViewport, setViewport, switchTab, getActiveDocumentIdentity, focusedParallel?.key,
-        parallelViews.length]);
+        liveExecution?.focusRequest, fitView, switchTab, getActiveDocumentIdentity, focusedParallel?.key,
+        parallelViews.length, canvasReadyIdentity, isCanvasPlacementReady]);
 
     return { liveVisibleNodes: runtimeNodes, liveVisibleEdges: runtimeEdges,
         liveActive, unresolvedStates: projection.unresolvedStates, runtimeParallelViews: parallelViews,

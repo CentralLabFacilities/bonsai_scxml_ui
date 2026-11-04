@@ -14,6 +14,7 @@ import { CompoundNode, ParallelNode, ParallelLaneNode } from "../graph/Container
 import EditableTransitionEdge, { GestureRoutingContext } from "../graph/EditableTransitionEdge";
 import CodeView from "./CodeView";
 import ModeSwitcher from "./ModeSwitcher.jsx";
+import CanvasViewportPlacement from "./CanvasViewportPlacement.jsx";
 import RuntimeLogPlayer from "../inspector/RuntimeLogPlayer.jsx";
 import CanvasContextMenu from "./CanvasContextMenu.jsx";
 import { getSlotConnectionColor, getTransitionHighlightColor, parseSlotConnectionHandle } from "../../utils/editorGraph";
@@ -117,6 +118,13 @@ export default function EditorCanvas({
     visibleNodes,
     visibleEdges,
     documentKey,
+    canvasPlacement,
+    canvasPlacementReady,
+    getActiveDocumentIdentity,
+    beginCanvasPlacement,
+    completeCanvasPlacement,
+    releaseCanvasPlacement,
+    recordCanvasViewport,
     smartRoutingNodes,
     edgeFocusMode,
     nodeFocusMode,
@@ -166,6 +174,7 @@ export default function EditorCanvas({
     // the DOM stable unless the *node* count itself is genuinely very large;
     // transition-heavy graphs are handled by the interaction edge fast paths.
     const useViewportCulling = visibleNodes.length >= 600;
+    const viewportOwnerRef = useRef(null);
     // Reversible benchmark: set bonsai:fastGestureRouting to "0" and reload
     // to compare the exact same graph against normal routing during gestures.
     const fastGestureRouting = typeof window === "undefined" ||
@@ -564,10 +573,12 @@ export default function EditorCanvas({
         flowElement.classList.add("editor-viewport-moving");
     }, [clearFastHover]);
 
-    const handleViewportMoveEnd = useCallback(() => {
+    const handleViewportMoveEnd = useCallback((_, viewport) => {
         movingFlowElementRef.current?.classList.remove("editor-viewport-moving");
         movingFlowElementRef.current = null;
-    }, []);
+        const owner = viewportOwnerRef.current;
+        if (owner) recordCanvasViewport(owner.identity, owner.instance, viewport);
+    }, [recordCanvasViewport]);
 
     useEffect(
         () => () => {
@@ -645,6 +656,8 @@ export default function EditorCanvas({
                 <GestureRoutingContext.Provider value={lightweightGestureRouting}>
                 <ReactFlow
                     key={documentKey}
+                    defaultViewport={canvasPlacement.viewport || undefined}
+                    data-viewport-ready="false"
                     className={
                         [
                             (!showTransitionEdges || activeMode === "slots") &&
@@ -660,11 +673,11 @@ export default function EditorCanvas({
                     }
                     nodes={visibleNodes}
                     edges={visibleEdges}
-                    // Keep the complete graph loaded/cached, but only mount
-                    // React Flow elements that are actually inside the viewport.
-                    // This significantly reduces DOM/SVG work on large state
-                    // machines without changing the semantic graph in memory.
-                    onlyRenderVisibleElements={useViewportCulling}
+                    // An unknown camera needs every visible node measured,
+                    // including nodes outside the provisional viewport. Resume
+                    // ordinary large-graph culling after that one initial fit.
+                    onlyRenderVisibleElements={useViewportCulling &&
+                        (!canvasPlacement.fitOptions || canvasPlacementReady)}
                     onNodesChange={(changes) => {
                         // Synthetic React Flow measurements of an expanded live
                         // presentation must never leak into the saved graph.
@@ -754,6 +767,15 @@ export default function EditorCanvas({
                     }}
                 >
                     <FlowLifecycleProbe />
+                    <CanvasViewportPlacement
+                        placement={canvasPlacement}
+                        getActiveDocumentIdentity={getActiveDocumentIdentity}
+                        nodes={visibleNodes}
+                        ownerRef={viewportOwnerRef}
+                        beginPlacement={beginCanvasPlacement}
+                        completePlacement={completeCanvasPlacement}
+                        releasePlacement={releaseCanvasPlacement}
+                    />
                     <Background />
                     <Controls position={runtimePlayback?.loaded || liveExecutionActive ? "bottom-right" : "bottom-left"} />
                 </ReactFlow>

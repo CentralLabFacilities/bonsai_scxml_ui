@@ -128,6 +128,8 @@ export function useEditorDetailsController({
     selectEditorNode,
     fitView,
     setCenter,
+    getActiveDocumentIdentity,
+    waitForCanvasPlacement,
     setHoveredSlotAccessNodeId,
     switchTab,
     handleOpenSubMachine,
@@ -181,8 +183,10 @@ export function useEditorDetailsController({
     );
 
     const handleNavigateCloneSource = useCallback(
-        (nodeId) => {
+        async (nodeId) => {
             if (!nodeId) return;
+            const identity = getActiveDocumentIdentity?.();
+            if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
 
             const flowNodes = getNodes();
             const byId = new Map(flowNodes.map((node) => [node.id, node]));
@@ -211,6 +215,7 @@ export function useEditorDetailsController({
             selectEditorNode(nodeId, { kind: "node", tab: null });
 
             window.setTimeout(() => {
+                if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
                 const flowNode = getNodes().find((node) => node.id === nodeId);
                 if (!flowNode) {
                     fitView({
@@ -245,6 +250,8 @@ export function useEditorDetailsController({
             handleToggleContainerCollapse,
             selectEditorNode,
             setCenter,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );
 
@@ -283,6 +290,7 @@ export function useEditorDetailsController({
     const expandAncestorsForNavigation = useCallback(
         async (targetNode) => {
             if (!targetNode?.id) return;
+            const identity = getActiveDocumentIdentity?.();
 
             const currentNodes = getNodes();
             const byId = new Map(currentNodes.map((node) => [node.id, node]));
@@ -378,6 +386,7 @@ export function useEditorDetailsController({
             });
 
             await nextEditorFrame();
+            if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
 
             const containerIdsToRefresh = getNodes()
                 .filter((node) =>
@@ -399,11 +408,13 @@ export function useEditorDetailsController({
 
             await nextEditorFrame();
         },
-        [getNodes, setNodes, updateNodeInternals]
+        [getNodes, setNodes, updateNodeInternals, getActiveDocumentIdentity]
     );
 
     const focusSlotAccessNode = useCallback(
         async (nodeId, skillName = "") => {
+            const identity = getActiveDocumentIdentity?.();
+            if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
             const currentNodes = getNodes();
             const targetNode = findSkillByIdentity(
                 currentNodes,
@@ -416,6 +427,7 @@ export function useEditorDetailsController({
             if (targetNode) {
                 await expandAncestorsForNavigation(targetNode);
             }
+            if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
 
             clearAllEdgeSelection();
             selectEditorNode(resolvedNodeId, {
@@ -426,6 +438,7 @@ export function useEditorDetailsController({
             setRightPanelTab("details");
 
             await nextEditorFrame();
+            if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
             const flowNodes = getNodes();
             const flowNode = findSkillByIdentity(
                 flowNodes,
@@ -466,6 +479,8 @@ export function useEditorDetailsController({
             selectEditorNode,
             setCenter,
             setRightPanelTab,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );
 
@@ -491,7 +506,8 @@ export function useEditorDetailsController({
             if (access.sourceTabId) {
                 if (access.sourceTabId !== activeTabId) {
                     switchTab(access.sourceTabId);
-                    await nextEditorFrame();
+                    const identity = getActiveDocumentIdentity?.();
+                    if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
                 }
                 await focusSlotAccessNode(targetNodeId, targetSkillName);
                 return;
@@ -517,14 +533,20 @@ export function useEditorDetailsController({
             for (let index = 0; index < steps; index += 1) {
                 if (!subMachineNode?.data?.src) break;
 
-                await handleOpenSubMachine?.(
+                const opened = await handleOpenSubMachine?.(
                     subMachineNode.data.src,
                     subMachineNode.data?.label ||
                         subMachineNode.data?.fullSkillName ||
                         machinePath[index] ||
                         "Sub-state machine"
                 );
-                await nextEditorFrame();
+                if (opened === false) return;
+                const identity = getActiveDocumentIdentity?.();
+                if (waitForCanvasPlacement) {
+                    if (!(await waitForCanvasPlacement(identity))) return;
+                } else {
+                    await nextEditorFrame();
+                }
 
                 currentNodes = getNodes();
                 const isFinalMachine = index >= steps - 1;
@@ -549,21 +571,26 @@ export function useEditorDetailsController({
             setHoveredSlotAccessNodeId,
             setRightPanelTab,
             switchTab,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );
 
     const handleNavigateAncestorSlot = useCallback(
-        (tabId, nodeId = null) => {
+        async (tabId, nodeId = null) => {
             if (!tabId) return;
 
             if (tabId !== activeTabId) {
                 switchTab(tabId);
             }
+            const identity = getActiveDocumentIdentity?.();
+            if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
             setRightPanelTab("details");
 
             if (!nodeId) return;
 
             window.setTimeout(() => {
+                if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
                 selectEditorNode(nodeId, {
                     kind: "node",
                     allowMissing: true,
@@ -571,6 +598,7 @@ export function useEditorDetailsController({
                 });
 
                 window.setTimeout(() => {
+                    if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
                     const flowNode = getNodes().find(
                         (node) => node.id === nodeId
                     );
@@ -611,6 +639,8 @@ export function useEditorDetailsController({
             setCenter,
             setRightPanelTab,
             switchTab,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );
 

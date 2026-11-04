@@ -13,6 +13,8 @@ export function useEditorFind({
     checkSlotConnection,
     selectEditorNode,
     fitView,
+    getActiveDocumentIdentity,
+    waitForCanvasPlacement,
 }) {
     const [isFindOpen, setIsFindOpen] = useState(false);
     const [findState, setFindState] = useState({ query: "", index: 0 });
@@ -165,8 +167,12 @@ export function useEditorFind({
     }, [findQuery, semanticNodes, slotNodes, manualSlots]);
 
     const focusFindResult = useCallback(
-        (result) => {
+        async (result) => {
             if (!result) return;
+            const identity = getActiveDocumentIdentity?.();
+            if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
+            const owned = () => !getActiveDocumentIdentity || getActiveDocumentIdentity() === identity;
+            if (!owned()) return;
 
             clearAllEdgeSelection();
 
@@ -178,6 +184,7 @@ export function useEditorFind({
                 checkSlotConnection(nodes, manualSlots);
 
                 window.setTimeout(() => {
+                    if (!owned()) return;
                     selectEditorNode(result.id, {
                         kind: "slot",
                         allowMissing: true,
@@ -199,6 +206,7 @@ export function useEditorFind({
                 });
 
                 window.setTimeout(() => {
+                    if (!owned()) return;
                     fitView({
                         nodes: [{ id: result.id }],
                         padding: 0.8,
@@ -219,6 +227,8 @@ export function useEditorFind({
             checkSlotConnection,
             selectEditorNode,
             fitView,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );
 

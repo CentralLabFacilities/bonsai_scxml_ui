@@ -71,6 +71,7 @@ const expandProblemContainers = ({
     containersToExpand,
     setNodes,
     updateNodeInternals,
+    isOwned,
 }) => {
     if (containersToExpand.length === 0) return;
 
@@ -138,6 +139,7 @@ const expandProblemContainers = ({
     );
 
     requestAnimationFrame(() => {
+        if (!isOwned()) return;
         containersToExpand.forEach((containerId) =>
             updateNodeInternals(containerId)
         );
@@ -150,13 +152,17 @@ const focusProblemNodes = ({
     getNodes,
     setCenter,
     fitView,
+    isOwned,
+    waitForPlacement,
 }) => {
     if (focusIds.length === 0) return;
 
     // Give React Flow two frames to apply expanded container dimensions and
     // remeasure nested nodes before navigating to a hidden child.
     requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+        requestAnimationFrame(async () => {
+            if (waitForPlacement && !(await waitForPlacement())) return;
+            if (!isOwned()) return;
             const currentNodes = getNodes();
 
             if (primaryFocusId) {
@@ -213,10 +219,14 @@ export const useProblemNavigation = ({
     fitView,
     updateNodeInternals,
     selectEditorNode,
+    getActiveDocumentIdentity,
+    waitForCanvasPlacement,
 }) =>
     useCallback(
         (problem) => {
             if (!problem) return;
+            const identity = getActiveDocumentIdentity?.();
+            const isOwned = () => !getActiveDocumentIdentity || getActiveDocumentIdentity() === identity;
 
             if (problem.mode) {
                 setActiveMode(problem.mode);
@@ -275,6 +285,7 @@ export const useProblemNavigation = ({
                 containersToExpand,
                 setNodes,
                 updateNodeInternals,
+                isOwned,
             });
 
             if (problem.category === "Transitions" && problem.edgeId) {
@@ -320,6 +331,8 @@ export const useProblemNavigation = ({
                 getNodes,
                 setCenter,
                 fitView,
+                isOwned,
+                waitForPlacement: waitForCanvasPlacement && (() => waitForCanvasPlacement(identity)),
             });
         },
         [
@@ -336,5 +349,7 @@ export const useProblemNavigation = ({
             setShowTransitionEdges,
             updateNodeInternals,
             selectEditorNode,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
         ]
     );

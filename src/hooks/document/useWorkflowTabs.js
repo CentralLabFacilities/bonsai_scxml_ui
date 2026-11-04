@@ -15,6 +15,20 @@ const checkpointTab = (tab) => ({
     isModified: false,
 });
 
+const copyViewport = (viewport) =>
+    viewport &&
+    Number.isFinite(viewport.x) &&
+    Number.isFinite(viewport.y) &&
+    Number.isFinite(viewport.zoom) &&
+    viewport.zoom > 0
+        ? { x: viewport.x, y: viewport.y, zoom: viewport.zoom }
+        : null;
+
+const hasSaveablePatch = (snapshot, patch) =>
+    ["nodes", "edges", "manualSlots", "globalDataModel"].some(
+        (key) => Object.hasOwn(patch, key) && patch[key] !== snapshot[key],
+    );
+
 const sameDocumentInputs = (previous, next) => {
     if (
         !previous ||
@@ -92,9 +106,6 @@ export function useWorkflowTabs({
     hasPendingNodeChanges,
     selectedNodeId,
     setSelectedNodeId,
-    fitView,
-    getViewport,
-    setViewport,
     syncRustDocument,
     cancelFlowConnection,
     isDraggingNode = false,
@@ -102,17 +113,120 @@ export function useWorkflowTabs({
     const [storedTabs, setTabsState] = useState(() => [createInitialTab()]);
     const tabsRef = useRef(storedTabs);
     const documentSequenceRef = useRef(0);
-    const activeDocumentIdentityRef = useRef({
+    const [initialDocumentIdentity] = useState(() => ({
         id: "tab-1",
         documentGeneration: 0,
         activationGeneration: 0,
-    });
+    }));
+    const activeDocumentIdentityRef = useRef(initialDocumentIdentity);
     // This token stays stable across edits, but not across leaving/reloading a
     // document. Async guards can read it without serializing a tab snapshot.
     const getActiveDocumentIdentity = useCallback(
         () => activeDocumentIdentityRef.current,
         [],
     );
+
+    const [canvasPlacement, setCanvasPlacement] = useState(() => ({
+        identity: initialDocumentIdentity,
+        viewport: copyViewport(storedTabs[0].viewport),
+        fitOptions: null,
+    }));
+    const canvasPlacementRef = useRef(canvasPlacement);
+    const lastValidViewportRef = useRef(canvasPlacement.viewport);
+    const canvasOwnerRef = useRef(null);
+    const [canvasReadyIdentity, setCanvasReadyIdentity] = useState(null);
+    const canvasPlacementWaitersRef = useRef(new Set());
+
+    const resolveCanvasPlacementWaiters = useCallback((ready) => {
+        const waiters = [...canvasPlacementWaitersRef.current];
+        canvasPlacementWaitersRef.current.clear();
+        for (const resolve of waiters) resolve(ready);
+    }, []);
+
+    useEffect(() => () => resolveCanvasPlacementWaiters(false), [resolveCanvasPlacementWaiters]);
+
+    const isCanvasPlacementReady = useCallback(
+        (identity = activeDocumentIdentityRef.current) => {
+            const owner = canvasOwnerRef.current;
+            return identity === activeDocumentIdentityRef.current &&
+                owner?.identity === identity && owner.ready;
+        },
+        [],
+    );
+
+    const waitForCanvasPlacement = useCallback(
+        (identity = activeDocumentIdentityRef.current) => {
+            if (identity !== activeDocumentIdentityRef.current) return Promise.resolve(false);
+            if (isCanvasPlacementReady(identity)) return Promise.resolve(true);
+            return new Promise((resolve) => canvasPlacementWaitersRef.current.add(resolve));
+        },
+        [isCanvasPlacementReady],
+    );
+
+    // The shared React Flow store may already be reset or belong to another
+    // activation. Only a settled, explicitly owned instance is safe to read.
+    const captureCanvasViewport = useCallback(() => {
+        const owner = canvasOwnerRef.current;
+        if (owner?.identity === activeDocumentIdentityRef.current && owner.ready) {
+            try {
+                const viewport = copyViewport(owner.instance.getViewport());
+                if (viewport) lastValidViewportRef.current = viewport;
+            } catch {
+                // An absent canvas retains its last settled camera.
+            }
+        }
+        return lastValidViewportRef.current;
+    }, []);
+
+    const beginCanvasPlacement = useCallback((identity, instance) => {
+        if (identity !== activeDocumentIdentityRef.current || !instance) return null;
+        captureCanvasViewport();
+        canvasOwnerRef.current = { identity, instance, ready: false };
+        setCanvasReadyIdentity(null);
+        const viewport = copyViewport(lastValidViewportRef.current);
+        return {
+            viewport,
+            fitOptions: viewport ? null : canvasPlacementRef.current.fitOptions,
+        };
+    }, [captureCanvasViewport]);
+
+    const completeCanvasPlacement = useCallback((identity, instance, viewport) => {
+        const owner = canvasOwnerRef.current;
+        const validViewport = copyViewport(viewport);
+        if (
+            identity !== activeDocumentIdentityRef.current ||
+            owner?.identity !== identity || owner.instance !== instance || !validViewport
+        ) return false;
+        lastValidViewportRef.current = validViewport;
+        owner.ready = true;
+        setCanvasReadyIdentity(identity);
+        resolveCanvasPlacementWaiters(true);
+        return true;
+    }, [resolveCanvasPlacementWaiters]);
+
+    const releaseCanvasPlacement = useCallback((identity, instance) => {
+        const owner = canvasOwnerRef.current;
+        if (
+            identity !== activeDocumentIdentityRef.current ||
+            owner?.identity !== identity || owner.instance !== instance
+        ) return;
+        captureCanvasViewport();
+        canvasOwnerRef.current = null;
+        setCanvasReadyIdentity(null);
+        resolveCanvasPlacementWaiters(false);
+    }, [captureCanvasViewport, resolveCanvasPlacementWaiters]);
+
+    const recordCanvasViewport = useCallback((identity, instance, viewport) => {
+        const owner = canvasOwnerRef.current;
+        const validViewport = copyViewport(viewport);
+        if (
+            identity !== activeDocumentIdentityRef.current ||
+            owner?.identity !== identity || owner.instance !== instance ||
+            !owner.ready || !validViewport
+        ) return false;
+        lastValidViewportRef.current = validViewport;
+        return true;
+    }, []);
 
     const setTabs = useCallback((nextTabsOrUpdater) => {
         // Tab operations can be batched before a commit. Advance their event
@@ -268,32 +382,28 @@ export function useWorkflowTabs({
             const current = activeEditorStateRef.current;
             if (!current) return currentTabs;
 
-            let viewport = null;
-            try {
-                viewport = getViewport?.() || null;
-            } catch {
-                // React Flow can be temporarily unmounted (for example in Code
-                // view). Keep the last tab viewport in that case.
-            }
-
+            const viewport = captureCanvasViewport();
             return currentTabs.map((tab) => {
                 if (tab.id !== current.activeTabId) return tab;
+                const snapshot = getTabSnapshot(tab.id);
                 const next = {
-                    ...getTabSnapshot(tab.id),
+                    ...snapshot,
                     selectedNodeId: current.selectedNodeId || null,
                     viewport: viewport || tab.viewport || null,
                     ...(currentTabPatch || {}),
                 };
-                next.fingerprint = getWorkflowDocumentFingerprint(next);
+                next.fingerprint = currentTabPatch && hasSaveablePatch(snapshot, currentTabPatch)
+                    ? getWorkflowDocumentFingerprint(next)
+                    : snapshot.fingerprint;
                 next.isModified = next.fingerprint !== next.savedFingerprint;
                 return next;
             });
         },
-        [getViewport, getTabSnapshot],
+        [captureCanvasViewport, getTabSnapshot],
     );
 
     const loadTabState = useCallback(
-        (tab, { fit = false, fitOptions = null } = {}) => {
+        (tab, { fit = true, fitOptions = null } = {}) => {
             if (!tab) return;
             // Invalidate pending edits first: cancelConnection may invoke a
             // stale gesture callback, which must not commit into the new tab.
@@ -304,6 +414,24 @@ export function useWorkflowTabs({
                     activeDocumentIdentityRef.current.activationGeneration + 1,
             };
             const activation = activeDocumentIdentityRef.current;
+            const viewport = copyViewport(tab.viewport);
+            const placement = {
+                identity: activation,
+                viewport,
+                fitOptions: viewport || !fit ? null : {
+                    padding: 0.2,
+                    ...(fitOptions || {}),
+                    duration: 0,
+                },
+            };
+            // Advance ownership and camera synchronously, before graph changes
+            // or cleanup callbacks can observe the incoming activation.
+            canvasOwnerRef.current = null;
+            lastValidViewportRef.current = viewport;
+            canvasPlacementRef.current = placement;
+            setCanvasReadyIdentity(null);
+            resolveCanvasPlacementWaiters(false);
+            setCanvasPlacement(placement);
             // A load/tab change can interrupt a native edge gesture. Reset it
             // before replacing the graph so new drags start from a clean state.
             cancelFlowConnection?.();
@@ -339,29 +467,8 @@ export function useWorkflowTabs({
                     : [...(tab.nodes || []), ...(tab.slotNodes || [])].find((node) => node.selected)
                           ?.id || null;
             setSelectedNodeId(restoredSelectedNodeId);
-
-            // React Flow applies node changes asynchronously. Restore the
-            // viewport after the new tab has mounted/measured so switching
-            // state-machine tabs returns to exactly the previous view.
-            window.requestAnimationFrame(() => {
-                window.requestAnimationFrame(() => {
-                    if (activeDocumentIdentityRef.current !== activation) return;
-                    if (tab.viewport && setViewport) {
-                        setViewport(tab.viewport, { duration: 0 });
-                        return;
-                    }
-
-                    if (fit) {
-                        fitView({
-                            padding: 0.2,
-                            duration: 250,
-                            ...(fitOptions || {}),
-                        });
-                    }
-                });
-            });
         },
-        [replaceDocument, setSelectedNodeId, fitView, setViewport, syncRustDocument, cancelFlowConnection],
+        [replaceDocument, setSelectedNodeId, syncRustDocument, cancelFlowConnection, resolveCanvasPlacementWaiters],
     );
 
     const replaceTabDocument = useCallback(
@@ -369,11 +476,11 @@ export function useWorkflowTabs({
             const current = getTabSnapshot(tabId);
             if (!current) return false;
             const { preserveViewport = false, ...tabMetadata } = metadata;
-            let viewport = tabMetadata.viewport;
-            if (preserveViewport && activeEditorStateRef.current?.activeTabId === tabId) {
-                try { viewport = getViewport?.() || current.viewport; }
-                catch { viewport = current.viewport; }
-            }
+            const viewport = preserveViewport
+                ? (activeEditorStateRef.current?.activeTabId === tabId
+                    ? captureCanvasViewport() || current.viewport
+                    : current.viewport)
+                : tabMetadata.viewport;
             const next = checkpointTab({
                 ...current,
                 ...nextDocument,
@@ -387,7 +494,7 @@ export function useWorkflowTabs({
                 loadTabState(next, { fit: !next.viewport });
             return true;
         },
-        [getTabSnapshot, updateTab, loadTabState, getViewport],
+        [getTabSnapshot, updateTab, loadTabState, captureCanvasViewport],
     );
 
     const switchTab = useCallback(
@@ -418,16 +525,17 @@ export function useWorkflowTabs({
                 originGeneration,
                 expectedFingerprint,
                 fit = true,
-                fitOptions = { duration: 300 },
+                fitOptions = null,
             } = {},
         ) => {
             if (!tab?.id) return false;
 
             let updatedTabs = persistActiveTab(tabsRef.current);
             if (currentTabPatch) {
-                const origin = getTabSnapshot(
-                    originTabId || activeEditorStateRef.current?.activeTabId,
-                );
+                const originId = originTabId || activeEditorStateRef.current?.activeTabId;
+                const origin = originId === activeEditorStateRef.current?.activeTabId
+                    ? updatedTabs.find((candidate) => candidate.id === originId)
+                    : getTabSnapshot(originId);
                 if (
                     !origin ||
                     (originGeneration !== undefined &&
@@ -442,7 +550,9 @@ export function useWorkflowTabs({
                         : currentTabPatch;
                 if (!patch) return false;
                 const next = { ...origin, ...patch };
-                next.fingerprint = getWorkflowDocumentFingerprint(next);
+                next.fingerprint = hasSaveablePatch(origin, patch)
+                    ? getWorkflowDocumentFingerprint(next)
+                    : origin.fingerprint;
                 next.isModified = next.fingerprint !== next.savedFingerprint;
                 updatedTabs = updatedTabs.map((candidate) =>
                     candidate.id === origin.id ? next : candidate,
@@ -620,6 +730,14 @@ export function useWorkflowTabs({
         activeTab,
         activeFingerprint,
         getActiveDocumentIdentity,
+        canvasPlacement,
+        canvasReadyIdentity,
+        beginCanvasPlacement,
+        completeCanvasPlacement,
+        releaseCanvasPlacement,
+        recordCanvasViewport,
+        isCanvasPlacementReady,
+        waitForCanvasPlacement,
         getTabSnapshot,
         getTabsSnapshot,
         updateTab,

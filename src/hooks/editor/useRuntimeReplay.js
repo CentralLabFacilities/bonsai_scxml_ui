@@ -116,6 +116,9 @@ export function useRuntimeReplay({
     fitView,
     switchTab,
     setActiveMode,
+    getActiveDocumentIdentity,
+    canvasReadyIdentity,
+    isCanvasPlacementReady,
 }) {
     const [runtimeLog, setRuntimeLog] = useState(null);
     const [runtimeReplayCache, setRuntimeReplayCache] = useState(null);
@@ -128,6 +131,8 @@ export function useRuntimeReplay({
     const [runtimeChangesPanelOpen, setRuntimeChangesPanelOpen] = useState(false);
     const [runtimeFocusRequest, setRuntimeFocusRequest] = useState(0);
     const runtimeFocusHandledRef = useRef(-1);
+    const runtimeFocusOwnerRef = useRef(null);
+    const runtimeTraceOwnerRef = useRef(null);
     const runtimeReplayContextsRef = useRef([]);
     const runtimeReplayCacheStoreRef = useRef(new Map());
     const runtimeLoadRequestRef = useRef(0);
@@ -396,6 +401,14 @@ export function useRuntimeReplay({
             return undefined;
         }
 
+        if (!runtimeTraceOwnerRef.current || runtimeTraceOwnerRef.current.log !== runtimeLog) {
+            runtimeTraceOwnerRef.current = { log: runtimeLog, identity: getActiveDocumentIdentity?.() };
+        }
+        const identity = runtimeTraceOwnerRef.current.identity;
+        if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) {
+            return undefined;
+        }
+        if (isCanvasPlacementReady && !isCanvasPlacementReady(identity)) return undefined;
         const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
         const traceNodes = Array.from(runtimeTraceNodeIds)
             .filter((id) => visibleNodeIds.has(id))
@@ -404,6 +417,7 @@ export function useRuntimeReplay({
         if (traceNodes.length === 0) return undefined;
 
         const frame = window.requestAnimationFrame(() => {
+            if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
             fitView({
                 nodes: traceNodes,
                 padding: 0.28,
@@ -422,6 +436,9 @@ export function useRuntimeReplay({
         runtimeTraceNodeIds,
         visibleNodes,
         fitView,
+        getActiveDocumentIdentity,
+        canvasReadyIdentity,
+        isCanvasPlacementReady,
     ]);
 
     useEffect(() => {
@@ -429,6 +446,15 @@ export function useRuntimeReplay({
         // Any playback/seek focus supersedes the pending whole-trace fit.
         // Prevent the two RAF animations from running one after the other.
         if (runtimeFocusHandledRef.current === runtimeFocusRequest) {
+            return undefined;
+        }
+        let request = runtimeFocusOwnerRef.current;
+        if (!request || request.focus !== runtimeFocusRequest) {
+            request = { focus: runtimeFocusRequest, identity: getActiveDocumentIdentity?.() };
+            runtimeFocusOwnerRef.current = request;
+        }
+        if (getActiveDocumentIdentity && request.identity !== getActiveDocumentIdentity()) {
+            runtimeFocusHandledRef.current = runtimeFocusRequest;
             return undefined;
         }
 
@@ -440,8 +466,10 @@ export function useRuntimeReplay({
             activeRuntimeStep.tabId !== activeTabId
         ) {
             switchTab(activeRuntimeStep.tabId);
+            request.identity = getActiveDocumentIdentity?.();
             return undefined;
         }
+        if (isCanvasPlacementReady && !isCanvasPlacementReady(request.identity)) return undefined;
 
         const visibleNodeIds = new Set(visibleNodes.map((node) => node.id));
         const followNodeIds = [
@@ -459,9 +487,10 @@ export function useRuntimeReplay({
 
         if (followNodeIds.length === 0) return undefined;
 
-        runtimeFocusHandledRef.current = runtimeFocusRequest;
-        setRuntimeTraceNeedsFit(false);
         const frame = window.requestAnimationFrame(() => {
+            if (getActiveDocumentIdentity && request.identity !== getActiveDocumentIdentity()) return;
+            runtimeFocusHandledRef.current = runtimeFocusRequest;
+            setRuntimeTraceNeedsFit(false);
             fitView({
                 nodes: followNodeIds.map((id) => ({ id })),
                 padding: 0.55,
@@ -479,6 +508,9 @@ export function useRuntimeReplay({
         switchTab,
         visibleNodes,
         fitView,
+        getActiveDocumentIdentity,
+        canvasReadyIdentity,
+        isCanvasPlacementReady,
     ]);
 
     const playbackVisibleNodes = useMemo(() => {
