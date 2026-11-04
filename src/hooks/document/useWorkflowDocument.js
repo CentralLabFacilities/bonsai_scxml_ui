@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isTauri, openFile, saveFile } from "../../tauri-client";
+import { isTauri, openFile, saveFile, selectSaveDestination } from "../../tauri-client";
+import { useExternalWorkflowChanges } from "./useExternalWorkflowChanges.js";
 import {
     getWorkflowFileKey,
     inspectWorkflowForEditorSource,
@@ -36,6 +37,9 @@ const matchesCheckpoint = (snapshot, ticket) =>
 export function useWorkflowDocument({
     isDesktop,
     activeTab,
+    tabs = [],
+    behaviorDirectories = [],
+    activeFingerprint,
     getTabSnapshot,
     getTabsSnapshot,
     updateTab,
@@ -60,6 +64,14 @@ export function useWorkflowDocument({
     const openRef = useRef(null);
     const windowClosingRef = useRef(false);
     const windowCloseApprovedRef = useRef(false);
+    const mappingRef = useRef(behaviorDirectories);
+    const mappingEpoch = useRef(0);
+    const mappingKey = JSON.stringify(behaviorDirectories);
+    useLayoutEffect(() => {
+        mappingEpoch.current += 1;
+        return () => { mappingEpoch.current += 1; };
+    }, [mappingKey]);
+    useLayoutEffect(() => { mappingRef.current = behaviorDirectories; }, [behaviorDirectories]);
 
     const clearOperationNotice = useCallback((action, snapshot) => {
         setDocumentNotice((notice) => notice?.action === action &&
@@ -76,6 +88,8 @@ export function useWorkflowDocument({
 
             clearOperationNotice("save", snapshot);
             setSaveStatus("saving");
+            const mappingIdentity = mappingEpoch.current;
+            updateTab(snapshot.id, { diskSavePending: true });
             // Publish the promise before serialization or native I/O can finish.
             const operation = saveQueueRef.current
                 .then(async () => {
@@ -93,37 +107,71 @@ export function useWorkflowDocument({
                         }
                         const defaultName =
                             snapshot.fileName || `${snapshot.title || "workflow"}.xml`;
-                        const saved = await saveFile(
-                            xml,
-                            forceSaveAs ? null : snapshot.filePath,
-                            defaultName,
-                        );
-                        if (saved?.success !== true && saved?.success !== false) {
-                            throw new Error("The desktop backend did not report a save result.");
+                        const destination = forceSaveAs || !snapshot.filePath
+                            ? await selectSaveDestination(defaultName)
+                            : { path: snapshot.filePath, fileVersion: snapshot.diskVersion };
+                        if (!destination) {
+                            setSaveStatus("idle");
+                            return { success: false, cancelled: true, ...checkpoint(snapshot) };
                         }
-                        if (saved.success && (typeof saved.path !== "string" || !saved.path)) {
-                            throw new Error("The desktop backend did not report the saved file path.");
+                        if (getTabSnapshot(snapshot.id)?.documentGeneration !== snapshot.documentGeneration)
+                            throw new Error("The original workflow was closed or replaced before saving. No file was written.");
+                        if (!forceSaveAs && snapshot.filePath && !snapshot.diskVersion)
+                            throw new Error("The workflow has no accepted disk version. Reload it or use Save As.");
+                        if (mappingEpoch.current !== mappingIdentity)
+                            throw new Error("Behavior mappings changed while preparing Save. Retry against the current mapping.");
+                        const saved = await saveFile(xml, destination.path, destination.fileVersion,
+                            forceSaveAs || !snapshot.filePath ? null : snapshot.diskSource || null,
+                            mappingRef.current);
+                        if (saved?.status === "conflict") {
+                            if (forceSaveAs || !snapshot.filePath)
+                                throw new Error(saved.error || "The selected Save As destination changed. Select it again to capture its current version.");
+                            updateTab(snapshot.id, (current) =>
+                                current.documentGeneration === snapshot.documentGeneration &&
+                                mappingEpoch.current === mappingIdentity ? {
+                                    externalRequiresApproval: true,
+                                    externalFileState: saved.state === "current" ? "changed" : (saved.state || "changed"),
+                                    observedDiskVersion: saved.observedFileVersion ?? saved.fileVersion ?? null,
+                                    externalFileError: saved.error || "The file changed on disk. Reload from disk or use Save As; Keep local does not authorize overwriting.",
+                                } : null);
+                            setSaveStatus("error");
+                            return { success: false, conflict: true, error: saved.error || "The destination changed on disk. Reload or use Save As.", ...checkpoint(snapshot) };
                         }
+                        if (saved?.status !== "saved" || !saved.path || !saved.fileVersion)
+                            throw new Error(saved?.error || "The desktop backend did not report a committed save and disk version.");
                         const result = {
-                            success: Boolean(saved?.success),
-                            fileName: saved?.file_name || defaultName,
-                            filePath: saved?.path || null,
+                            success: true,
+                            fileName: saved.file_name || defaultName,
+                            filePath: saved.path,
+                            fileVersion: saved.fileVersion,
+                            durabilityUncertain: Boolean(saved.durabilityUncertain),
                             ...checkpoint(snapshot),
                         };
-                        if (!result.success) {
-                            setSaveStatus("idle");
-                            return { ...result, cancelled: true };
-                        }
 
                         // A tab can be edited, switched, closed or replaced during I/O.
                         // Never restore the captured graph or rename another document.
                         updateTab(snapshot.id, (current) =>
-                            current.documentGeneration === snapshot.documentGeneration
+                            current.documentGeneration === snapshot.documentGeneration &&
+                            mappingEpoch.current === mappingIdentity
                                 ? {
                                       title: result.fileName.replace(/\.(xml|scxml)$/i, ""),
                                       fileName: result.fileName,
                                       filePath: result.filePath,
                                       savedFingerprint: snapshot.fingerprint,
+                                      diskVersion: result.fileVersion,
+                                      diskSource: forceSaveAs || !snapshot.filePath
+                                          ? { src: result.filePath, currentFilePath: null } : snapshot.diskSource,
+                                      ...(result.filePath === snapshot.filePath &&
+                                          current.observedDiskVersion !== snapshot.observedDiskVersion &&
+                                          current.observedDiskVersion !== result.fileVersion
+                                          ? {}
+                                          : {
+                                              observedDiskVersion: result.fileVersion,
+                                              externalFileState: "current",
+                                              externalFileError: null,
+                                              externalRequiresApproval: false,
+                                              externalKeptVersion: null,
+                                          }),
                                       ...(current.filePath &&
                                       getWorkflowFileKey(current.filePath) !==
                                           getWorkflowFileKey(result.filePath)
@@ -137,7 +185,8 @@ export function useWorkflowDocument({
                                 : null,
                         );
                         const current = getTabSnapshot(snapshot.id);
-                        result.isCurrent = matchesCheckpoint(current, result);
+                        result.isCurrent = mappingEpoch.current === mappingIdentity &&
+                            current?.externalFileState === "current" && matchesCheckpoint(current, result);
                         setLastSavedAt(Date.now());
                         setSaveStatus("saved");
                         clearOperationNotice("save", snapshot);
@@ -146,11 +195,13 @@ export function useWorkflowDocument({
                             current.isModified;
                         notify({
                             id: "workflow-save",
-                            tone: "success",
-                            title: "Workflow saved",
-                            message: newerChangesRemain
-                                ? `${result.fileName} was saved, but newer changes remain unsaved.`
-                                : `${result.fileName} saved successfully.`,
+                            tone: result.durabilityUncertain ? "warning" : "success",
+                            title: result.durabilityUncertain ? "Workflow committed; durability uncertain" : "Workflow saved",
+                            message: result.durabilityUncertain
+                                ? saved.error || "The replacement committed, but the directory could not be synced."
+                                : newerChangesRemain
+                                    ? `${result.fileName} was saved, but newer changes remain unsaved.`
+                                    : `${result.fileName} saved successfully.`,
                             duration: newerChangesRemain ? 5200 : 2600,
                         });
                         return result;
@@ -176,6 +227,8 @@ export function useWorkflowDocument({
                     }
                 })
                 .finally(() => {
+                    updateTab(snapshot.id, (current) => current.documentGeneration === snapshot.documentGeneration
+                        ? { diskSavePending: false } : null);
                     savesRef.current.delete(operationKey);
                     if (savesRef.current.size > 0) setSaveStatus("saving");
                 });
@@ -245,7 +298,7 @@ export function useWorkflowDocument({
             const result = await saveDocument({ tabId: guard.tabId });
             if (guardRef.current !== guard) return;
             const current = getTabSnapshot(guard.tabId);
-            if (result?.success && matchesCheckpoint(current, result)) {
+            if (result?.success && result.isCurrent && matchesCheckpoint(current, result)) {
                 finishGuard(checkpoint(current));
             } else {
                 guard.busy = false;
@@ -293,11 +346,13 @@ export function useWorkflowDocument({
     );
 
     const prepareImportedDocument = useCallback(
-        async ({ inspection, filePath, fileName }) => {
-            onStateMachineLoadStart?.(String(fileName).replace(/\.(xml|scxml)$/i, ""));
-            await new Promise((resolve) =>
-                window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
-            );
+        async ({ inspection, filePath, fileName, background = false }) => {
+            if (!background) {
+                onStateMachineLoadStart?.(String(fileName).replace(/\.(xml|scxml)$/i, ""));
+                await new Promise((resolve) =>
+                    window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)),
+                );
+            }
             try {
                 if (!inspection.workflow)
                     throw new Error("The backend did not return an inspected workflow.");
@@ -306,7 +361,7 @@ export function useWorkflowDocument({
                     getNodeId,
                 });
                 const parsedNodes = ensureSharedEditorInstanceIds(
-                    (await hydrateSubMachineInheritedSlots(parsed.nodes, filePath)).map(
+                    (await hydrateSubMachineInheritedSlots(parsed.nodes, filePath, parsed.edges)).map(
                         normalizeSharedScxmlStateIdentity,
                     ),
                 );
@@ -324,7 +379,7 @@ export function useWorkflowDocument({
                     parameterErrors: parsed.parameterErrors || [],
                 };
             } finally {
-                onStateMachineLoadEnd?.();
+                if (!background) onStateMachineLoadEnd?.();
             }
         },
         [
@@ -339,6 +394,7 @@ export function useWorkflowDocument({
         if (openRef.current) return openRef.current;
         const target = getTabSnapshot(tabId);
         if (!target || guardRef.current) return Promise.resolve(null);
+        const mappingIdentity = mappingEpoch.current;
         clearOperationNotice("open", target);
         setIsOpening(true);
         let filePath = requestedPath;
@@ -351,20 +407,24 @@ export function useWorkflowDocument({
                     if (!filePath) return null;
                     const fileName = filePath.split(/[\\/]/).pop() || "workflow.xml";
                     let imported;
+                    let acceptedInspection;
                     while (true) {
                         const original = getTabSnapshot(target.id);
                         if (!original || original.documentGeneration !== target.documentGeneration)
                             return null;
                         const ticket = await confirmUnsaved(target.id, "replace");
-                        if (!ticket) return null;
+                        if (!ticket || mappingEpoch.current !== mappingIdentity) return null;
                         // Save may have rewritten the selected file, including
                         // through Save As. Never install a pre-approval image.
                         const inspection = await inspectWorkflowForEditorSource({ src: filePath });
+                        if (mappingEpoch.current !== mappingIdentity) return null;
+                        acceptedInspection = inspection;
                         imported = await prepareImportedDocument({
                             inspection,
-                            filePath,
+                            filePath: inspection.path || filePath,
                             fileName,
                         });
+                        if (mappingEpoch.current !== mappingIdentity) return null;
                         const current = getTabSnapshot(target.id);
                         if (!current || current.documentGeneration !== target.documentGeneration)
                             return null;
@@ -375,8 +435,13 @@ export function useWorkflowDocument({
                     const installed = replaceTabDocument(target.id, imported.document, {
                         title: fileName.replace(/\.(xml|scxml)$/i, ""),
                         fileName,
-                        filePath,
+                        filePath: acceptedInspection.path || filePath,
                         fileHandle: null,
+                        diskVersion: acceptedInspection.fileVersion,
+                        diskSource: { src: filePath, currentFilePath: null },
+                        observedDiskVersion: acceptedInspection.fileVersion,
+                        externalFileState: "current",
+                        externalFileError: null,
                         sourcePath: null,
                         parentTabId: null,
                         selectedNodeId: null,
@@ -556,8 +621,14 @@ export function useWorkflowDocument({
     );
 
     const noticeOrigin = documentNotice && getTabSnapshot(documentNotice.tabId);
+    const externalFiles = useExternalWorkflowChanges({
+        isDesktop, tabs, activeFingerprint, behaviorDirectories, activeTab, getTabSnapshot, getTabsSnapshot,
+        updateTab, replaceTabDocument, prepareImportedDocument, notify,
+        saveAs: (tabId) => saveDocument({ tabId, forceSaveAs: true }),
+    });
 
     return {
+        ...externalFiles,
         ...documentInfo,
         isOpening,
         documentNotice: documentNotice ? {

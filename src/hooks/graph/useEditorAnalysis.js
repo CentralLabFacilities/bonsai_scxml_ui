@@ -1,3 +1,4 @@
+import { collectWorkflowDependencyProblems } from "../../utils/workflowInterface.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDerivedGraphSnapshot } from "./useEditorGraphMaintenance.js";
 import {
@@ -659,9 +660,18 @@ export function useEditorAnalysis({
         : validationResult.query === validationQuery ? validationResult.status : "pending";
     // A revision-only refresh can retain diagnostics for the identical source.
     // Changed documents/configuration hide old ownership synchronously in render.
-    const editorProblems = !nativeValidationAvailable ? browserProblems
+    const nativeOrBrowserProblems = !nativeValidationAvailable ? browserProblems
         : validationResult.query?.validationSource === validationSource
             ? validationResult.problems : EMPTY_PROBLEMS;
+    const editorProblems = useDerivedGraphSnapshot(
+        [nativeOrBrowserProblems, semanticNodes],
+        () => {
+            const dependencyProblems = collectWorkflowDependencyProblems(semanticNodes);
+            return dependencyProblems.length
+                ? [...nativeOrBrowserProblems, ...dependencyProblems]
+                : nativeOrBrowserProblems;
+        },
+    );
     const validationRevisionRef = useRef(0);
     const semanticNodeCount = semanticNodes?.length || 0;
     const edgeCount = edges?.length || 0;

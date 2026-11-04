@@ -346,7 +346,7 @@ function Header({
 
 export default Header;
 
-export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs }) {
+export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs, onReload, onKeepLocal }) {
     const noticeRef = useRef(null);
     const previousFocusRef = useRef(null);
     useEffect(() => {
@@ -356,8 +356,17 @@ export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs }) {
         }
     }, [notice]);
     if (!notice) return null;
+    const restoreFocus = () => {
+        const previous = previousFocusRef.current;
+        if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) previous.focus();
+        else document.querySelector('.intellij-tab-button[aria-selected="true"]')?.focus();
+    };
     return (
-        <section ref={noticeRef} className="editor-operation-notice" aria-label={notice.action === "insert" ? "Library insertion feedback" : "File operation feedback"}>
+        <section ref={noticeRef} className="editor-operation-notice" aria-label={notice.action === "insert" ? "Library insertion feedback" : "File operation feedback"}
+            onFocusCapture={(event) => {
+                if (event.relatedTarget && event.relatedTarget !== document.body &&
+                    !event.currentTarget.contains(event.relatedTarget)) previousFocusRef.current = event.relatedTarget;
+            }}>
             <FiAlertCircle className="editor-notice-icon" aria-hidden="true" />
             <div className="editor-notice-message" role="alert" aria-atomic="true">
                 <strong>{notice.title}</strong>
@@ -374,22 +383,30 @@ export function EditorNotice({ notice, onDismiss, onRetry, onSaveAs }) {
                 )}
             </div>
             <div className="editor-notice-actions">
-                {notice.canRetry && (
+                {notice.action === "external" && notice.canReload && <>
+                    <Button size="sm" disabled={notice.busy} onClick={async () => {
+                        const active = document.activeElement;
+                        if (active !== document.body && !noticeRef.current?.contains(active)) previousFocusRef.current = active;
+                        if (await onReload?.()) restoreFocus();
+                    }}>Reload from disk</Button>
+                    <Button size="sm" disabled={notice.busy || notice.keptLocal} onClick={() => onKeepLocal?.()}>
+                        {notice.keptLocal ? "Keeping local" : "Keep local"}
+                    </Button>
+                </>}
+                {notice.canRetry && (notice.action !== "external" || !notice.canReload) && (
                     <Button size="sm" disabled={notice.busy} onClick={() => void onRetry?.()}>
-                        Retry {notice.action === "save" ? "Save" : "Open"}
+                        {notice.action === "external" ? "Retry disk check" : `Retry ${notice.action === "save" ? "Save" : "Open"}`}
                     </Button>
                 )}
-                {notice.canRetry && notice.action === "save" && (
+                {notice.canRetry && (notice.action === "save" || notice.action === "external") && (
                     <Button size="sm" disabled={notice.busy} onClick={() => void onSaveAs?.()}>Save As...</Button>
                 )}
-                <IconButton size="sm" className="editor-notice-dismiss" aria-label="Dismiss operation feedback" onClick={() => {
+                {!notice.persistent && <IconButton size="sm" className="editor-notice-dismiss" aria-label="Dismiss operation feedback" onClick={() => {
                     onDismiss?.();
-                    const previous = previousFocusRef.current;
-                    if (previous?.isConnected && !previous.matches(":disabled") && !previous.closest("[inert]")) previous.focus();
-                    else document.querySelector('.intellij-tab-button[aria-selected="true"]')?.focus();
+                    restoreFocus();
                 }}>
                     <FiX aria-hidden="true" />
-                </IconButton>
+                </IconButton>}
             </div>
         </section>
     );

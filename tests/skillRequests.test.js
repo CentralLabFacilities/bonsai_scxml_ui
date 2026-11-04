@@ -110,10 +110,10 @@ test("empty configurations use the base GET while zero and false remain POST par
     await configured;
 });
 
-test("library refresh invalidates pending definitions and old replies cannot replace new requests", async (context) => {
+test("manual library reload invalidates pending definitions and old replies cannot replace new requests", async (context) => {
     const { service, calls } = skillService(context);
     const old = service.fetchSkillData("Example", { count: "1" });
-    const refresh = service.fetchSkills();
+    const refresh = service.fetchSkills({ manual: true });
     calls[1].reply({ skills: ["Example"] });
     assert.equal(await refresh, true);
 
@@ -173,6 +173,65 @@ test("older overlapping library replies neither change the signature nor clear f
     assert.equal(await old, false);
     assert.equal(await service.fetchSkillData("New"), data);
     assert.equal(calls.length, 3);
+});
+
+test("background list refreshes retain cached skill definitions until a manual reload", async (context) => {
+    const { service, calls } = skillService(context);
+    const definition = service.fetchSkillData("org.skills.Talk");
+    calls[0].reply({ description: "Cached speech description." });
+    const data = await definition;
+    for (const skills of [["org.skills.Talk"], ["org.skills.Talk"], ["org.skills.Talk", "org.skills.Walk"]]) {
+        const refresh = service.fetchSkills();
+        calls.at(-1).reply({ skills });
+        await refresh;
+        const count = calls.length;
+        const cached = service.fetchSkillData("org.skills.Talk");
+        assert.equal(calls.length, count, "background refresh must not refetch a cached description");
+        assert.deepEqual(await cached, data);
+    }
+    const reload = service.fetchSkills({ manual: true });
+    calls.at(-1).reply({ skills: ["org.skills.Talk", "org.skills.Walk"] });
+    await reload;
+    const updated = service.fetchSkillData("org.skills.Talk");
+    calls.at(-1).reply({ description: "Reloaded speech description." });
+    assert.deepEqual(await updated, { description: "Reloaded speech description." });
+});
+
+test("library identifiers and relative node skill names share pending and cached base definitions", async (context) => {
+    const { service, calls } = skillService(context);
+    const list = service.fetchSkills();
+    calls[0].reply({ skills: ["org.skills.dialog.Talk"] });
+    await list;
+    const library = service.fetchSkillData("org.skills.dialog.Talk");
+    const detail = service.fetchSkillData("dialog.Talk", {}, { fallbackToBase: false });
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].url, "/api/skill/org.skills.dialog.Talk");
+    // A poll while both consumers are waiting must not split their request.
+    const poll = service.fetchSkills();
+    calls[2].reply({ skills: ["org.skills.dialog.Talk"] });
+    await poll;
+    const anotherDetail = service.fetchSkillData("dialog.Talk");
+    assert.equal(calls.length, 3);
+    calls[1].reply({ description: "Shared description." });
+    for (const data of await Promise.all([library, detail, anotherDetail])) {
+        assert.equal(data.description, "Shared description.");
+    }
+    assert.equal((await service.fetchSkillData("dialog.Talk")).description, "Shared description.");
+    assert.equal(calls.length, 3);
+});
+
+test("ambiguous relative skill names never reuse another library's description", async (context) => {
+    const { service, calls } = skillService(context);
+    const list = service.fetchSkills();
+    calls[0].reply({ skills: ["one.skills.Talk", "two.skills.Talk"] });
+    await list;
+    const first = service.fetchSkillData("one.skills.Talk");
+    calls[1].reply({ description: "First library." });
+    await first;
+    const ambiguous = service.fetchSkillData("Talk");
+    assert.equal(calls[2].url, "/api/skill/Talk");
+    calls[2].reply({ description: "Backend-resolved skill." });
+    assert.equal((await ambiguous).description, "Backend-resolved skill.");
 });
 
 test("the library starts loading and a valid empty list becomes ready", async (context) => {
@@ -308,7 +367,6 @@ test("failed refreshes retain the valid list and definitions while unchanged suc
     assert.equal(harness.service.skillLibraryError, null);
     assert.equal(harness.service.hasLoadedSkills, true);
     assert.equal(harness.service.skills, originalList);
-    assert.equal(harness.service.skillLibraryRefreshVersion, 1);
 
     const freshBase = harness.service.fetchSkillData("A");
     const freshConfigured = harness.service.fetchSkillData("A", { count: "1" });

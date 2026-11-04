@@ -6,6 +6,11 @@ import { getWorkflowFileKey } from "../../utils/workflowLoader.js";
 const checkpointTab = (tab) => ({
     ...tab,
     documentGeneration: tab.documentGeneration ?? 0,
+    diskVersion: tab.diskVersion ?? null,
+    observedDiskVersion: tab.observedDiskVersion ?? tab.diskVersion ?? null,
+    externalFileState: tab.externalFileState ?? "current",
+    diskSavePending: false,
+    externalRequiresApproval: false,
     savedFingerprint: tab.savedFingerprint ?? getWorkflowDocumentFingerprint(tab),
     isModified: false,
 });
@@ -82,7 +87,9 @@ export function useWorkflowTabs({
     globalDataModel,
     inheritedGlobalDataModel,
     replaceDocument,
+    updateGraph,
     getDocumentSnapshot,
+    hasPendingNodeChanges,
     selectedNodeId,
     setSelectedNodeId,
     fitView,
@@ -199,11 +206,12 @@ export function useWorkflowTabs({
             const currentFingerprint = getWorkflowDocumentFingerprint(snapshot);
             return {
                 ...snapshot,
+                hasPendingLocalInteraction: current?.activeTabId === tabId && hasPendingNodeChanges(),
                 fingerprint: currentFingerprint,
                 isModified: currentFingerprint !== tab.savedFingerprint,
             };
         },
-        [getDocumentSnapshot],
+        [getDocumentSnapshot, hasPendingNodeChanges],
     );
 
     const getTabsSnapshot = useCallback(
@@ -230,13 +238,21 @@ export function useWorkflowTabs({
                     next.isModified = next.fingerprint !== next.savedFingerprint;
                     if (
                         tabId === activeEditorStateRef.current?.activeTabId &&
-                        next.inheritedGlobalDataModel !== current.inheritedGlobalDataModel
+                        next.documentGeneration === current.documentGeneration &&
+                        (next.inheritedGlobalDataModel !== current.inheritedGlobalDataModel ||
+                            next.nodes !== current.nodes || next.edges !== current.edges)
                     ) {
                         activeEditorStateRef.current = {
                             ...activeEditorStateRef.current,
                             inheritedGlobalDataModel: next.inheritedGlobalDataModel,
                         };
-                        replaceDocument(next);
+                        // Derived dependency patches are not document loads:
+                        // preserve queued pointer geometry and history ownership.
+                        updateGraph({
+                            nodes: next.nodes,
+                            edges: next.edges,
+                            inheritedGlobalDataModel: next.inheritedGlobalDataModel,
+                        });
                     }
                     updated = true;
                     return next;
@@ -244,7 +260,7 @@ export function useWorkflowTabs({
             );
             return updated;
         },
-        [setTabs, getTabSnapshot, replaceDocument],
+        [setTabs, getTabSnapshot, updateGraph],
     );
 
     const persistActiveTab = useCallback(
@@ -287,6 +303,7 @@ export function useWorkflowTabs({
                 activationGeneration:
                     activeDocumentIdentityRef.current.activationGeneration + 1,
             };
+            const activation = activeDocumentIdentityRef.current;
             // A load/tab change can interrupt a native edge gesture. Reset it
             // before replacing the graph so new drags start from a clean state.
             cancelFlowConnection?.();
@@ -328,7 +345,7 @@ export function useWorkflowTabs({
             // state-machine tabs returns to exactly the previous view.
             window.requestAnimationFrame(() => {
                 window.requestAnimationFrame(() => {
-                    if (activeEditorStateRef.current?.activeTabId !== tab.id) return;
+                    if (activeDocumentIdentityRef.current !== activation) return;
                     if (tab.viewport && setViewport) {
                         setViewport(tab.viewport, { duration: 0 });
                         return;
@@ -351,19 +368,26 @@ export function useWorkflowTabs({
         (tabId, nextDocument, metadata = {}) => {
             const current = getTabSnapshot(tabId);
             if (!current) return false;
+            const { preserveViewport = false, ...tabMetadata } = metadata;
+            let viewport = tabMetadata.viewport;
+            if (preserveViewport && activeEditorStateRef.current?.activeTabId === tabId) {
+                try { viewport = getViewport?.() || current.viewport; }
+                catch { viewport = current.viewport; }
+            }
             const next = checkpointTab({
                 ...current,
                 ...nextDocument,
-                ...metadata,
+                ...tabMetadata,
+                ...(preserveViewport ? { viewport } : {}),
                 documentGeneration: ++documentSequenceRef.current,
                 savedFingerprint: getWorkflowDocumentFingerprint(nextDocument),
             });
             updateTab(tabId, next);
             if (activeEditorStateRef.current?.activeTabId === tabId)
-                loadTabState(next, { fit: true });
+                loadTabState(next, { fit: !next.viewport });
             return true;
         },
-        [getTabSnapshot, updateTab, loadTabState],
+        [getTabSnapshot, updateTab, loadTabState, getViewport],
     );
 
     const switchTab = useCallback(

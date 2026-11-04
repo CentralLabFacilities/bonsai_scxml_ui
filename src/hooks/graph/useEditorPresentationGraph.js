@@ -2,7 +2,6 @@ import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 
 import { getCollapsedTransitionSource } from "../../utils/editorGraph.js";
 import { getCollapsedBoundaryLayout, getContainerExitEvents, toggleContainerCollapse as expandRuntimeContainer } from "../../utils/containerState.js";
-import { getLocalDataModelEntries } from "../../utils/editorScxml.js";
 import { growAllStateContainersToContents } from "../../utils/editorGeometry.js";
 import { useDerivedGraphSnapshot, useSemanticNodeSnapshot } from "./useEditorGraphMaintenance.js";
 
@@ -68,8 +67,6 @@ export function useEditorPresentationGraph({
     isDraggingNode,
     nodes,
     edges,
-    tabs,
-    activeTabId,
     activeMode,
     slotConnectionDrag,
     handleAddLaneToParallel,
@@ -364,38 +361,6 @@ export function useEditorPresentationGraph({
     }, [edges, nodeById]);
 
 
-    const childTabBySubmachineNodeId = useMemo(() => {
-        const result = new Map();
-
-        semanticNodes.forEach((node) => {
-            if (node.type !== "submachine") return;
-
-            const srcFileName = String(node.data?.src || "")
-                .split(/[\\/]/)
-                .pop()
-                ?.replace(/\.(xml|scxml)$/i, "");
-
-            const childTab = tabs.find((tab) => {
-                if (tab.parentTabId !== activeTabId) return false;
-
-                const tabFileName = String(tab.fileName || "")
-                    .split(/[\\/]/)
-                    .pop()
-                    ?.replace(/\.(xml|scxml)$/i, "");
-
-                return (
-                    (tab.sourcePath &&
-                        String(tab.sourcePath) === String(node.data?.src || "")) ||
-                    String(tab.title || "") === String(node.data?.label || "") ||
-                    (srcFileName && tabFileName === srcFileName)
-                );
-            });
-
-            if (childTab) result.set(node.id, childTab);
-        });
-
-        return result;
-    }, [semanticNodes, tabs, activeTabId]);
 
     // Keep the injected React Flow node objects stable whenever the source
     // node itself did not change. During a drag React Flow normally replaces
@@ -407,7 +372,6 @@ export function useEditorPresentationGraph({
         unexposedTransitionHandlesByNodeId,
         collapsedParallelTransitionHandlesByNodeId,
         reconnectableIncomingEdgeByNodeId,
-        childTabBySubmachineNodeId,
         activeMode,
         onAddLane,
         onOpenStateActions,
@@ -447,13 +411,8 @@ export function useEditorPresentationGraph({
             const collapsedTransitionSignature = collapsedTransitionHandles
                 .map((event) => `${event.id}:${event.name}:${event.sourceNodeId}:${event.transitionHandleId}:${event.target}`)
                 .join("\u001f");
-            const childTab =
-                n.type === "submachine"
-                    ? childTabBySubmachineNodeId.get(n.id) || null
-                    : null;
 
             const cached = previousCache.get(n.id);
-            const childGlobalDataModel = childTab?.globalDataModel || null;
             const canReuse = Boolean(
                 cached &&
                 cached.sourceNode === n &&
@@ -468,8 +427,7 @@ export function useEditorPresentationGraph({
                 cached.reconnectIncomingEdgeId === reconnectIncomingEdgeId &&
                 cached.activeMode === activeMode &&
                 cached.slotConnectionDrag === slotConnectionDrag &&
-                cached.parameterValueVariables === (n.type === "custom" ? parameterValueVariables : null) &&
-                cached.childGlobalDataModel === childGlobalDataModel
+                cached.parameterValueVariables === (n.type === "custom" ? parameterValueVariables : null)
             );
 
             if (canReuse) {
@@ -504,11 +462,6 @@ export function useEditorPresentationGraph({
             if (n.type === "submachine") {
                 injectedData.onOpenSubMachine = onOpenSubMachine;
 
-                if (childTab) {
-                    injectedData.localDataModel = getLocalDataModelEntries(
-                        childTab.globalDataModel
-                    );
-                }
             }
 
             if (n.type === "parallel") {
@@ -556,7 +509,6 @@ export function useEditorPresentationGraph({
                 reconnectIncomingEdgeId,
                 activeMode,
                 slotConnectionDrag,
-                childGlobalDataModel,
                 parameterValueVariables: n.type === "custom" ? parameterValueVariables : null,
                 value,
             });

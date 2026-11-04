@@ -569,6 +569,8 @@ test("keyboard controls, creation dialogs, and library insertion preserve editor
             const tabs = tabState.useWorkflowTabs({ ...graph, selectedNodeId, setSelectedNodeId, fitView: noop });
             const search = find.useEditorFind({ ...graph, activeMode: "overview", semanticNodes: graph.nodes });
             history.useEditorHistory({ ...graph, activeMode: "overview", activeTabId: tabs.activeTabId,
+                activeDocumentGeneration: tabs.activeTab.documentGeneration,
+                getActiveDocumentIdentity: tabs.getActiveDocumentIdentity,
                 setSelectedNodeId, setRightPanelTab: noop, updateNodeInternals: noop,
                 syncRustDocument: async () => { pasteActions.push("history"); } });
             const documentActions = workflowDocument.useWorkflowDocument({ ...tabs, isDesktop: false });

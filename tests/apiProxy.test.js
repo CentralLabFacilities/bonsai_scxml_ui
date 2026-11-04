@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { installApiProxy } from "../src/utils/apiProxy.js";
-import { loadRuntimeWorkflow, openFile, saveFile, readFile, selectDirectory } from "../src/tauri-client.js";
+import { loadRuntimeWorkflow, openFile, saveFile, selectSaveDestination, readFile, selectDirectory, revalidateWorkflowSources } from "../src/tauri-client.js";
 
 function proxyEnvironment(result = { status: 200, body: "{}" }) {
     const calls = [];
@@ -149,7 +149,7 @@ test("IPC failures propagate to callers", async () => {
 test("file picker cancellation and successful file IO preserve native result contracts", async (context) => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "window");
     const values = new Map([
-        ["open_file", null], ["save_file", { success: false, path: "", file_name: "" }],
+        ["open_file", null], ["select_save_destination", null],
         ["read_file", ""], ["pick_directory", null],
     ]);
     Object.defineProperty(globalThis, "window", { configurable: true, value: {
@@ -160,36 +160,63 @@ test("file picker cancellation and successful file IO preserve native result con
         else delete globalThis.window;
     });
     assert.equal(await openFile(), null);
-    assert.deepEqual(await saveFile("<scxml/>"), { success: false, path: "", file_name: "" });
+    assert.equal(await selectSaveDestination(), null);
     assert.equal(await readFile("/empty.xml"), "");
     assert.equal(await selectDirectory(), null);
     values.set("open_file", "/workflow.xml");
-    values.set("save_file", { success: true, path: "/workflow.xml", file_name: "workflow.xml" });
+    values.set("select_save_destination", { path: "/workflow.xml", fileVersion: "selected-version" });
+    values.set("save_file", { status: "saved", success: true, path: "/workflow.xml", file_name: "workflow.xml", fileVersion: "committed-version" });
     values.set("pick_directory", "/behaviors");
     assert.equal(await openFile(), "/workflow.xml");
-    assert.deepEqual(await saveFile("<scxml/>", "/workflow.xml"), values.get("save_file"));
+    assert.deepEqual(await selectSaveDestination("workflow.xml"), values.get("select_save_destination"));
+    assert.deepEqual(await saveFile("<scxml/>", "/workflow.xml", "selected-version"), values.get("save_file"));
     assert.equal(await selectDirectory(), "/behaviors");
 });
 
 test("file and directory IPC failures reject instead of masquerading as cancellation", async (context) => {
     const original = Object.getOwnPropertyDescriptor(globalThis, "window");
-    const calls = [];
     const reason = "Permission denied";
     Object.defineProperty(globalThis, "window", { configurable: true, value: {
-        __TAURI_INTERNALS__: { invoke: async (command, args) => { calls.push({ command, args }); throw reason; } },
+        __TAURI_INTERNALS__: { invoke: async () => { throw reason; } },
     } });
     context.after(() => {
         if (original) Object.defineProperty(globalThis, "window", original);
         else delete globalThis.window;
     });
-    for (const request of [() => openFile("Open SCXML"), () => saveFile("<scxml/>", "/workflow.xml", "Workflow"),
+    for (const request of [() => openFile("Open SCXML"), () => selectSaveDestination("workflow.xml"),
+        () => saveFile("<scxml/>", "/workflow.xml", "loaded-version"),
         () => readFile("/workflow.xml"), () => selectDirectory("Behaviors")]) {
         await assert.rejects(request(), (error) => error === reason);
     }
-    assert.deepEqual(calls, [
-        { command: "open_file", args: { title: "Open SCXML" } },
-        { command: "save_file", args: { content: "<scxml/>", path: "/workflow.xml", title: "Workflow" } },
-        { command: "read_file", args: { path: "/workflow.xml" } },
-        { command: "pick_directory", args: { title: "Behaviors" } },
-    ]);
+});
+
+test("save requires an explicit precondition and preserves conflicts and committed durability warnings", async (context) => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+    let calls = 0;
+    let result = { status: "conflict", success: false, state: "changed", observedFileVersion: "external" };
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {
+        __TAURI_INTERNALS__: { invoke: async () => { calls += 1; return result; } },
+    } });
+    context.after(() => {
+        if (original) Object.defineProperty(globalThis, "window", original);
+        else delete globalThis.window;
+    });
+    await assert.rejects(saveFile("<scxml/>", "/workflow.xml"), /expectedFileVersion/);
+    await assert.rejects(saveFile("<scxml/>", "/workflow.xml", undefined), /expectedFileVersion/);
+    await assert.rejects(saveFile("<scxml/>", null, null), /destination path/);
+    assert.equal(calls, 0);
+    assert.equal(await saveFile("<scxml/>", "/workflow.xml", "loaded"), result);
+    result = { status: "saved", success: true, fileVersion: "committed", durabilityUncertain: true, error: "Directory sync failed after commit" };
+    assert.equal(await saveFile("<scxml/>", "/new.xml", null), result);
+});
+
+test("browser revalidation and destination selection never invoke filesystem IPC", async (context) => {
+    const original = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+    context.after(() => {
+        if (original) Object.defineProperty(globalThis, "window", original);
+        else delete globalThis.window;
+    });
+    await assert.rejects(revalidateWorkflowSources([]), /Tauri/);
+    await assert.rejects(selectSaveDestination(), /Tauri/);
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { FiArrowLeft, FiArrowRight, FiPlus, FiX } from "react-icons/fi";
+import { FiAlertCircle, FiArrowLeft, FiArrowRight, FiPlus, FiX } from "react-icons/fi";
 
 export default function WorkflowTabBar({
     tabs,
@@ -147,6 +147,11 @@ export default function WorkflowTabBar({
                             <span>{tab.title}</span>
                             {tab.isModified && (
                                 <span className="workflow-tab-modified-indicator" role="img" aria-label="Unsaved changes" title="Unsaved changes" />
+                            )}
+                            {tab.externalFileState && tab.externalFileState !== "current" && (
+                                <FiAlertCircle className="workflow-tab-external-indicator" role="img"
+                                    aria-label={`External file ${tab.externalFileState}`}
+                                    title={tab.externalFileError || "This workflow has external changes. Select its tab to resolve them."} />
                             )}
                         </button>
                         {tabs.length > 1 && (

@@ -5,7 +5,9 @@ use crate::core::document::WorkflowDocumentStore;
 use crate::core::model::{Workflow, WorkflowDto};
 use crate::core::scxml::{parse_scxml, serialize_scxml};
 use crate::workspace::inspection::{
-    inspect_workflow_source as inspect_workflow_source_impl, WorkflowInspectionResult,
+    inspect_workflow_source as inspect_workflow_source_impl,
+    revalidate_workflow_sources as revalidate_workflow_sources_impl,
+    WorkflowInspectionResult, WorkflowRevalidationRequest, WorkflowRevalidationResult,
 };
 use crate::workspace::library::{
     list_behavior_directory as list_behavior_directory_impl,
@@ -46,6 +48,14 @@ pub(crate) async fn inspect_workflow_source(
     current_file_path: Option<String>,
 ) -> Result<WorkflowInspectionResult, String> {
     inspect_workflow_source_impl(&src, &directories, current_file_path.as_deref())
+}
+
+#[tauri::command]
+pub(crate) async fn revalidate_workflow_sources(
+    requests: Vec<WorkflowRevalidationRequest>,
+    directories: Vec<BehaviorDirectoryMapping>,
+) -> Result<Vec<WorkflowRevalidationResult>, String> {
+    revalidate_workflow_sources_impl(&requests, &directories)
 }
 
 #[tauri::command]

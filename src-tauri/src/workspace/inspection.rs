@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::path::PathBuf;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::io;
 
 use crate::core::model::{DataModelEntryDto, Workflow, WorkflowDto, WorkflowIndex};
 use crate::core::scxml::parse_scxml;
+use crate::file_version::file_version;
 
 use super::library::BehaviorDirectoryMapping;
-use super::resolver::resolve_workflow_source_path;
+use super::resolver::{resolve_workflow_source_path_io, ResolvedWorkflowPath};
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +25,7 @@ pub(crate) struct WorkflowInspectionResult {
     pub content: String,
     pub path: String,
     pub file_name: String,
+    pub file_version: String,
     pub root_key: Option<String>,
     pub workflow: WorkflowDto,
     pub behavior_exit_events: Vec<String>,
@@ -31,24 +33,13 @@ pub(crate) struct WorkflowInspectionResult {
     pub local_data_model: Vec<DataModelEntryDto>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FileStamp {
-    modified: SystemTime,
-    len: u64,
-}
-
-#[derive(Clone)]
-struct CachedInspection {
-    stamp: FileStamp,
-    result: WorkflowInspectionResult,
-}
-
-static INSPECTION_CACHE: OnceLock<Mutex<HashMap<PathBuf, CachedInspection>>> = OnceLock::new();
+static INSPECTION_CACHE: LazyLock<Mutex<HashMap<PathBuf, Arc<WorkflowInspectionResult>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 // Prevent an in-flight inspection from repopulating the cache after Clear.
 static INSPECTION_CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-fn cache() -> &'static Mutex<HashMap<PathBuf, CachedInspection>> {
-    INSPECTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+fn cache() -> &'static Mutex<HashMap<PathBuf, Arc<WorkflowInspectionResult>>> {
+    &INSPECTION_CACHE
 }
 
 pub(crate) fn clear_workflow_inspection_cache() -> usize {
@@ -61,74 +52,207 @@ pub(crate) fn clear_workflow_inspection_cache() -> usize {
     count
 }
 
-fn file_stamp(path: &Path) -> Option<FileStamp> {
-    let metadata = std::fs::metadata(path).ok()?;
-    let modified = metadata.modified().ok()?;
-    Some(FileStamp {
-        modified,
-        len: metadata.len(),
-    })
-}
-
 pub(crate) fn inspect_workflow_source(
     src: &str,
     directories: &[BehaviorDirectoryMapping],
     current_file_path: Option<&str>,
 ) -> Result<WorkflowInspectionResult, String> {
-    let resolved = resolve_workflow_source_path(src, directories, current_file_path)?;
-    let generation = INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst);
-    let stamp = file_stamp(&resolved.path);
+    inspect_workflow_source_captured(src, directories, current_file_path)
+        .map_err(|failure| failure.error.unwrap_or_else(|| "Workflow inspection failed.".to_string()))
+}
 
-    if let Some(stamp) = stamp.as_ref() {
-        let guard = cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum RevalidationState {
+    Unchanged,
+    Changed,
+    Missing,
+    Unreadable,
+    Invalid,
+}
 
-        if let Some(cached) = guard.get(&resolved.path) {
-            if &cached.stamp == stamp {
-                return Ok(cached.result.clone());
-            }
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowRevalidationRequest {
+    pub src: String,
+    pub current_file_path: Option<String>,
+    pub file_version: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct WorkflowRevalidationResult {
+    pub state: RevalidationState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inspection: Option<WorkflowInspectionResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+impl WorkflowRevalidationResult {
+    fn io(error: io::Error) -> Self {
+        Self {
+            state: match error.kind() {
+                io::ErrorKind::NotFound => RevalidationState::Missing,
+                io::ErrorKind::InvalidInput => RevalidationState::Invalid,
+                _ => RevalidationState::Unreadable,
+            },
+            file_version: None,
+            inspection: None,
+            error: Some(error.to_string()),
+            path: None,
         }
     }
 
-    let content = std::fs::read_to_string(&resolved.path).map_err(|error| {
-        format!(
-            "Could not read workflow file '{}': {error}",
-            resolved.path.display()
+    fn invalid(error: String, path: String, version: String) -> Self {
+        Self {
+            state: RevalidationState::Invalid,
+            file_version: Some(version),
+            inspection: None,
+            error: Some(error),
+            path: Some(path),
+        }
+    }
+}
+
+fn inspect_workflow_source_captured(
+    src: &str,
+    directories: &[BehaviorDirectoryMapping],
+    current_file_path: Option<&str>,
+) -> Result<WorkflowInspectionResult, WorkflowRevalidationResult> {
+    let resolved = resolve_workflow_source_path_io(src, directories, current_file_path)
+        .map_err(WorkflowRevalidationResult::io)?;
+    let result = inspect_resolved(&resolved);
+    validate_captured_context(src, directories, current_file_path, &resolved.path)?;
+    result.map(|inspection| {
+        let mut inspection = (*inspection).clone();
+        inspection.root_key = resolved.root_key;
+        inspection
+    })
+}
+
+fn validate_captured_context(
+    src: &str,
+    directories: &[BehaviorDirectoryMapping],
+    current_file_path: Option<&str>,
+    captured_path: &std::path::Path,
+) -> Result<(), WorkflowRevalidationResult> {
+    let current = resolve_workflow_source_path_io(src, directories, current_file_path)
+        .map_err(WorkflowRevalidationResult::io)?;
+    if current.path != captured_path {
+        return Err(WorkflowRevalidationResult::io(io::Error::new(
+            io::ErrorKind::Other,
+            "Workflow source was retargeted during inspection; retry to inspect its current destination.",
+        )));
+    }
+    Ok(())
+}
+
+fn inspect_resolved(
+    resolved: &ResolvedWorkflowPath,
+) -> Result<Arc<WorkflowInspectionResult>, WorkflowRevalidationResult> {
+    let generation = INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst);
+    let path = resolved.path.to_string_lossy().into_owned();
+    let metadata = std::fs::metadata(&resolved.path).map_err(WorkflowRevalidationResult::io)?;
+    if !metadata.is_file() {
+        return Err(WorkflowRevalidationResult {
+            state: RevalidationState::Invalid,
+            file_version: None, inspection: None,
+            error: Some(format!("Workflow source '{path}' is not a regular file.")),
+            path: Some(path),
+        });
+    }
+    // Read/hash on every inspection, even when length and mtime match. Parsing
+    // and the version both describe exactly this one byte image.
+    let bytes = std::fs::read(&resolved.path).map_err(WorkflowRevalidationResult::io)?;
+    if std::fs::canonicalize(&resolved.path).map_err(WorkflowRevalidationResult::io)? != resolved.path {
+        return Err(WorkflowRevalidationResult::io(io::Error::new(
+            io::ErrorKind::Other, "Workflow destination was retargeted during its captured read.",
+        )));
+    }
+    let version = file_version(&resolved.path, &bytes);
+    {
+        let guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(cached) = guard.get(&resolved.path) {
+            if cached.file_version == version {
+                return Ok(Arc::clone(cached));
+            }
+        }
+    }
+    let content = String::from_utf8(bytes).map_err(|error| {
+        WorkflowRevalidationResult::invalid(
+            format!("Workflow source '{path}' is not UTF-8: {error}"), path.clone(), version.clone()
         )
     })?;
-    let workflow = parse_scxml(&content)?;
+    let workflow = parse_scxml(&content).map_err(|error| {
+        WorkflowRevalidationResult::invalid(error, path.clone(), version.clone())
+    })?;
     let result = WorkflowInspectionResult {
-        file_name: resolved
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default(),
-        path: resolved.path.to_string_lossy().to_string(),
-        root_key: resolved.root_key,
+        file_name: resolved.path.file_name()
+            .map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+        path,
+        file_version: version,
+        root_key: None,
         behavior_exit_events: collect_behavior_exit_events(&workflow),
         inherited_slots: collect_inherited_slot_declarations(&workflow),
         local_data_model: collect_local_data_model(&workflow),
         workflow: workflow.to_dto(),
         content,
     };
-
-    if let Some(stamp) = stamp {
-        let mut guard = cache()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if generation == INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst) {
-            guard.insert(
-                resolved.path,
-                CachedInspection {
-                    stamp,
-                    result: result.clone(),
-                },
-            );
-        }
+    let result = Arc::new(result);
+    let mut guard = cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if generation == INSPECTION_CACHE_GENERATION.load(Ordering::SeqCst) {
+        guard.insert(resolved.path.clone(), Arc::clone(&result));
     }
-
     Ok(result)
+}
+
+pub(crate) const MAX_REVALIDATION_REQUESTS: usize = 1024;
+
+pub(crate) fn revalidate_workflow_sources(
+    requests: &[WorkflowRevalidationRequest],
+    directories: &[BehaviorDirectoryMapping],
+) -> Result<Vec<WorkflowRevalidationResult>, String> {
+    if requests.len() > MAX_REVALIDATION_REQUESTS {
+        return Err(format!("At most {MAX_REVALIDATION_REQUESTS} workflow sources may be revalidated per batch."));
+    }
+    // One bounded batch, sequential IO (concurrency 1), no recursive library
+    // traversal or per-source worker/timer. Resolution is repeated each pass.
+    let mut captured = HashMap::<PathBuf, Result<Arc<WorkflowInspectionResult>, WorkflowRevalidationResult>>::new();
+    Ok(requests.iter().map(|request| {
+        let mut inspect = || -> Result<(Arc<WorkflowInspectionResult>, Option<String>), WorkflowRevalidationResult> {
+            let resolved = resolve_workflow_source_path_io(
+                &request.src, directories, request.current_file_path.as_deref()
+            ).map_err(WorkflowRevalidationResult::io)?;
+            let result = captured.entry(resolved.path.clone())
+                .or_insert_with(|| inspect_resolved(&resolved)).clone();
+            validate_captured_context(
+                &request.src, directories, request.current_file_path.as_deref(), &resolved.path
+            )?;
+            result.map(|inspection| (inspection, resolved.root_key))
+        };
+        match inspect() {
+            Ok((inspection, root_key)) => {
+                let unchanged = request.file_version.as_deref() == Some(inspection.file_version.as_str());
+                WorkflowRevalidationResult {
+                    state: if unchanged { RevalidationState::Unchanged } else { RevalidationState::Changed },
+                    file_version: Some(inspection.file_version.clone()),
+                    path: Some(inspection.path.clone()),
+                    inspection: if unchanged { None } else {
+                        let mut inspection = (*inspection).clone();
+                        inspection.root_key = root_key;
+                        Some(inspection)
+                    },
+                    error: None,
+                }
+            }
+            Err(failure) => failure,
+        }
+    }).collect())
 }
 
 fn collect_behavior_exit_events(workflow: &Workflow) -> Vec<String> {

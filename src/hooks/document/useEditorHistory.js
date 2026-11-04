@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { isEditorShortcutBlocked } from "../interaction/useGlobalEditorShortcuts";
+import { stripWorkflowInterfaceForHistory } from "../../utils/workflowInterface.js";
 
 const cloneGraphValue = (value) => {
     if (Array.isArray(value)) return value.map(cloneGraphValue);
@@ -50,7 +51,7 @@ const historyValueEqual = (a, b, ignoredKeys = null) => {
 };
 
 const sanitizeNodeForHistory = (node) => {
-    const copy = cloneGraphValue(node);
+    const copy = cloneGraphValue(stripWorkflowInterfaceForHistory(node));
     HISTORY_NODE_VOLATILE_KEYS.forEach((key) => delete copy[key]);
     return copy;
 };
@@ -94,6 +95,8 @@ const snapshotsEqual = (a, b) => {
 
 export function useEditorHistory({
     activeTabId,
+    activeDocumentGeneration,
+    getActiveDocumentIdentity,
     activeMode,
     isDraggingNode,
     nodes,
@@ -116,7 +119,11 @@ export function useEditorHistory({
     const historyRef = useRef([]);
     const historyIndexRef = useRef(-1);
     const historyTimerRef = useRef(null);
-    const historyTabRef = useRef(activeTabId);
+    const owner = useMemo(() => ({ id: activeTabId, generation: activeDocumentGeneration }),
+        [activeTabId, activeDocumentGeneration]);
+    const historyOwnerRef = useRef(null);
+    const historyEpochRef = useRef(0);
+    const restoreFramesRef = useRef(new Set());
     const applyingHistoryRef = useRef(false);
     const liveHistoryStateRef = useRef(null);
 
@@ -156,6 +163,32 @@ export function useEditorHistory({
         lastCreatedSnapshotRef.current = null;
     }, []);
 
+    // Ownership is the tab incarnation plus this activation's epoch, not a
+    // fingerprint or native revision. A -> B -> A must reject callbacks from
+    // the first A even when its tab incarnation happens to match again.
+    const invalidateHistory = useCallback(() => {
+        historyEpochRef.current += 1;
+        historyOwnerRef.current = null;
+        historyRef.current = [];
+        historyIndexRef.current = -1;
+        applyingHistoryRef.current = false;
+        clearTimeout(historyTimerRef.current);
+        historyTimerRef.current = null;
+        for (const frame of restoreFramesRef.current) cancelAnimationFrame(frame);
+        restoreFramesRef.current.clear();
+        resetSnapshotCaches();
+    }, [resetSnapshotCaches]);
+    const ownsHistory = useCallback((epoch = historyEpochRef.current) => {
+        if (historyOwnerRef.current !== owner || historyEpochRef.current !== epoch) return false;
+        const identity = getActiveDocumentIdentity();
+        if (identity.id === owner.id && identity.documentGeneration === owner.generation) return true;
+        // Replacement was published before its new graph committed. Invalidate
+        // now, but seed nothing until the new graph's layout phase.
+        invalidateHistory();
+        return false;
+    }, [owner, getActiveDocumentIdentity, invalidateHistory]);
+    useLayoutEffect(() => () => invalidateHistory(), [invalidateHistory]);
+
     const canonicalizeGraphCollection = useCallback((
         sourceItems,
         cacheRef,
@@ -174,7 +207,11 @@ export function useEditorHistory({
 
             if (
                 cached &&
-                historyValueEqual(cached.source, item, ignoredKeys)
+                historyValueEqual(
+                    sanitize === sanitizeNodeForHistory ? stripWorkflowInterfaceForHistory(cached.source) : cached.source,
+                    sanitize === sanitizeNodeForHistory ? stripWorkflowInterfaceForHistory(item) : item,
+                    ignoredKeys,
+                )
             ) {
                 // React Flow frequently replaces a node/edge object only to
                 // change selection state. Keep the already-sanitized history
@@ -293,26 +330,23 @@ export function useEditorHistory({
         return true;
     }, []);
 
-    useEffect(() => {
+    useLayoutEffect(() => {
+        const identity = getActiveDocumentIdentity();
+        if (identity.id !== owner.id || identity.documentGeneration !== owner.generation) {
+            invalidateHistory();
+            return;
+        }
+        if (historyOwnerRef.current !== owner) {
+            invalidateHistory();
+            historyOwnerRef.current = owner;
+            commitHistorySnapshot(createHistorySnapshot());
+            return;
+        }
         if (isDraggingNode) {
             if (historyTimerRef.current) {
                 clearTimeout(historyTimerRef.current);
                 historyTimerRef.current = null;
             }
-            return;
-        }
-
-        if (historyTabRef.current !== activeTabId) {
-            historyTabRef.current = activeTabId;
-            historyRef.current = [];
-            historyIndexRef.current = -1;
-            applyingHistoryRef.current = false;
-            resetSnapshotCaches();
-            if (historyTimerRef.current) {
-                clearTimeout(historyTimerRef.current);
-                historyTimerRef.current = null;
-            }
-            commitHistorySnapshot(createHistorySnapshot());
             return;
         }
 
@@ -336,7 +370,9 @@ export function useEditorHistory({
         }
 
         if (historyTimerRef.current) clearTimeout(historyTimerRef.current);
+        const epoch = historyEpochRef.current;
         historyTimerRef.current = setTimeout(() => {
+            if (!ownsHistory(epoch)) return;
             historyTimerRef.current = null;
             commitHistorySnapshot(createHistorySnapshot());
         }, 180);
@@ -348,7 +384,10 @@ export function useEditorHistory({
             }
         };
     }, [
-        activeTabId,
+        owner,
+        ownsHistory,
+        getActiveDocumentIdentity,
+        invalidateHistory,
         isDraggingNode,
         historyNodesDependency,
         historyEdgesDependency,
@@ -362,7 +401,8 @@ export function useEditorHistory({
     ]);
 
     const applyHistorySnapshot = useCallback((snapshot) => {
-        if (!snapshot) return;
+        if (!snapshot || !ownsHistory()) return;
+        const epoch = historyEpochRef.current;
         if (historyTimerRef.current) {
             clearTimeout(historyTimerRef.current);
             historyTimerRef.current = null;
@@ -460,10 +500,14 @@ export function useEditorHistory({
             console.warn("Failed to synchronize Rust document after history restore.", error);
         });
 
-        requestAnimationFrame(() => {
+        const frame = requestAnimationFrame(() => {
+            restoreFramesRef.current.delete(frame);
+            if (!ownsHistory(epoch)) return;
             restoredNodes.forEach((node) => updateNodeInternals(node.id));
         });
+        restoreFramesRef.current.add(frame);
     }, [
+        ownsHistory,
         setNodes,
         setEdges,
         setSlotNodes,
@@ -477,6 +521,7 @@ export function useEditorHistory({
     ]);
 
     const flushPendingHistorySnapshot = useCallback(() => {
+        if (!ownsHistory()) return false;
         // Only flush a snapshot when the normal debounced history writer still
         // has an edit waiting to be committed. Re-committing on every undo can
         // add the just-restored state back to the history and trap Ctrl+Z on a
@@ -486,22 +531,24 @@ export function useEditorHistory({
         clearTimeout(historyTimerRef.current);
         historyTimerRef.current = null;
         return commitHistorySnapshot(createHistorySnapshot());
-    }, [commitHistorySnapshot, createHistorySnapshot]);
+    }, [commitHistorySnapshot, createHistorySnapshot, ownsHistory]);
 
     const undo = useCallback(() => {
+        if (!ownsHistory()) return false;
         flushPendingHistorySnapshot();
         if (historyIndexRef.current <= 0) return false;
         historyIndexRef.current -= 1;
         applyHistorySnapshot(historyRef.current[historyIndexRef.current]?.snapshot);
         return true;
-    }, [applyHistorySnapshot, flushPendingHistorySnapshot]);
+    }, [applyHistorySnapshot, flushPendingHistorySnapshot, ownsHistory]);
 
     const redo = useCallback(() => {
+        if (!ownsHistory()) return false;
         if (historyIndexRef.current >= historyRef.current.length - 1) return false;
         historyIndexRef.current += 1;
         applyHistorySnapshot(historyRef.current[historyIndexRef.current]?.snapshot);
         return true;
-    }, [applyHistorySnapshot]);
+    }, [applyHistorySnapshot, ownsHistory]);
 
     useEffect(() => {
         const handleUndoRedoShortcut = (event) => {

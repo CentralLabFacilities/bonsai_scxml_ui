@@ -18,11 +18,25 @@ export async function openFile(title = 'Open Workflow') {
 }
 
 /**
- * Save content to a file. If path is provided, saves directly without dialog.
- * Otherwise shows a save-as dialog.
+ * Commit against an explicit byte baseline; null means atomic create-only.
+ * Destination selection is separate and never grants an overwrite bypass.
  */
-export async function saveFile(content, path = null, title = 'Save Workflow') {
-  return await invoke('save_file', { content, path, title });
+export async function saveFile(content, path, expectedFileVersion, sourceContext = null, directories = []) {
+  if (typeof path !== 'string' || !path) {
+    throw new TypeError('saveFile requires a destination path.');
+  }
+  if (expectedFileVersion !== null && typeof expectedFileVersion !== 'string') {
+    throw new TypeError('saveFile requires expectedFileVersion as a string or explicit null.');
+  }
+  return await invoke('save_file', { content, path, expectedFileVersion, sourceContext, directories });
+}
+
+/** Select and confirm a destination, capturing its version (or explicit absence). */
+export async function selectSaveDestination(defaultName = 'workflow.xml') {
+  if (!isTauri()) {
+    throw new Error('Native save destinations are only available in the Tauri app.');
+  }
+  return await invoke('select_save_destination', { defaultName });
 }
 
 /**
@@ -63,9 +77,8 @@ export async function resolveBehaviorDirectory(path) {
  * Resolve, read and inspect one workflow in Rust.
  *
  * This keeps the symbolic ${KEY}/... source all the way to Rust. The backend
- * resolves it, caches the parsed WorkflowDto by
- * canonical path + modification time and returns the semantic interface
- * metadata together with the file contents.
+ * resolves it, caches parsing by canonical path + exact-byte SHA-256, and
+ * returns fileVersion and semantic interface metadata with the captured bytes.
  */
 export async function inspectWorkflowSource(
     src,
@@ -81,6 +94,14 @@ export async function inspectWorkflowSource(
     directories: directories || [],
     currentFilePath,
   });
+}
+
+/** Re-resolve and check a bounded batch without touching native document state. */
+export async function revalidateWorkflowSources(requests, directories = []) {
+  if (!isTauri()) {
+    throw new Error('Workflow source revalidation is only available in the Tauri app.');
+  }
+  return await invoke('revalidate_workflow_sources', { requests, directories });
 }
 
 /**

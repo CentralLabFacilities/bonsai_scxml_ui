@@ -1,6 +1,9 @@
 mod core;
 
 #[cfg(any(feature = "desktop", test))]
+mod file_version;
+
+#[cfg(any(feature = "desktop", test))]
 mod atomic_file;
 
 #[cfg(feature = "desktop")]
@@ -24,9 +27,11 @@ pub fn run() {
             commands::workflows::list_behavior_directory,
             commands::workflows::resolve_behavior_directory,
             commands::files::save_file,
+            commands::files::select_save_destination,
             commands::files::read_file,
             commands::workflows::read_workflow_source,
             commands::workflows::inspect_workflow_source,
+            commands::workflows::revalidate_workflow_sources,
             commands::workflows::clear_workflow_inspection_cache,
             commands::workflows::parse_scxml_workflow,
             commands::workflows::serialize_scxml_workflow,
