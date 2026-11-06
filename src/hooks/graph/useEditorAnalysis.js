@@ -9,6 +9,7 @@ import {
 import {
     buildActiveValidationRequest,
     buildEditorValidationRequest,
+    getValidationNodeDisplayName,
     projectNodeWarningTitles,
 } from "../../utils/editorValidation";
 import { validateParameterValue } from "../../utils/valueValidation.js";
@@ -60,14 +61,15 @@ function collectBrowserNodeProblems(source) {
                 nodeId: node.id, detailTab: "parameter", mode: "event",
             });
         });
+        const slotLabel = getValidationNodeDisplayName(node);
         for (const [access, slots] of [["input", node.inputSlots], ["output", node.outputSlots]]) {
             slots.forEach((slot, index) => {
-                if (normalizeSlotPath(slot.path)) return;
+                if (slot.definitionMissing || normalizeSlotPath(slot.path)) return;
                 problems.push({
                     id: `slot-${access}-empty-${node.id}-${index}`,
                     severity: "warning", category: "Slots",
                     title: `${access === "input" ? "Input" : "Output"} slot is not connected`,
-                    message: `${label}.${slot.key || `${access} ${index + 1}`} has no slot path.`,
+                    message: `${slotLabel}.${slot.key || `${access} ${index + 1}`} has no slot path.`,
                     nodeId: node.id, detailTab: "slots", mode: "overview",
                 });
             });

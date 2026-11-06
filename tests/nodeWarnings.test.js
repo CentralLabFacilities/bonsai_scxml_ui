@@ -85,6 +85,7 @@ test.skip("real analysis and display hooks keep native node warnings owned, cach
             "/src/hooks/graph/useEditorGraphMaintenance.js", "/src/hooks/graph/useEditorPresentationGraph.js",
             "/src/hooks/graph/useEditorAnalysis.js", "/src/hooks/graph/useEditorDisplay.js",
             "/src/components/graph/StateNodes.jsx", "/src/utils/scxmlRustExport.js",
+            "/src/components/inspector/ProblemsPanel.jsx",
         ].map((path) => server.ssrLoadModule(path)));
         const hooks = Object.assign({}, ...modules);
         function Harness({ value, suspend }) {
@@ -129,6 +130,7 @@ test.skip("real analysis and display hooks keep native node warnings owned, cach
                 edges: [], slotNodes: [], slotEdges: [], manualSlots: [],
                 tabs: [{ id: "root" }], activeTabId: "root", selectedRawNode: null,
                 globalDataModel: [], availableDataModel: [], behaviorDirectories: [],
+                parameterValueVariables: [], runtimeExpandedContainerIds: [],
                 selectedNodes: [], selectedNodeId: null, hoveredEditorNodeId: null, hoveredEditorEdgeId: null,
                 hoveredSlotAccessNodeId: null, activeMode: "overview", showSlotEdges: true,
                 isDraggingNode: false, draggingNodeId: null, slotConnectionDrag: null,
@@ -392,6 +394,114 @@ test.skip("real analysis and display hooks keep native node warnings owned, cach
             assert.equal(latest.validationStatus, "unavailable");
             assert.equal(calls.length, 0);
             assert.deepEqual(errors, []);
+        });
+
+        await t.test("browser slot retirement is instance-local and restoration keeps input/output indices and badges", async () => {
+            await mount(false);
+            const talk = (id, instance) => skill(id, [], {
+                label: "dialog.Talk", fullSkillName: `dialog.Talk#${instance}`,
+                inSlots: [{ key: "text", type: "String", path: "", definitionMissing: false }],
+                outSlots: [{ key: "spoken", type: "String", path: "", definitionMissing: false }],
+            });
+            inputs = { ...inputs, nodes: [talk("first", 1), talk("second", 2)] };
+            await render();
+            assert.deepEqual(latest.editorProblems.map(({ nodeId, message }) => [nodeId, message]), [
+                ["first", "Talk#1.text has no slot path."], ["first", "Talk#1.spoken has no slot path."],
+                ["second", "Talk#2.text has no slot path."], ["second", "Talk#2.spoken has no slot path."],
+            ]);
+            const ProblemsPanel = modules[6].default;
+            const scope = (node) => renderToStaticMarkup(createElement(ProblemsPanel, {
+                selectedNode: node, problems: latest.editorProblems, validationStatus: latest.validationStatus,
+            }));
+            assert.match(scope(inputs.nodes[0]), /Talk#1.text/);
+            assert.doesNotMatch(scope(inputs.nodes[0]), /Talk#2.text/);
+            assert.match(scope(inputs.nodes[1]), /Talk#2.text/);
+            const saved = hooks.buildRustEditorExportRequest(inputs);
+            const setActivity = async (inputMissing, outputMissing) => {
+                inputs = { ...inputs, nodes: [inputs.nodes[0], {
+                    ...inputs.nodes[1], data: { ...inputs.nodes[1].data,
+                        inSlots: inputs.nodes[1].data.inSlots.map((slot) => ({ ...slot, definitionMissing: inputMissing })),
+                        outSlots: inputs.nodes[1].data.outSlots.map((slot) => ({ ...slot, definitionMissing: outputMissing })),
+                    },
+                }] };
+                await render();
+            };
+            await setActivity(true, true);
+            assert.deepEqual(latest.editorProblems.map(({ nodeId }) => nodeId), ["first", "first"]);
+            assert.equal(badge("second"), null);
+            assert.match(badge("first").title, /Talk#1.text/);
+            assert.match(scope(inputs.nodes[1]), /No problems for this node/);
+            assert.equal((scope(null).match(/class="problem-item /g) || []).length, 2);
+            await setActivity(true, false);
+            assert.deepEqual(latest.editorProblems.filter(({ nodeId }) => nodeId === "second").map(({ id }) => id),
+                ["slot-output-empty-second-0"]);
+            assert.match(badge("second").title, /Talk#2.spoken/);
+            await setActivity(false, false);
+            assert.deepEqual(latest.editorProblems.filter(({ nodeId }) => nodeId === "second").map(({ id }) => id),
+                ["slot-input-empty-second-0", "slot-output-empty-second-0"]);
+            assert.deepEqual(hooks.buildRustEditorExportRequest(inputs), saved, "activity never changes saveable semantics");
+        });
+
+        await t.test("slot display follows short instance, custom label, unsuffixed and reference scope conventions", async () => {
+            await mount(false);
+            const cases = [
+                ["qualified", "dialog.Talk", "dialog.Talk#2", "", "Talk#2"],
+                ["suffixed", "Talk#2", "dialog.Talk#2", "", "Talk#2"],
+                ["custom", "Ask politely", "dialog.Talk#2", "", "Ask politely#2"],
+                ["custom-suffix", "Ask politely#2", "dialog.Talk#2", "", "Ask politely#2"],
+                ["unsuffixed", "dialog.Talk", "dialog.Talk", "", "Talk"],
+                ["explicit", "Talk", "dialog.Talk#2", "7", "Talk#7"],
+                ["label-only", "dialog.Talk#2", "", "", "Talk#2"],
+            ];
+            inputs = { ...inputs, nodes: cases.map(([id, label, fullSkillName, editorInstanceId]) =>
+                skill(id, [], { label, fullSkillName, editorInstanceId,
+                    inSlots: [{ key: "text", type: "String", path: "" }] })) };
+            await render();
+            for (const [id, , , , expected] of cases) {
+                assert.equal(latest.editorProblems.find((problem) => problem.nodeId === id).message,
+                    `${expected}.text has no slot path.`);
+            }
+            const ProblemsPanel = modules[6].default;
+            const alias = skill("alias", [], { label: "Talk", fullSkillName: "dialog.Talk#2",
+                editorInstanceId: "visual-3", cloneOfNodeId: "qualified", isSkillClone: true });
+            const markup = renderToStaticMarkup(createElement(ProblemsPanel, {
+                selectedNode: alias, problems: [{ ...slotProblem, nodeId: "alias" }, slotProblem],
+            }));
+            assert.match(markup, /Talk \[visual-3\]/);
+        });
+
+        await t.test("flag-only lifecycle changes invalidate native results and fence delayed replies in both directions", async () => {
+            await mount();
+            const active = skill("skill", [], { label: "Talk", fullSkillName: "dialog.Talk#2",
+                inSlots: [{ key: "text", type: "String", path: "", definitionMissing: false }] });
+            inputs = { ...inputs, nodes: [active, skill("target")] };
+            validationReply = () => [slotProblem];
+            await render();
+            await validate();
+            for (const retired of [true, false]) {
+                const old = deferred();
+                inputs = { ...inputs, validationRevision: inputs.validationRevision + 1 };
+                validationReply = () => old.promise;
+                await render();
+                await validate();
+                const previousCalls = calls.length;
+                inputs = { ...inputs, nodes: [{
+                    ...active, data: { ...active.data,
+                        inSlots: [{ ...active.data.inSlots[0], definitionMissing: retired }],
+                    },
+                }, inputs.nodes[1]] };
+                validationReply = () => retired ? [] : [slotProblem];
+                await render();
+                assert.equal(latest.validationStatus, "pending");
+                assert.equal(badge(), null, "old activity diagnostics hide before the query returns");
+                await validate();
+                assert.equal(calls.length, previousCalls + 1, "key/type/path-identical activity requires a fresh query");
+                const currentProblems = latest.editorProblems;
+                assert.equal(Boolean(badge()), !retired);
+                await act(async () => old.resolve(retired ? [slotProblem] : []));
+                assert.equal(latest.editorProblems, currentProblems, "obsolete activity cannot publish a late result");
+                assert.equal(Boolean(badge()), !retired);
+            }
         });
 
         await t.test("suspended warning sources cannot contaminate a committed current source under StrictMode", async () => {

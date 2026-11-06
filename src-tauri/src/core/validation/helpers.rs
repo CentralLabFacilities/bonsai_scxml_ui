@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use super::types::{
@@ -13,6 +14,43 @@ pub(super) fn node_label(node: &ValidationNodeDto) -> &str {
         node.id.trim()
     } else {
         "Unknown state"
+    }
+}
+
+pub(super) fn slot_node_label(node: &ValidationNodeDto) -> Cow<'_, str> {
+    if node.node_type != "custom" {
+        return Cow::Borrowed(node_label(node));
+    }
+
+    let full_name = if node.full_skill_name.trim().is_empty() {
+        node.label.trim()
+    } else {
+        node.full_skill_name.trim()
+    };
+    if full_name.is_empty() {
+        return Cow::Borrowed(node_label(node));
+    }
+    let (qualified_name, suffix) = full_name
+        .rsplit_once('#')
+        .filter(|(_, suffix)| !suffix.trim().is_empty())
+        .map(|(name, suffix)| (name, Some(suffix.trim())))
+        .unwrap_or((full_name, None));
+    let short_name = qualified_name.rsplit('.').next().unwrap_or(qualified_name);
+    let label = node.label.trim();
+    let label_base = label.split('#').next().unwrap_or(label);
+    let base = if label.is_empty() || label_base == qualified_name || label_base == short_name {
+        short_name
+    } else {
+        label
+    };
+    if node.is_reference {
+        return Cow::Owned(format!("{base} [{}]", node.id));
+    }
+    match suffix {
+        Some(suffix) if base.rsplit_once('#').map(|(_, value)| value) != Some(suffix) => {
+            Cow::Owned(format!("{base}#{suffix}"))
+        }
+        _ => Cow::Borrowed(base),
     }
 }
 

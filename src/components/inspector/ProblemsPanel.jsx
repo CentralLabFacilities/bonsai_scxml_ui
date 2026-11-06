@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getValidationNodeDisplayName } from "../../utils/editorValidation.js";
 import {
     FiAlertCircle,
     FiAlertTriangle,
@@ -24,25 +25,6 @@ function SeverityIcon({ severity }) {
     }
 
     return <FiAlertCircle aria-hidden="true" />;
-}
-
-function getNodeDisplayName(node) {
-    const data = node.data || {};
-    const fullSkillName = String(data.fullSkillName || "");
-    const editorInstanceId = data.editorInstanceId;
-    const isReference = Boolean(data.isSkillClone || data.isStateClone);
-    const skillName = data.label || fullSkillName.split(".").pop().split("#")[0] || node.id;
-    if (isReference) {
-        return `${skillName} [${editorInstanceId || node.id}]`;
-    }
-    if (editorInstanceId) {
-        return `${skillName}#${editorInstanceId}`;
-    }
-    const stateName = fullSkillName.includes("#") ? fullSkillName.split("#").pop() : "";
-    if (stateName && stateName !== skillName) {
-        return `${skillName}${stateName.startsWith("#") ? "" : "#"}${stateName}`;
-    }
-    return skillName;
 }
 
 export default function ProblemsPanel({
@@ -131,7 +113,7 @@ export default function ProblemsPanel({
                     </div>
                     {(isFiltered || (selectedNode && showAll)) && (
                         <div className="problems-panel-summary" style={{ color: "var(--ui-text-muted)" }}>
-                            {showAll ? `Showing all ${problems.length} problems` : `Problems for "${getNodeDisplayName(selectedNode)}" (${filteredProblems.length} of ${problems.length} total)`}
+                            {showAll ? `Showing all ${problems.length} problems` : `Problems for "${getValidationNodeDisplayName(selectedNode)}" (${filteredProblems.length} of ${problems.length} total)`}
                             <button type="button" className="order-btn" style={{ display: "inline-flex", marginLeft: 8 }} onClick={() => setShowAll(!showAll)}>
                                 {showAll ? "Show node only" : "Show all"}
                             </button>
