@@ -867,11 +867,13 @@ mod tests {
                             key: "one".into(),
                             type_name: "String".into(),
                             path: "/shared".into(),
+                            ..Default::default()
                         },
                         ValidationSlotDto {
                             key: "two".into(),
                             type_name: "String".into(),
                             path: "/shared".into(),
+                            ..Default::default()
                         },
                     ],
                     ..ValidationNodeDto::default()
@@ -883,6 +885,7 @@ mod tests {
                         key: "three".into(),
                         type_name: "String".into(),
                         path: "/shared".into(),
+                        ..Default::default()
                     }],
                     ..ValidationNodeDto::default()
                 },
@@ -917,6 +920,7 @@ mod tests {
                     key: "model".into(),
                     type_name: "Model".into(),
                     path: "/pick/model".into(),
+                    ..Default::default()
                 }],
                 ..ValidationNodeDto::default()
             }],
@@ -929,5 +933,165 @@ mod tests {
         assert!(!problems
             .iter()
             .any(|problem| problem.id.starts_with("slot-no-writer-")));
+    }
+
+    #[test]
+    fn slot_messages_distinguish_instances_without_changing_ownership_or_semantic_names() {
+        for (node_type, label, full_name, is_reference, expected) in [
+            ("custom", "Talk", "dialog.Talk#1", false, "Talk#1"),
+            ("custom", "dialog.Talk", "dialog.Talk#2", false, "Talk#2"),
+            ("custom", "dialog.Talk#2", "dialog.Talk#2", false, "Talk#2"),
+            ("custom", "Talk#2", "dialog.Talk#2", false, "Talk#2"),
+            ("custom", "", "dialog.Talk#2", false, "Talk#2"),
+            ("custom", "Welcome guest", "dialog.Talk#2", false, "Welcome guest#2"),
+            ("custom", "Welcome guest#2", "dialog.Talk#2", false, "Welcome guest#2"),
+            ("custom", "dialog.Talk", "dialog.Talk", false, "Talk"),
+            ("custom", "Imported greeting", "dialog.Talk", false, "Imported greeting"),
+            ("custom", "", "", false, "stable-owner"),
+            ("custom", "Talk", "dialog.Talk#2", true, "Talk [stable-owner]"),
+            ("compound", "Conversation", "dialog.Talk#2", false, "Conversation"),
+            ("submachine", "Child behavior", "", false, "Child behavior"),
+        ] {
+            let node = ValidationNodeDto {
+                id: "stable-owner".into(),
+                node_type: node_type.into(),
+                label: label.into(),
+                full_skill_name: full_name.into(),
+                is_reference,
+                is_initial: true,
+                input_slots: vec![ValidationSlotDto { key: "text".into(), ..Default::default() }],
+                output_slots: vec![ValidationSlotDto { key: "reply".into(), ..Default::default() }],
+                parameters: vec![ValidationParameterDto {
+                    key: "required".into(),
+                    required: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let semantic_name = crate::core::validation::helpers::base_node_name(&node);
+            let request = ValidationRequestDto { nodes: vec![node], ..Default::default() };
+            let problems = validate_editor_graph(&request);
+            for (direction, key) in [("input", "text"), ("output", "reply")] {
+                let problem = problems.iter().find(|problem|
+                    problem.id == format!("slot-{direction}-empty-stable-owner-0")
+                ).unwrap();
+                assert_eq!(problem.message, format!("{expected}.{key} has no slot path."));
+                assert_eq!(problem.node_id.as_deref(), Some("stable-owner"));
+                assert_eq!(problem.focus_node_ids, vec!["stable-owner".to_string()]);
+                assert_eq!(problem.detail_tab.as_deref(), Some("slots"));
+                assert_eq!(problem.mode.as_deref(), Some("overview"));
+                assert!(problem.slot_path.is_none());
+            }
+            // The focused display helper must not rewrite other diagnostic families.
+            let parameter = problems.iter().find(|problem| problem.id == "parameter-required-stable-owner-0").unwrap();
+            let old_label = if !label.is_empty() { label } else if !full_name.is_empty() { full_name } else { "stable-owner" };
+            assert_eq!(parameter.message, format!("{old_label}.required needs a value."));
+            assert_eq!(request.nodes[0].full_skill_name, full_name);
+            assert_eq!(crate::core::validation::helpers::base_node_name(&request.nodes[0]), semantic_name);
+        }
+    }
+
+    #[test]
+    fn direct_request_retirement_and_restoration_preserve_indices_and_instance_ownership() {
+        let mut request: ValidationRequestDto = serde_json::from_value(serde_json::json!({
+            "nodes": [
+                {
+                    "id": "talk-first", "nodeType": "custom", "label": "Talk",
+                    "fullSkillName": "dialog.Talk#1", "isInitial": true,
+                    "inputSlots": [{"key": "text", "typeName": "String", "path": ""}],
+                    "outputSlots": [{"key": "reply", "typeName": "String", "path": ""}]
+                },
+                {
+                    "id": "talk-second", "nodeType": "custom", "label": "dialog.Talk",
+                    "fullSkillName": "dialog.Talk#2",
+                    "inputSlots": [
+                        {"key": "text", "typeName": "String", "path": "", "definitionMissing": false},
+                        {"key": "later", "typeName": "String", "path": ""}
+                    ],
+                    "outputSlots": [{"key": "reply", "typeName": "String", "path": "", "definitionMissing": false}]
+                }
+            ]
+        })).unwrap();
+        assert!(!request.nodes[0].input_slots[0].definition_missing);
+        for retired in [false, true, false] {
+            request.nodes[1].input_slots[0].definition_missing = retired;
+            request.nodes[1].output_slots[0].definition_missing = retired;
+            let problems = validate_editor_graph(&request);
+            let slot_problems = problems.iter().filter(|problem| problem.category == "Slots").collect::<Vec<_>>();
+            assert_eq!(slot_problems.len(), if retired { 3 } else { 5 });
+            for direction in ["input", "output"] {
+                assert!(slot_problems.iter().any(|problem| problem.id == format!("slot-{direction}-empty-talk-first-0")));
+                assert_eq!(slot_problems.iter().any(|problem| problem.id == format!("slot-{direction}-empty-talk-second-0")), !retired);
+            }
+            let later = slot_problems.iter().find(|problem| problem.id == "slot-input-empty-talk-second-1").unwrap();
+            assert_eq!(later.node_id.as_deref(), Some("talk-second"));
+            assert_eq!(later.message, "Talk#2.later has no slot path.");
+            assert_eq!(request.nodes[1].input_slots.len(), 2);
+        }
+    }
+
+    #[test]
+    fn retired_connected_bindings_still_report_distinct_endpoint_types_and_path_owned_warnings() {
+        let request = ValidationRequestDto {
+            nodes: vec![
+                ValidationNodeDto {
+                    id: "writer".into(),
+                    node_type: "custom".into(),
+                    label: "dialog.Talk".into(),
+                    full_skill_name: "dialog.Talk#1".into(),
+                    is_initial: true,
+                    output_slots: vec![ValidationSlotDto {
+                        key: "reply".into(),
+                        type_name: "String".into(),
+                        path: "/shared".into(),
+                        definition_missing: true,
+                    }],
+                    ..Default::default()
+                },
+                ValidationNodeDto {
+                    id: "reader".into(),
+                    node_type: "custom".into(),
+                    label: "Talk#2".into(),
+                    full_skill_name: "dialog.Talk#2".into(),
+                    input_slots: vec![
+                        ValidationSlotDto {
+                            key: "text".into(),
+                            type_name: "Model".into(),
+                            path: "/shared".into(),
+                            definition_missing: true,
+                        },
+                        ValidationSlotDto {
+                            key: "unwritten".into(),
+                            type_name: "String".into(),
+                            path: "/orphan".into(),
+                            definition_missing: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ValidationNodeDto {
+                    id: "unrelated".into(),
+                    node_type: "custom".into(),
+                    label: "Talk".into(),
+                    full_skill_name: "dialog.Talk#3".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let problems = validate_editor_graph(&request);
+        let slots = problems.iter().filter(|problem| problem.category == "Slots").collect::<Vec<_>>();
+        assert_eq!(slots.len(), 2);
+        let mismatch = slots.iter().find(|problem| problem.id == "slot-type-shared-reader-0-writer-0").unwrap();
+        assert_eq!(mismatch.message, "/shared: Talk#1.reply (String) → Talk#2.text (Model).");
+        assert_eq!(mismatch.node_id.as_deref(), Some("reader"));
+        assert_eq!(mismatch.focus_node_ids, vec!["writer".to_string(), "reader".to_string()]);
+        assert_eq!(mismatch.detail_tab.as_deref(), Some("slots"));
+        assert!(mismatch.slot_path.is_none());
+        let orphan = slots.iter().find(|problem| problem.id == "slot-no-writer-orphan").unwrap();
+        assert_eq!(orphan.slot_path.as_deref(), Some("/orphan"));
+        assert!(orphan.node_id.is_none());
+        assert!(orphan.focus_node_ids.is_empty());
+        assert!(!slots.iter().any(|problem| problem.node_id.as_deref() == Some("unrelated")));
     }
 }

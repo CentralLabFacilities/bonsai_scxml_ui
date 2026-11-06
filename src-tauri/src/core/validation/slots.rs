@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::helpers::{focus_node, node_label, normalize_slot_path, normalize_slot_type, problem, slot_name};
+use super::helpers::{focus_node, normalize_slot_path, normalize_slot_type, problem, slot_name, slot_node_label};
 use super::types::{EditorProblemDto, ValidationNodeDto, ValidationRequestDto, ValidationSlotDto};
 
 pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<EditorProblemDto>) {
@@ -18,6 +18,9 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
         for (index, slot) in node.input_slots.iter().enumerate() {
             let path = normalize_slot_path(&slot.path);
             if path.is_empty() {
+                if slot.definition_missing {
+                    continue;
+                }
                 let mut item = problem(
                     format!("slot-input-empty-{}-{index}", node.id),
                     "warning",
@@ -25,7 +28,7 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
                     "Input slot is not connected",
                     format!(
                         "{}.{} has no slot path.",
-                        node_label(node),
+                        slot_node_label(node),
                         slot_name(slot, "input", index)
                     ),
                 );
@@ -41,6 +44,9 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
         for (index, slot) in node.output_slots.iter().enumerate() {
             let path = normalize_slot_path(&slot.path);
             if path.is_empty() {
+                if slot.definition_missing {
+                    continue;
+                }
                 let mut item = problem(
                     format!("slot-output-empty-{}-{index}", node.id),
                     "warning",
@@ -48,7 +54,7 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
                     "Output slot is not connected",
                     format!(
                         "{}.{} has no slot path.",
-                        node_label(node),
+                        slot_node_label(node),
                         slot_name(slot, "output", index)
                     ),
                 );
@@ -100,10 +106,10 @@ pub(super) fn validate_slots(request: &ValidationRequestDto, problems: &mut Vec<
                         "Slot type mismatch",
                         format!(
                             "/{path}: {}.{} ({}) → {}.{} ({}).",
-                            node_label(writer.node),
+                            slot_node_label(writer.node),
                             writer.slot.key,
                             writer.slot.type_name,
-                            node_label(reader.node),
+                            slot_node_label(reader.node),
                             reader.slot.key,
                             reader.slot.type_name
                         ),

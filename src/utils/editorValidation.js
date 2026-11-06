@@ -1,6 +1,30 @@
 import { normalizeSlotPath } from "./editorGraph.js";
 import { isManagedBoundaryEvent } from "./transitionEvents.js";
 
+// Presentation only: stable IDs and full skill names remain semantic identity.
+export function getValidationNodeDisplayName(node) {
+    const data = node?.data || node || {};
+    const id = String(node?.id || "");
+    const label = String(data.label || "").trim();
+    const fullName = String(data.fullSkillName || label).trim();
+    if ((node?.type || node?.nodeType) !== "custom") return label || id;
+
+    const separator = fullName.lastIndexOf("#");
+    const fullBase = separator < 0 ? fullName : fullName.slice(0, separator);
+    const shortName = fullBase.split(".").filter(Boolean).pop() || "";
+    const labelBase = label.split("#")[0];
+    const baseName = !label || labelBase === fullBase || labelBase === shortName
+        ? shortName || id : label;
+    const instanceId = String(data.editorInstanceId || (
+        separator < 0 ? "" : fullName.slice(separator + 1)
+    )).trim();
+    if (node?.isReference || data.isSkillClone || data.isStateClone) {
+        return `${baseName} [${String(data.editorInstanceId || id).trim()}]`;
+    }
+    return instanceId && !baseName.endsWith(`#${instanceId}`)
+        ? `${baseName}#${instanceId}` : baseName;
+}
+
 export function projectNodeWarningTitles(previous = new Map(), problems = []) {
     const byNodeId = new Map();
     for (const problem of problems) {
@@ -46,6 +70,14 @@ const mapSlot = (slot) => ({
     key: String(slot?.key || ""),
     typeName: String(slot?.type || ""),
     path: String(slot?.path || ""),
+    definitionMissing: Boolean(slot?.definitionMissing),
+});
+
+const mapSlotDefinition = (slot, index) => ({
+    index,
+    key: String(slot?.key || ""),
+    typeName: String(slot?.type || ""),
+    definitionMissing: Boolean(slot?.definitionMissing),
 });
 
 const isReferenceNode = (node) =>
@@ -124,6 +156,7 @@ export const buildEditorValidationRequest = ({
         parentId: node?.parentId ? String(node.parentId) : null,
         label: String(node?.data?.label || ""),
         fullSkillName: String(node?.data?.fullSkillName || ""),
+        editorInstanceId: String(node?.data?.editorInstanceId || ""),
         source: String(node?.data?.src || ""),
         isInitial: Boolean(node?.data?.isInitial),
         isFinal: Boolean(node?.data?.isFinal),
@@ -237,6 +270,8 @@ export const buildActiveValidationRequest = ({
             })),
             onEntry: (node?.data?.onEntry || []).map(mapAssignment),
             onExit: (node?.data?.onExit || []).map(mapAssignment),
+            inputSlotDefinitions: (node?.data?.inSlots || []).map(mapSlotDefinition),
+            outputSlotDefinitions: (node?.data?.outSlots || []).map(mapSlotDefinition),
             hasLocalDataModel: Array.isArray(submachineActionDataModel(node, tabs, activeTabId)),
             localDataModel: (submachineActionDataModel(node, tabs, activeTabId) || []).map(mapVariable),
         })),

@@ -2,10 +2,12 @@ use std::collections::{HashMap, HashSet};
 
 use crate::core::model::{StateKind, Workflow};
 
+use super::helpers::normalize_slot_type;
+
 use super::types::{
     ActiveValidationRequestDto, ValidationAssignmentDto, ValidationEdgeDto,
-    ValidationEventDto, ValidationNodeDto, ValidationParameterDto, ValidationRequestDto,
-    ValidationSlotDto, ValidationVariableDto,
+    ValidationEventDto, ValidationNodeDto, ValidationNodeOverlayDto, ValidationParameterDto, ValidationRequestDto,
+    ValidationSlotDefinitionDto, ValidationSlotDto, ValidationVariableDto,
 };
 
 fn node_type(kind: StateKind) -> &'static str {
@@ -32,6 +34,34 @@ fn variable(id: &str, type_name: Option<&str>, expression: &str) -> ValidationVa
         type_name: type_name.unwrap_or_default().to_string(),
         expression: expression.to_string(),
     }
+}
+
+fn index_slot_definitions(
+    definitions: &[ValidationSlotDefinitionDto],
+) -> HashMap<usize, Option<&ValidationSlotDefinitionDto>> {
+    let mut indexed = HashMap::with_capacity(definitions.len());
+    for definition in definitions {
+        // Repeated indices are ambiguous even if their other fields agree.
+        indexed
+            .entry(definition.index)
+            .and_modify(|candidate| *candidate = None)
+            .or_insert(Some(definition));
+    }
+    indexed
+}
+
+fn definition_missing(
+    definitions: &HashMap<usize, Option<&ValidationSlotDefinitionDto>>,
+    index: usize,
+    key: &str,
+    type_name: &str,
+) -> bool {
+    let Some(Some(definition)) = definitions.get(&index) else {
+        return false;
+    };
+    definition.definition_missing
+        && definition.key == key
+        && normalize_slot_type(&definition.type_name) == normalize_slot_type(type_name)
 }
 
 fn collect_inherited_slot_paths(workflow: &Workflow) -> Vec<String> {
@@ -70,11 +100,13 @@ pub(crate) fn build_active_validation_request(
     workflow: &Workflow,
     context: &ActiveValidationRequestDto,
 ) -> ValidationRequestDto {
-    let overlays = context
-        .node_overlays
-        .iter()
-        .map(|overlay| (overlay.id.as_str(), overlay))
-        .collect::<HashMap<_, _>>();
+    let mut overlays: HashMap<&str, (&ValidationNodeOverlayDto, bool)> = HashMap::new();
+    for overlay in &context.node_overlays {
+        overlays
+            .entry(overlay.id.as_str())
+            .and_modify(|entry| *entry = (overlay, true))
+            .or_insert((overlay, false));
+    }
 
     let behavior_exit_ids = workflow
         .transitions
@@ -89,7 +121,21 @@ pub(crate) fn build_active_validation_request(
         .states
         .iter()
         .map(|state| {
-            let overlay = overlays.get(state.id.as_str()).copied();
+            let overlay_entry = overlays.get(state.id.as_str());
+            let overlay = overlay_entry.map(|(overlay, _)| *overlay);
+            let definition_overlay = overlay_entry
+                .filter(|(_, ambiguous)| !ambiguous)
+                .map(|(overlay, _)| *overlay);
+            let input_definitions = index_slot_definitions(
+                definition_overlay
+                    .map(|overlay| overlay.input_slot_definitions.as_slice())
+                    .unwrap_or_default(),
+            );
+            let output_definitions = index_slot_definitions(
+                definition_overlay
+                    .map(|overlay| overlay.output_slot_definitions.as_slice())
+                    .unwrap_or_default(),
+            );
             ValidationNodeDto {
                 id: state.id.as_str().to_string(),
                 node_type: node_type(state.kind).to_string(),
@@ -158,19 +204,33 @@ pub(crate) fn build_active_validation_request(
                 input_slots: state
                     .input_slots
                     .iter()
-                    .map(|slot| ValidationSlotDto {
+                    .enumerate()
+                    .map(|(index, slot)| ValidationSlotDto {
                         key: slot.key.clone(),
                         type_name: slot.type_name.clone(),
                         path: slot.path.clone(),
+                        definition_missing: definition_missing(
+                            &input_definitions,
+                            index,
+                            &slot.key,
+                            &slot.type_name,
+                        ),
                     })
                     .collect(),
                 output_slots: state
                     .output_slots
                     .iter()
-                    .map(|slot| ValidationSlotDto {
+                    .enumerate()
+                    .map(|(index, slot)| ValidationSlotDto {
                         key: slot.key.clone(),
                         type_name: slot.type_name.clone(),
                         path: slot.path.clone(),
+                        definition_missing: definition_missing(
+                            &output_definitions,
+                            index,
+                            &slot.key,
+                            &slot.type_name,
+                        ),
                     })
                     .collect(),
                 has_local_data_model: overlay
@@ -289,5 +349,226 @@ pub(crate) fn build_active_validation_request(
         is_behavior_workflow: context.is_behavior_workflow,
         inherited_slot_paths: collect_inherited_slot_paths(workflow),
         ancestor_writer_slot_paths: context.ancestor_writer_slot_paths.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::model::Slot;
+    use crate::core::scxml::{parse_scxml, serialize_scxml};
+    use crate::core::validation::validate_editor_graph;
+
+    fn workflow_with_duplicate_requests() -> Workflow {
+        let mut workflow = parse_scxml(
+            r#"<scxml initial="dialog.Talk#1"><state id="dialog.Talk#1"/><state id="dialog.Talk#2"/></scxml>"#,
+        )
+        .unwrap();
+        for state in &mut workflow.states {
+            state.input_slots = vec![
+                Slot { key: "text".into(), type_name: "String".into(), ..Default::default() },
+                Slot { key: "text".into(), type_name: "Model".into(), ..Default::default() },
+                Slot {
+                    key: "retained".into(),
+                    type_name: "String".into(),
+                    path: "/bound".into(),
+                    inherited: Some("/outer".into()),
+                    description: "Authored binding".into(),
+                },
+            ];
+            state.output_slots = vec![state.input_slots[0].clone()];
+        }
+        workflow
+    }
+
+    fn descriptor(index: usize, type_name: &str) -> ValidationSlotDefinitionDto {
+        ValidationSlotDefinitionDto {
+            index,
+            key: "text".into(),
+            type_name: type_name.into(),
+            definition_missing: true,
+        }
+    }
+
+    fn has_empty(request: &ValidationRequestDto, node_id: &str, direction: &str, index: usize) -> bool {
+        validate_editor_graph(request)
+            .iter()
+            .any(|problem| problem.id == format!("slot-{direction}-empty-{node_id}-{index}"))
+    }
+
+    #[test]
+    fn activity_is_scoped_by_owned_node_direction_index_key_and_normalized_type() {
+        let workflow = workflow_with_duplicate_requests();
+        let first_id = workflow.states[0].id.as_str();
+        let second_id = workflow.states[1].id.as_str();
+        let context = ActiveValidationRequestDto {
+            node_overlays: vec![ValidationNodeOverlayDto {
+                id: second_id.into(),
+                input_slot_definitions: vec![descriptor(0, " string ")],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let request = build_active_validation_request(&workflow, &context);
+        assert!(has_empty(&request, first_id, "input", 0));
+        assert!(!has_empty(&request, second_id, "input", 0));
+        assert!(has_empty(&request, second_id, "input", 1));
+        assert!(has_empty(&request, second_id, "output", 0));
+
+        // Identical keys do not erase an adjacent binding with another type.
+        let mut context = context;
+        context.node_overlays[0].input_slot_definitions = vec![descriptor(1, "Model")];
+        let request = build_active_validation_request(&workflow, &context);
+        assert!(has_empty(&request, second_id, "input", 0));
+        assert!(!has_empty(&request, second_id, "input", 1));
+
+        // Even duplicate key/type pairs remain distinct by their owned index.
+        let mut same_type_workflow = workflow.clone();
+        same_type_workflow.states[1].input_slots[1].type_name = "String".into();
+        context.node_overlays[0].input_slot_definitions = vec![descriptor(1, "String")];
+        let request = build_active_validation_request(&same_type_workflow, &context);
+        assert!(has_empty(&request, second_id, "input", 0));
+        assert!(!has_empty(&request, second_id, "input", 1));
+    }
+
+    #[test]
+    fn unmatched_or_ambiguous_activity_never_suppresses_an_owned_requirement() {
+        let workflow = workflow_with_duplicate_requests();
+        let node_id = workflow.states[1].id.as_str();
+        let valid = descriptor(0, "String");
+        let mut wrong_key = valid.clone();
+        wrong_key.key = "other".into();
+        let mut conflicting = valid.clone();
+        conflicting.definition_missing = false;
+        let mut duplicate_index_other_type = valid.clone();
+        duplicate_index_other_type.type_name = "Model".into();
+        let mut duplicate_index_other_key = valid.clone();
+        duplicate_index_other_key.key = "other".into();
+        for definitions in [
+            vec![],
+            vec![descriptor(9, "String")],
+            vec![descriptor(0, "Model")],
+            vec![wrong_key],
+            vec![valid.clone(), valid.clone()],
+            vec![valid.clone(), conflicting],
+            vec![valid.clone(), duplicate_index_other_type],
+            vec![valid.clone(), duplicate_index_other_key],
+        ] {
+            let context = ActiveValidationRequestDto {
+                node_overlays: vec![ValidationNodeOverlayDto {
+                    id: node_id.into(),
+                    input_slot_definitions: definitions,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let request = build_active_validation_request(&workflow, &context);
+            assert!(has_empty(&request, node_id, "input", 0), "{context:?}");
+        }
+
+        for overlays in [
+            vec![ValidationNodeOverlayDto {
+                id: "same-class-visual-alias".into(),
+                input_slot_definitions: vec![valid.clone()],
+                ..Default::default()
+            }],
+            vec![ValidationNodeOverlayDto {
+                id: node_id.into(),
+                output_slot_definitions: vec![valid.clone()],
+                ..Default::default()
+            }],
+            vec![
+                ValidationNodeOverlayDto {
+                    id: node_id.into(),
+                    input_slot_definitions: vec![valid.clone()],
+                    ..Default::default()
+                },
+                ValidationNodeOverlayDto { id: node_id.into(), ..Default::default() },
+            ],
+        ] {
+            let request = build_active_validation_request(&workflow, &ActiveValidationRequestDto {
+                node_overlays: overlays,
+                ..Default::default()
+            });
+            assert!(has_empty(&request, node_id, "input", 0));
+        }
+    }
+
+    #[test]
+    fn retirement_and_explicit_restoration_keep_owned_bindings_and_original_indices() {
+        let workflow = workflow_with_duplicate_requests();
+        let node_id = workflow.states[1].id.as_str();
+        let saved_before = serialize_scxml(&workflow).unwrap();
+        for retired in [false, true, false] {
+            let mut definition = descriptor(0, "String");
+            definition.definition_missing = retired;
+            let context = ActiveValidationRequestDto {
+                node_overlays: vec![ValidationNodeOverlayDto {
+                    id: node_id.into(),
+                    input_slot_definitions: vec![definition.clone()],
+                    output_slot_definitions: vec![definition],
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            let request = build_active_validation_request(&workflow, &context);
+            assert_eq!(has_empty(&request, node_id, "input", 0), !retired);
+            assert_eq!(has_empty(&request, node_id, "output", 0), !retired);
+            assert!(has_empty(&request, node_id, "input", 1));
+            let slots = &request.nodes[1].input_slots;
+            assert_eq!(slots.len(), 3);
+            assert_eq!(slots[2].key, "retained");
+            assert_eq!(slots[2].path, "/bound");
+            assert_eq!(slots[2].type_name, "String");
+            assert!(request.inherited_slot_paths.iter().any(|path| path == "outer"));
+        }
+        assert_eq!(workflow.states[1].input_slots[2].inherited.as_deref(), Some("/outer"));
+        assert_eq!(workflow.states[1].input_slots[2].description, "Authored binding");
+        assert_eq!(serialize_scxml(&workflow).unwrap(), saved_before);
+    }
+
+    #[test]
+    fn retained_connected_slots_still_supply_writers_type_checks_and_path_checks() {
+        let mut workflow = workflow_with_duplicate_requests();
+        workflow.states[0].input_slots.clear();
+        workflow.states[0].output_slots[0].path = "/shared".into();
+        workflow.states[1].input_slots = vec![
+            Slot { key: "text".into(), type_name: "Model".into(), path: "/shared".into(), ..Default::default() },
+            Slot { key: "text".into(), type_name: "String".into(), path: "/orphan".into(), ..Default::default() },
+            Slot { key: "text".into(), type_name: "String".into(), path: "/outer".into(), inherited: Some("/outer".into()), ..Default::default() },
+        ];
+        workflow.states[1].output_slots.clear();
+        let writer_id = workflow.states[0].id.as_str();
+        let reader_id = workflow.states[1].id.as_str();
+        let request = build_active_validation_request(&workflow, &ActiveValidationRequestDto {
+            node_overlays: vec![
+                ValidationNodeOverlayDto {
+                    id: writer_id.into(),
+                    output_slot_definitions: vec![descriptor(0, "String")],
+                    ..Default::default()
+                },
+                ValidationNodeOverlayDto {
+                    id: reader_id.into(),
+                    input_slot_definitions: vec![
+                        descriptor(0, "Model"), descriptor(1, "String"), descriptor(2, "String"),
+                    ],
+                    ..Default::default()
+                },
+            ],
+            ancestor_writer_slot_paths: vec!["/outer".into()],
+            ..Default::default()
+        });
+        assert!(request.nodes[0].output_slots[0].definition_missing);
+        assert!(request.nodes[1].input_slots.iter().all(|slot| slot.definition_missing));
+        let problems = validate_editor_graph(&request);
+        let mismatch = problems.iter().find(|problem| problem.title == "Slot type mismatch").unwrap();
+        assert_eq!(mismatch.node_id.as_deref(), Some(reader_id));
+        assert_eq!(mismatch.focus_node_ids, vec![writer_id.to_string(), reader_id.to_string()]);
+        assert!(problems.iter().any(|problem| problem.id == "slot-no-writer-orphan"));
+        assert!(!problems.iter().any(|problem| problem.id == "slot-no-writer-shared"
+            || problem.id == "slot-no-writer-outer"
+            || problem.id.starts_with("slot-input-empty-")
+            || problem.id.starts_with("slot-output-empty-")));
+        assert_eq!(request.nodes[1].input_slots[1].path, "/orphan");
     }
 }

@@ -55,6 +55,10 @@ pub(crate) struct ValidationNodeOverlayDto {
     pub has_local_data_model: bool,
     #[serde(default)]
     pub local_data_model: Vec<ValidationVariableDto>,
+    #[serde(default)]
+    pub input_slot_definitions: Vec<ValidationSlotDefinitionDto>,
+    #[serde(default)]
+    pub output_slot_definitions: Vec<ValidationSlotDefinitionDto>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -140,6 +144,18 @@ pub(crate) struct ValidationSlotDto {
     pub type_name: String,
     #[serde(default)]
     pub path: String,
+    #[serde(default)]
+    pub definition_missing: bool,
+}
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ValidationSlotDefinitionDto {
+    pub index: usize,
+    pub key: String,
+    pub type_name: String,
+    #[serde(default)]
+    pub definition_missing: bool,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]

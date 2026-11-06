@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { act, createElement, StrictMode, useCallback, useLayoutEffect, useState } from "react";
 import { Window } from "happy-dom";
+import { buildRustSlotsSnapshot, getWorkflowDocumentFingerprint } from "../src/utils/scxmlRustExport.js";
+import { applyRustWorkflowStatePatch } from "../src/utils/rustWorkflowPatch.js";
+import { buildEditorValidationRequest } from "../src/utils/editorValidation.js";
 
 const window = new Window({ url: "http://localhost/" });
 const originals = new Map();
@@ -560,6 +563,118 @@ test("indexed reconciliation preserves first-wins duplicates, falsy expressions 
     assert.equal(unmatched.length, 3);
     assert.deepEqual(configured.params.map((param) => param.expr), [0, false, "", "", "", ""]);
     assert.deepEqual(configured.events.map((event) => event.id), ["done", "fatal", "*"]);
+});
+
+test("instance-local configuration retirement preserves later handles, inherited bindings and activity through native slot patches", async () => {
+    const inherited = { state: "parent", xpath: "/kept" };
+    const inSlots = [
+        { key: "optional", type: "String", path: "" },
+        { key: "kept", type: "String", path: "/kept", inherited },
+    ];
+    const outSlots = [{ key: "emitted", type: "String", path: "/emitted" }];
+    await open(workflow("a", [skill("skill", { inSlots, outSlots }), skill("second", { inSlots, outSlots })]));
+    await reply(start(), { inSlots, outSlots });
+    await reply(start("second"), { inSlots, outSlots });
+    await flushFrames();
+    const initial = current.graph.getDocumentSnapshot();
+    const saved = buildRustSlotsSnapshot(initial);
+    const fingerprint = getWorkflowDocumentFingerprint(initial);
+    const laterEdge = initial.slotEdges.find((edge) => edge.data.skillNodeId === "second" &&
+        edge.data.access === "read" && edge.data.slotIndex === 1);
+    assert.ok(laterEdge);
+    const retire = { inSlots: [{ key: "kept", type: "String" }], outSlots: [] };
+    await reply(start("second"), retire);
+    await flushFrames();
+    const retired = current.graph.getDocumentSnapshot();
+    const second = retired.nodes.find((node) => node.id === "second");
+    assert.equal(second.data.inSlots[0].definitionMissing, true);
+    assert.equal(second.data.outSlots[0].definitionMissing, true, "connected removed requests retain authored bindings");
+    assert.deepEqual(second.data.inSlots[1].inherited, inherited);
+    assert.equal(second.data.inSlots[1].path, "/kept");
+    assert.equal(second.data.outSlots[0].path, "/emitted");
+    assert.equal(retired.nodes[0], initial.nodes[0], "another instance's definition remains untouched");
+    assert.deepEqual(retired.slotEdges.find((edge) => edge.id === laterEdge.id), laterEdge);
+    assert.deepEqual(buildRustSlotsSnapshot(retired), saved);
+    assert.equal(getWorkflowDocumentFingerprint(retired), fingerprint);
+    const canonicalSlots = (slots) => slots.map((slot) => ({
+        key: slot.key, typeName: slot.typeName, path: slot.path, description: slot.description,
+        inherited: slot.inheritedXpath,
+    }));
+    const nativeState = saved.states.find((state) => state.stateId === "second");
+    const patched = applyRustWorkflowStatePatch(retired.nodes, { states: [{
+        id: "second", inputSlots: canonicalSlots(nativeState.inputSlots),
+        outputSlots: canonicalSlots(nativeState.outputSlots),
+    }] }, { mode: "slots" });
+    assert.equal(patched[1].data.inSlots[0].definitionMissing, true);
+    assert.equal(patched[1].data.outSlots[0].definitionMissing, true);
+    assert.deepEqual(patched[1].data.inSlots[1].inherited, inherited);
+    assert.deepEqual(buildRustSlotsSnapshot({ ...retired, nodes: patched }), saved);
+    const before = JSON.stringify(buildEditorValidationRequest(initial));
+    assert.notEqual(JSON.stringify(buildEditorValidationRequest({ ...retired, nodes: patched })), before,
+        "flag-only retirement invalidates the validation source without changing saved bindings");
+    await act(async () => current.graph.setNodes(patched));
+    await reply(start("second"), { inSlots, outSlots });
+    await flushFrames();
+    const restored = current.graph.getDocumentSnapshot();
+    assert.equal(JSON.stringify(buildEditorValidationRequest(restored)), before);
+    assert.deepEqual(restored.slotEdges.find((edge) => edge.id === laterEdge.id), laterEdge);
+    assert.deepEqual(buildRustSlotsSnapshot(restored), saved);
+});
+
+test("instance-local configuration retirement preserves later handles, inherited bindings and activity through native slot patches", async () => {
+    const inherited = { state: "parent", xpath: "/kept" };
+    const inSlots = [
+        { key: "optional", type: "String", path: "" },
+        { key: "kept", type: "String", path: "/kept", inherited },
+    ];
+    const outSlots = [{ key: "emitted", type: "String", path: "/emitted" }];
+    await open(workflow("a", [skill("skill", { inSlots, outSlots }), skill("second", { inSlots, outSlots })]));
+    await reply(start(), { inSlots, outSlots });
+    await reply(start("second"), { inSlots, outSlots });
+    await flushFrames();
+    const initial = current.graph.getDocumentSnapshot();
+    const saved = buildRustSlotsSnapshot(initial);
+    const fingerprint = getWorkflowDocumentFingerprint(initial);
+    const laterEdge = initial.slotEdges.find((edge) => edge.data.skillNodeId === "second" &&
+        edge.data.access === "read" && edge.data.slotIndex === 1);
+    assert.ok(laterEdge);
+    const retire = { inSlots: [{ key: "kept", type: "String" }], outSlots: [] };
+    await reply(start("second"), retire);
+    await flushFrames();
+    const retired = current.graph.getDocumentSnapshot();
+    const second = retired.nodes.find((node) => node.id === "second");
+    assert.equal(second.data.inSlots[0].definitionMissing, true);
+    assert.equal(second.data.outSlots[0].definitionMissing, true, "connected removed requests retain authored bindings");
+    assert.deepEqual(second.data.inSlots[1].inherited, inherited);
+    assert.equal(second.data.inSlots[1].path, "/kept");
+    assert.equal(second.data.outSlots[0].path, "/emitted");
+    assert.equal(retired.nodes[0], initial.nodes[0], "another instance's definition remains untouched");
+    assert.deepEqual(retired.slotEdges.find((edge) => edge.id === laterEdge.id), laterEdge);
+    assert.deepEqual(buildRustSlotsSnapshot(retired), saved);
+    assert.equal(getWorkflowDocumentFingerprint(retired), fingerprint);
+    const canonicalSlots = (slots) => slots.map((slot) => ({
+        key: slot.key, typeName: slot.typeName, path: slot.path, description: slot.description,
+        inherited: slot.inheritedXpath,
+    }));
+    const nativeState = saved.states.find((state) => state.stateId === "second");
+    const patched = applyRustWorkflowStatePatch(retired.nodes, { states: [{
+        id: "second", inputSlots: canonicalSlots(nativeState.inputSlots),
+        outputSlots: canonicalSlots(nativeState.outputSlots),
+    }] }, { mode: "slots" });
+    assert.equal(patched[1].data.inSlots[0].definitionMissing, true);
+    assert.equal(patched[1].data.outSlots[0].definitionMissing, true);
+    assert.deepEqual(patched[1].data.inSlots[1].inherited, inherited);
+    assert.deepEqual(buildRustSlotsSnapshot({ ...retired, nodes: patched }), saved);
+    const before = JSON.stringify(buildEditorValidationRequest(initial));
+    assert.notEqual(JSON.stringify(buildEditorValidationRequest({ ...retired, nodes: patched })), before,
+        "flag-only retirement invalidates the validation source without changing saved bindings");
+    await act(async () => current.graph.setNodes(patched));
+    await reply(start("second"), { inSlots, outSlots });
+    await flushFrames();
+    const restored = current.graph.getDocumentSnapshot();
+    assert.equal(JSON.stringify(buildEditorValidationRequest(restored)), before);
+    assert.deepEqual(restored.slotEdges.find((edge) => edge.id === laterEdge.id), laterEdge);
+    assert.deepEqual(buildRustSlotsSnapshot(restored), saved);
 });
 
 // skip: failing assertion, likely environmental issue
