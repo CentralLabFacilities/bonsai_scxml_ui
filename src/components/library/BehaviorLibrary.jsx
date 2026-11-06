@@ -12,9 +12,9 @@ import {
     FiTrash2,
 } from "react-icons/fi";
 import {
-    isTauri,
     listBehaviorDirectory,
     selectDirectory,
+    isTauri,
 } from "../../tauri-client.js";
 import { areBehaviorLibraryPropsEqual } from "./canvasLibraryProps.js";
 import { Button, InlineFeedback, SegmentedButton, SegmentedControl, TextInput } from "../ui/index.js";
@@ -162,7 +162,7 @@ const createBehaviorRootState = (source) => ({
         revision: 0,
         entries: [],
         hasLoaded: false,
-        loading: Boolean(source.path),
+        loading: isTauri() && Boolean(source.path),
         error: "",
     },
     picker: { pending: false, error: "" },
@@ -174,6 +174,7 @@ function BehaviorRoot({
     onChange,
     onRemove,
     onOpenBehavior,
+    onRefresh,
     searchText,
 }) {
     const source = useMemo(
@@ -218,15 +219,32 @@ function BehaviorRoot({
             listing: {
                 ...current.listing,
                 revision: current.listing.revision + 1,
-                loading: Boolean(source.path),
+                loading: isTauri() && Boolean(source.path),
             },
         }));
     };
 
+    useEffect(() => {
+        if (!isTauri()) return undefined;
+        const refresh = () => {
+            if (document.visibilityState === "hidden") return;
+            setRootState((current) => ({
+                ...current,
+                listing: { ...current.listing, revision: current.listing.revision + 1 },
+            }));
+        };
+        window.addEventListener("focus", refresh);
+        document.addEventListener("visibilitychange", refresh);
+        return () => {
+            window.removeEventListener("focus", refresh);
+            document.removeEventListener("visibilitychange", refresh);
+        };
+    }, []);
+
     const { entries, hasLoaded, loading, error, revision } = listing;
 
     useEffect(() => {
-        if (!source.path) return undefined;
+        if (!source.path || !isTauri()) return undefined;
         let cancelled = false;
 
         const readDirectory = async () => {
@@ -386,7 +404,10 @@ function BehaviorRoot({
                     <button
                         type="button"
                         className="behavior-icon-button"
-                        onClick={loadEntries}
+                        onClick={() => {
+                            loadEntries();
+                            if (isTauri()) onRefresh?.(directory);
+                        }}
                         title="Refresh"
                     >
                         <FiRefreshCw />
@@ -484,6 +505,7 @@ function BehaviorLibrary({
     directories,
     onDirectoriesChange,
     onOpenBehavior,
+    onRefresh,
     activeLibraryTab = "behaviors",
     onLibraryTabChange,
 }) {
@@ -726,6 +748,7 @@ function BehaviorLibrary({
                             onChange={updateDirectory}
                             onRemove={removeDirectory}
                             onOpenBehavior={onOpenBehavior}
+                            onRefresh={onRefresh}
                             searchText={searchText}
                         />
                     ))

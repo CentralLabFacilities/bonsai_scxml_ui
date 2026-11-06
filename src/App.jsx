@@ -340,6 +340,7 @@ function AppContent() {
         inheritedGlobalDataModel,
         replaceDocument,
         getDocumentSnapshot,
+        hasPendingNodeChanges,
     } = useEditorGraphState();
     // Flush the last resize frame before NodeResizer clamps/fits final geometry.
     const onContainerResizeEnd = useCallback(() => {
@@ -714,7 +715,9 @@ function AppContent() {
         globalDataModel,
         inheritedGlobalDataModel,
         replaceDocument,
+        updateGraph,
         getDocumentSnapshot,
+        hasPendingNodeChanges,
         selectedNodeId,
         setSelectedNodeId,
         fitView,
@@ -787,12 +790,16 @@ function AppContent() {
         fitView,
     });
 
+    const externalRevalidationRef = useRef(() => Promise.resolve());
+    const revalidateExternalWorkflows = useCallback(() => externalRevalidationRef.current(), []);
+
     const {
         handleCreateEmptySubMachine,
         hydrateSubMachineInheritedSlots,
         handleOpenSubMachine,
         handleCreateSubMachineFromSelected,
     } = useSubStateMachines({
+        onExternalRevalidate: revalidateExternalWorkflows,
         selectedNodes,
         activeTabId,
         getTabSnapshot,
@@ -815,6 +822,7 @@ function AppContent() {
         createBehaviorNode,
         createNode,
     } = useEditorLibraryItems({
+        onExternalRevalidate: revalidateExternalWorkflows,
         nodes,
         getDocumentSnapshot,
         behaviorDirectories,
@@ -853,6 +861,8 @@ function AppContent() {
 
     useEditorHistory({
         activeTabId,
+        activeDocumentGeneration: activeWorkflowTab?.documentGeneration ?? 0,
+        getActiveDocumentIdentity,
         activeMode,
         isDraggingNode,
         nodes,
@@ -1047,12 +1057,15 @@ function AppContent() {
         subPackages,
         searchedSkills,
         filteredSkills,
+        isSearchingDescriptions,
     } = useSkillLibraryView({
         skills: skills.skills,
         selectedPackage,
         selectedSubPackage,
         searchText,
         activeFilter,
+        fetchSkillData,
+        refreshVersion: skillLibraryRefreshVersion,
     });
 
     const handleControlPointContextMenu = useCallback(
@@ -1389,9 +1402,17 @@ function AppContent() {
         documentNotice,
         dismissDocumentNotice,
         handleRetryDocumentAction,
+        externalNotice,
+        requestRevalidation,
+        reloadExternalFile,
+        keepLocalFile,
+        saveExternalFileAs,
     } = useWorkflowDocument({
         isDesktop: IS_DESKTOP,
         activeTab: activeWorkflowTab,
+        tabs,
+        activeFingerprint: activeWorkflowFingerprint,
+        behaviorDirectories,
         getTabSnapshot,
         getTabsSnapshot,
         updateTab,
@@ -1406,6 +1427,7 @@ function AppContent() {
         },
         onStateMachineLoadEnd: endStateMachineLoad,
     });
+    useLayoutEffect(() => { externalRevalidationRef.current = requestRevalidation; }, [requestRevalidation]);
 
     const expandRuntimeContainer = useCallback((tabId, containerId) => {
         setRuntimeExpandedContainers((previous) => {
@@ -1696,6 +1718,8 @@ function AppContent() {
             <EditorNotice notice={documentNotice} onDismiss={dismissDocumentNotice}
                 onRetry={handleRetryDocumentAction}
                 onSaveAs={() => handleRetryDocumentAction({ forceSaveAs: true })} />
+            <EditorNotice notice={externalNotice} onRetry={requestRevalidation}
+                onReload={reloadExternalFile} onKeepLocal={keepLocalFile} onSaveAs={saveExternalFileAs} />
             <EditorNotice notice={libraryDropError} onDismiss={dismissLibraryDropError} />
 
             <div className="app" data-panel-mode={panels.isDocked ? "docked" : "drawers"}
@@ -1726,6 +1750,7 @@ function AppContent() {
                         searchedSkills={searchedSkills}
                         packageSkills={packageSkills}
                         filteredSkills={filteredSkills}
+                        isSearchingDescriptions={isSearchingDescriptions}
                         subPackages={subPackages}
                         selectedSubPackage={selectedSubPackage}
                         setSelectedSubPackage={setSelectedSubPackage}
@@ -1748,6 +1773,7 @@ function AppContent() {
                         directories={behaviorDirectories}
                         onDirectoriesChange={setBehaviorDirectories}
                         onOpenBehavior={handleOpenBehaviorFile}
+                        onRefresh={revalidateExternalWorkflows}
                         activeLibraryTab={leftLibraryTab}
                         onLibraryTabChange={setLeftLibraryTab}
                     />
@@ -1936,6 +1962,8 @@ function AppContent() {
                         }}
                         details={{
                             callbacks: detailsCallbacks,
+                            fetchSkillData,
+                            skillLibraryRefreshVersion,
                             activeTab,
                             setActiveTab,
                             availableTargetNodes: semanticNodes,

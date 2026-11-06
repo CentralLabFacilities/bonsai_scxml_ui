@@ -36,11 +36,12 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
     const skillLibraryStateRef = useRef(null);
     const skillLibrarySignatureRef = useRef("");
     const skillDataCacheRef = useRef(new Map());
+    const skillApiNamesRef = useRef(new Map());
     const skillLibraryRequestRef = useRef(0);
     const skillDataGenerationRef = useRef(0);
     const manualReloadCountRef = useRef(0);
 
-    const loadSkills = useCallback(async () => {
+    const loadSkills = useCallback(async ({ refreshDefinitions = false } = {}) => {
         const requestId = ++skillLibraryRequestRef.current;
         try {
             const response = await fetch("/api/skills", { cache: "no-store" });
@@ -60,15 +61,26 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
             const signature = JSON.stringify(normalizedSkills);
             const changed = signature !== skillLibrarySignatureRef.current;
 
-            // An individual skill definition may change without changing the
-            // library's list of names. Refreshing the library therefore also
-            // invalidates parameterized/base definition cache entries.
-            skillDataGenerationRef.current += 1;
-            skillDataCacheRef.current.clear();
+            // Polling only refreshes the list. Keep definitions shared by
+            // search, tooltips and skill details until an explicit reload.
+            if (refreshDefinitions) {
+                skillDataGenerationRef.current += 1;
+                skillDataCacheRef.current.clear();
+            }
 
             if (changed) {
                 skillLibrarySignatureRef.current = signature;
+                const apiNames = new Map();
+                for (const skill of normalizedSkills) {
+                    const relativeName = skill.split(".skills.").pop();
+                    apiNames.set(relativeName, apiNames.has(relativeName) && apiNames.get(relativeName) !== skill ? null : skill);
+                }
+                // Exact API identifiers take precedence over relative names.
+                for (const skill of normalizedSkills) apiNames.set(skill, skill);
+                skillApiNamesRef.current = apiNames;
                 setSkills(data);
+            }
+            if (changed || refreshDefinitions) {
                 setSkillLibraryRefreshVersion((version) => version + 1);
             }
             if (skillLibraryStateRef.current?.status !== "ready") {
@@ -105,7 +117,7 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
         manualReloadCountRef.current += 1;
         setIsReloadingSkills(true);
         try {
-            return await loadSkills();
+            return await loadSkills({ refreshDefinitions: true });
         } finally {
             manualReloadCountRef.current -= 1;
             if (manualReloadCountRef.current === 0) setIsReloadingSkills(false);
@@ -154,12 +166,13 @@ export function useSkillDefinitions({ pollIntervalMs = 10000 } = {}) {
     const fetchSkillData = useCallback(async function fetchDefinition(
         fullSkillName, params = null, { fallbackToBase = true } = {},
     ) {
+        fullSkillName = skillApiNamesRef.current.get(fullSkillName) || fullSkillName;
         const apiParams = normalizeSkillApiParams(params);
         const hasParams = Object.keys(apiParams).length > 0;
         const normalizedParamEntries = Object.entries(apiParams).sort(
             ([left], [right]) => left.localeCompare(right)
         );
-        const cacheKey = `${fullSkillName}\u0001${JSON.stringify(normalizedParamEntries)}\u0001${fallbackToBase}`;
+        const cacheKey = `${fullSkillName}\u0001${JSON.stringify(normalizedParamEntries)}\u0001${hasParams ? fallbackToBase : true}`;
 
         if (skillDataCacheRef.current.has(cacheKey)) {
             return skillDataCacheRef.current.get(cacheKey);

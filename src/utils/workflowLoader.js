@@ -7,7 +7,7 @@ export const getWorkflowFileKey = (path) => String(path || "").replace(/\\/g, "/
  * Resolve/read one workflow and inspect its semantic interface.
  *
  * Resolution, file IO, SCXML parsing and metadata extraction are Rust-owned.
- * The result is cached by canonical path + mtime in the backend.
+ * Parsed results are reused only when canonical identity + exact bytes match.
  */
 export async function inspectWorkflowForEditorSource({
     src,
@@ -26,6 +26,7 @@ export async function inspectWorkflowForEditorSource({
     return {
         content: inspected.content || "",
         path: inspected.path || null,
+        fileVersion: inspected.fileVersion || null,
         fileName:
             inspected.fileName ||
             String(src).split(/[\\/]/).pop() ||

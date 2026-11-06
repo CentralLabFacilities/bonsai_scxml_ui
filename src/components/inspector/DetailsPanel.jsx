@@ -19,6 +19,8 @@ import {
 
 function DetailsPanel({
                           selectedNode,
+                          fetchSkillData,
+                          skillLibraryRefreshVersion,
                           hasInitialNode,
                           activeTab,
                           setActiveTab,
@@ -426,6 +428,8 @@ function DetailsPanel({
                 {visibleActiveTab === "allgemein" && (
                     <GeneralDetailsSection
                         selectedNode={selectedNode}
+                        fetchSkillData={fetchSkillData}
+                        skillLibraryRefreshVersion={skillLibraryRefreshVersion}
                         hasInitialNode={hasInitialNode}
                         isSubMachine={isSubMachine}
                         isContainerState={isContainerState}

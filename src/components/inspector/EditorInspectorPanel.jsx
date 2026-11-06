@@ -161,6 +161,8 @@ export default function EditorInspectorPanel({
                         <DetailsPanel
                             {...details.callbacks}
                             selectedNode={selectedNode}
+                            fetchSkillData={details.fetchSkillData}
+                            skillLibraryRefreshVersion={details.skillLibraryRefreshVersion}
                             cloneSourceNode={selection.cloneSourceNode}
                             cloneNodes={selection.cloneNodes}
                             containerOutgoingTransitions={selection.containerOutgoingTransitions}

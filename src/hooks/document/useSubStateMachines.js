@@ -2,10 +2,9 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { isTauri, saveFile } from "../../tauri-client.js";
 import { reserveSubmachineStateName } from "../../utils/libraryInitialState.js";
 import { useFeedback } from "../../components/ui/index.js";
-import { collectInheritedSlotUsages } from "../../utils/editorGraph";
+import { reconcileWorkflowInterface } from "../../utils/workflowInterface.js";
 import { getNodeId } from "../../utils/editorGeometry";
 import {
-    getLocalDataModelEntries,
     ensureSharedEditorInstanceIds,
     normalizeSharedScxmlStateIdentity,
     prepareGraphForScxml,
@@ -14,7 +13,6 @@ import { serializeEditorGraphWithRust } from "../../utils/scxmlRustExport";
 import {
     getWorkflowFileKey,
     inspectWorkflowForEditorSource,
-    loadWorkflowForEditor,
     projectWorkflowInspectionForEditor,
 } from "../../utils/workflowLoader";
 
@@ -79,15 +77,16 @@ const writeNewSubMachineFile = async ({ filePath, nodes = [], edges = [] }) => {
         });
     }
 
-    const result = await saveFile(xml, filePath, "Create Sub-State-Machine");
+    const result = await saveFile(xml, filePath, null);
     if (!result?.success) {
-        throw new Error("The sub-state-machine file could not be created.");
+        throw new Error(result?.error || "The sub-state-machine file could not be created.");
     }
 
     return {
         success: true,
         filePath: result.path || filePath,
         fileName: result.file_name || filePath.split(/[\\/]/).pop(),
+        fileVersion: result.fileVersion,
     };
 };
 
@@ -152,12 +151,20 @@ export function useSubStateMachines({
     checkSlotConnection,
     onStateMachineLoadStart,
     onStateMachineLoadEnd,
+    onExternalRevalidate,
 }) {
     const { notify } = useFeedback();
+    const mappingEpoch = useRef(0);
+    const mappingKey = JSON.stringify(behaviorDirectories || []);
+    useLayoutEffect(() => {
+        mappingEpoch.current += 1;
+        return () => { mappingEpoch.current += 1; };
+    }, [mappingKey]);
 
     const hydrateSubMachineInheritedSlots = async (
         targetNodes,
-        parentFilePath = null
+        parentFilePath = null,
+        edges = []
     ) => {
         return Promise.all(
             (targetNodes || []).map(async (node) => {
@@ -166,80 +173,18 @@ export function useSubStateMachines({
                 }
 
                 try {
-                    const loaded = await loadWorkflowForEditor({
+                    const loaded = await inspectWorkflowForEditorSource({
                         src: node.data.src,
                         directories: behaviorDirectories,
                         currentFilePath: parentFilePath,
-                        fetchSkillData,
-                        getNodeId,
                     });
-                    const behaviorExitEvents = loaded.behaviorExitEvents || [];
-                    const declaredInheritedSlots =
-                        loaded.inheritedSlotDeclarations || [];
-                    const parsedChild = loaded.parsed;
-                    const inheritedSlots = collectInheritedSlotUsages(
-                        parsedChild.nodes,
-                        declaredInheritedSlots
-                    );
-                    const localDataModel = getLocalDataModelEntries(
-                        parsedChild.globalDataModel
-                    );
-                    const existingEventsById = new Map(
-                        (node.data?.events || []).map((event) => [
-                            String(event?.id || ""),
-                            event,
-                        ])
-                    );
-                    const confirmedEventIds = new Set(
-                        behaviorExitEvents.map((eventId) => String(eventId))
-                    );
-                    const confirmedEvents = behaviorExitEvents.map((eventId) => ({
-                        ...(existingEventsById.get(String(eventId)) || {}),
-                        id: eventId,
-                        // This event is confirmed by a forwarding Nop inside
-                        // the referenced state machine. It may have been added
-                        // provisionally while importing the parent SCXML, but
-                        // it is now part of the real Sub-SM interface.
-                        editorImportedSynthetic: false,
-                        editorBoundarySynthetic: false,
-                    }));
-                    const unresolvedImportedEvents = (node.data?.events || [])
-                        .filter((event) => {
-                            const eventId = String(event?.id || "");
-                            if (!eventId || confirmedEventIds.has(eventId)) {
-                                return false;
-                            }
-
-                            // Keep editor-only handles for invalid transitions
-                            // so React Flow can still render those edges. The
-                            // Problems panel deliberately ignores these handles
-                            // as exposed exits, and deletion prunes them once
-                            // their last transition disappears.
-                            return Boolean(
-                                event?.editorImportedSynthetic ||
-                                event?.editorBoundarySynthetic
-                            );
-                        });
-                    const events = [
-                        ...confirmedEvents,
-                        ...unresolvedImportedEvents,
-                    ];
-
-                    return {
-                        ...node,
-                        data: {
-                            ...node.data,
-                            events,
-                            inheritedSlots,
-                            localDataModel,
-                        },
-                    };
+                    return reconcileWorkflowInterface(node, loaded, { edges });
                 } catch (error) {
                     console.warn(
                         `Could not inspect inheritSlot declarations for ${node.data.src}:`,
                         error
                     );
-                    return node;
+                    return reconcileWorkflowInterface(node, null, { state: "unreadable", error });
                 }
             })
         );
@@ -250,6 +195,7 @@ export function useSubStateMachines({
 
         const originTab = getTabSnapshot(activeTabId);
         if (!originTab) return false;
+        const epoch = mappingEpoch.current;
 
         const fileName = srcPath.split(/[\\/]/).pop();
         const baseName = fileName.replace(/\.(xml|scxml)$/i, "");
@@ -263,6 +209,7 @@ export function useSubStateMachines({
 
         let tabId = `tab-sub-${baseName}`;
         try {
+            if (epoch !== mappingEpoch.current) return false;
             // Inspect first so an already-open tab can be selected without
             // rebuilding its React Flow projection or refetching skill data.
             const inspection = await inspectWorkflowForEditorSource({
@@ -270,6 +217,7 @@ export function useSubStateMachines({
                 directories: behaviorDirectories,
                 currentFilePath: originTab.filePath || null,
             });
+            if (epoch !== mappingEpoch.current) return false;
             const resolvedFilePath = inspection.path;
             if (resolvedFilePath) {
                 tabId = `tab-sub-${resolvedFilePath}`;
@@ -284,6 +232,7 @@ export function useSubStateMachines({
             const existingTab = getExistingChild();
             if (existingTab) {
                 switchTab(existingTab.id);
+                onExternalRevalidate?.();
                 return;
             }
 
@@ -293,19 +242,11 @@ export function useSubStateMachines({
                 );
             }
 
-            const discoveredBehaviorExitEvents =
-                inspection.behaviorExitEvents || [];
-            const declaredInheritedSlots =
-                inspection.inheritedSlotDeclarations || [];
+            // Reconciliation consumes the exact captured disk inspection.
             const parsed = await projectWorkflowInspectionForEditor(inspection, {
                 fetchSkillData,
                 getNodeId,
             });
-            const discoveredInheritedSlots =
-                collectInheritedSlotUsages(
-                    parsed.nodes,
-                    declaredInheritedSlots
-                );
 
             const currentTabPatch = (liveOriginSnapshot) => ({
                 nodes: liveOriginSnapshot.nodes.map((node) => {
@@ -316,81 +257,24 @@ export function useSubStateMachines({
                         return node;
                     }
 
-                    const existingEventsById = new Map(
-                        (node.data?.events || []).map((event) => [
-                            String(event?.id || ""),
-                            event,
-                        ])
-                    );
-
-                    return {
-                        ...node,
-                        data: {
-                            ...node.data,
-                            events:
-                                discoveredBehaviorExitEvents.length > 0
-                                    ? (() => {
-                                        const confirmedEventIds = new Set(
-                                            discoveredBehaviorExitEvents.map(
-                                                (eventId) => String(eventId)
-                                            )
-                                        );
-                                        const confirmedEvents =
-                                            discoveredBehaviorExitEvents.map(
-                                                (eventId) => ({
-                                                    ...(existingEventsById.get(String(eventId)) || {}),
-                                                    id: eventId,
-                                                    // Opening the child machine confirms
-                                                    // that this exit is genuinely exposed
-                                                    // by a forwarding Nop. Do not retain a
-                                                    // provisional imported-handle marker.
-                                                    editorImportedSynthetic: false,
-                                                    editorBoundarySynthetic: false,
-                                                })
-                                            );
-                                        const unresolvedImportedEvents = (
-                                            node.data?.events || []
-                                        ).filter((event) => {
-                                            const eventId = String(event?.id || "");
-                                            if (
-                                                !eventId ||
-                                                confirmedEventIds.has(eventId)
-                                            ) {
-                                                return false;
-                                            }
-
-                                            return Boolean(
-                                                event?.editorImportedSynthetic ||
-                                                event?.editorBoundarySynthetic
-                                            );
-                                        });
-
-                                        return [
-                                            ...confirmedEvents,
-                                            ...unresolvedImportedEvents,
-                                        ];
-                                    })()
-                                    : node.data?.events || [],
-                            inheritedSlots: discoveredInheritedSlots,
-                            localDataModel: getLocalDataModelEntries(
-                                parsed.globalDataModel
-                            ),
-                        },
-                    };
+                    return reconcileWorkflowInterface(node, inspection, { edges: liveOriginSnapshot.edges });
                 }),
             });
             const parsedNodes = ensureSharedEditorInstanceIds(
                 (await hydrateSubMachineInheritedSlots(
                     parsed.nodes,
-                    resolvedFilePath
+                    resolvedFilePath,
+                    parsed.edges
                 )).map(normalizeSharedScxmlStateIdentity)
             );
+            if (epoch !== mappingEpoch.current) return false;
 
             // Another load may have opened this child during hydration. Keep
             // its live graph and slot metadata instead of applying this load.
             const existingAfterHydration = getExistingChild();
             if (existingAfterHydration) {
                 switchTab(existingAfterHydration.id);
+                onExternalRevalidate?.();
                 return;
             }
 
@@ -411,6 +295,10 @@ export function useSubStateMachines({
                 fileHandle: null,
                 filePath: resolvedFilePath,
                 sourcePath: srcPath,
+                diskVersion: inspection.fileVersion,
+                diskSource: { src: srcPath, currentFilePath: originTab.filePath || null },
+                observedDiskVersion: inspection.fileVersion,
+                externalFileState: "current",
                 nodes: parsedNodes,
                 edges: parsed.edges,
                 slotNodes: [],
@@ -473,6 +361,7 @@ export function useSubStateMachines({
     const handleCreateEmptySubMachine = async (pos, fileConfig = {}) => {
         const originTab = getTabSnapshot(activeTabId);
         if (!originTab) return false;
+        const epoch = mappingEpoch.current;
 
         const fallbackLabel = `SubMachine_${originTab.nodes.filter((n) => n.type === "submachine").length + 1}`;
         const fileName = String(fileConfig.fileName || `${fallbackLabel}.xml`).trim();
@@ -483,6 +372,8 @@ export function useSubStateMachines({
             const created = await writeNewSubMachineFile({
                 filePath: requestedFilePath,
             });
+            if (epoch !== mappingEpoch.current)
+                throw new Error(`Behavior mappings changed during creation. The child file was kept at ${created.filePath || requestedFilePath}; the parent was not changed.`);
             const resolvedFilePath = created.filePath || requestedFilePath;
             const sourcePath = getSymbolicBehaviorSource(
                 resolvedFilePath,
@@ -499,7 +390,7 @@ export function useSubStateMachines({
                     fullSkillName: subMachineLabel,
                     src: sourcePath,
                     localDataModel: [],
-                    events: [{ id: "success" }, { id: "failure" }],
+                    events: [],
                     onOpenSubMachine: handleOpenSubMachine,
                 },
             };
@@ -517,6 +408,10 @@ export function useSubStateMachines({
                 fileHandle: null,
                 filePath: resolvedFilePath || null,
                 sourcePath,
+                diskVersion: created.fileVersion,
+                diskSource: { src: sourcePath, currentFilePath: originTab.filePath || null },
+                observedDiskVersion: created.fileVersion,
+                externalFileState: "current",
                 nodes: [],
                 edges: [],
                 slotNodes: [],
@@ -568,6 +463,7 @@ export function useSubStateMachines({
 
         const originTab = getTabSnapshot(activeTabId);
         if (!originTab) return false;
+        const epoch = mappingEpoch.current;
 
         const selectedIds = new Set(selectedNodes.map((n) => n.id));
         const selectedParentNodes = originTab.nodes.filter((node) =>
@@ -631,6 +527,8 @@ export function useSubStateMachines({
                 nodes: subTabNodes,
                 edges: subTabEdges,
             });
+            if (epoch !== mappingEpoch.current)
+                throw new Error(`Behavior mappings changed during extraction. The child file was kept at ${created.filePath || requestedFilePath}; no parent states were removed.`);
             const resolvedFilePath = created.filePath || requestedFilePath;
             const sourcePath = getSymbolicBehaviorSource(
                 resolvedFilePath,
@@ -647,9 +545,7 @@ export function useSubStateMachines({
                     localDataModel: [],
                     src: sourcePath,
                     isInitial: selectedParentNodes.some((node) => node.data?.isInitial),
-                    events: externalEvents.length > 0
-                        ? externalEvents
-                        : [{ id: "success" }, { id: "failure" }],
+                    events: externalEvents,
                     onEntry: [],
                     onExit: [],
                     onOpenSubMachine: handleOpenSubMachine,
@@ -669,6 +565,10 @@ export function useSubStateMachines({
                 fileHandle: null,
                 filePath: resolvedFilePath || null,
                 sourcePath,
+                diskVersion: created.fileVersion,
+                diskSource: { src: sourcePath, currentFilePath: originTab.filePath || null },
+                observedDiskVersion: created.fileVersion,
+                externalFileState: "current",
                 nodes: subTabNodes,
                 edges: subTabEdges,
                 slotNodes: [],

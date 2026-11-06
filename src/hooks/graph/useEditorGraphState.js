@@ -128,6 +128,7 @@ export function useEditorGraphState() {
         [setSlotEdges],
     );
     const getDocumentSnapshot = useCallback(() => documentRef.current, []);
+    const hasPendingNodeChanges = useCallback(() => pendingLiveGeometryRef.current.size > 0, []);
 
     const replaceDocument = useCallback((nextDocument = {}) => {
         // A workflow/tab replacement invalidates queued pointer positions.
@@ -166,6 +167,7 @@ export function useEditorGraphState() {
         setGlobalDataModel,
         setInheritedGlobalDataModel,
         getDocumentSnapshot,
+        hasPendingNodeChanges,
         replaceDocument,
     };
 }

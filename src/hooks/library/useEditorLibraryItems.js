@@ -1,18 +1,15 @@
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 
-import { collectInheritedSlotUsages } from "../../utils/editorGraph";
+import { reconcileWorkflowInterface } from "../../utils/workflowInterface.js";
 import { getNodeId } from "../../utils/editorGeometry";
 import {
     ensureSharedEditorInstanceIds,
-    getLocalDataModelEntries,
     getSharedScxmlStateId,
     normalizeSharedScxmlStateIdentity,
 } from "../../utils/editorScxml";
-import { isEditorCloneNode } from "../../utils/editorClones";
 import { availableLibrarySkillName } from "../../utils/libraryInitialState.js";
 import {
     inspectWorkflowForEditorSource,
-    loadWorkflowForEditor,
     projectWorkflowInspectionForEditor,
     getWorkflowFileKey,
 } from "../../utils/workflowLoader";
@@ -30,10 +27,18 @@ export function useEditorLibraryItems({
     checkSlotConnection,
     beginStateMachineLoad,
     endStateMachineLoad,
+    onExternalRevalidate,
 }) {
+    const mappingEpoch = useRef(0);
+    const mappingKey = JSON.stringify(behaviorDirectories || []);
+    useLayoutEffect(() => {
+        mappingEpoch.current += 1;
+        return () => { mappingEpoch.current += 1; };
+    }, [mappingKey]);
     const handleOpenBehaviorFile = useCallback(
         async (behavior) => {
             if (!behavior?.source) return;
+            const epoch = mappingEpoch.current;
 
             beginStateMachineLoad(
                 behavior.name?.replace(/\.(xml|scxml)$/i, "") || "State machine"
@@ -45,6 +50,7 @@ export function useEditorLibraryItems({
             );
 
             try {
+                if (epoch !== mappingEpoch.current) return;
                 // behavior.source remains ${KEY}/... for SCXML portability.
                 // Rust resolves and caches the referenced workflow for local access.
                 const loaded = await inspectWorkflowForEditorSource({
@@ -52,6 +58,7 @@ export function useEditorLibraryItems({
                     directories: behaviorDirectories,
                     currentFilePath: null,
                 });
+                if (epoch !== mappingEpoch.current) return;
 
                 const tabId = `tab-behavior-${loaded.path || behavior.source}`;
                 const fileKey = getWorkflowFileKey(loaded.path);
@@ -60,6 +67,7 @@ export function useEditorLibraryItems({
 
                 if (existingTab) {
                     switchTab(existingTab.id);
+                    onExternalRevalidate?.();
                     return;
                 }
 
@@ -70,9 +78,11 @@ export function useEditorLibraryItems({
                 const parsedNodes = ensureSharedEditorInstanceIds(
                     (await hydrateSubMachineInheritedSlots(
                         parsed.nodes,
-                        loaded.path
+                        loaded.path,
+                        parsed.edges
                     )).map(normalizeSharedScxmlStateIdentity)
                 );
+                if (epoch !== mappingEpoch.current) return;
 
                 const newTabObj = {
                     id: tabId,
@@ -83,6 +93,10 @@ export function useEditorLibraryItems({
                     fileHandle: null,
                     filePath: loaded.path,
                     sourcePath: behavior.source,
+                    diskVersion: loaded.fileVersion,
+                    diskSource: { src: behavior.source || loaded.path, currentFilePath: null },
+                    observedDiskVersion: loaded.fileVersion,
+                    externalFileState: "current",
                     nodes: parsedNodes,
                     edges: parsed.edges,
                     slotNodes: [],
@@ -121,6 +135,7 @@ export function useEditorLibraryItems({
             switchTab,
             openTab,
             checkSlotConnection,
+            onExternalRevalidate,
         ]
     );
 
@@ -131,40 +146,22 @@ export function useEditorLibraryItems({
                 ""
             );
 
-            let behaviorEvents = [];
-            let inheritedSlots = [];
-            let localDataModel = [];
+            let inspection = null;
 
             try {
                 if (behavior?.source) {
-                    const loaded = await loadWorkflowForEditor({
+                    inspection = await inspectWorkflowForEditorSource({
                         src: behavior.source,
                         directories: behaviorDirectories,
                         currentFilePath: null,
-                        fetchSkillData,
-                        getNodeId,
                     });
-                    const parsedBehavior = loaded.parsed;
-
-                    behaviorEvents = loaded.behaviorExitEvents || [];
-                    inheritedSlots = collectInheritedSlotUsages(
-                        parsedBehavior.nodes,
-                        loaded.inheritedSlotDeclarations || []
-                    );
-                    localDataModel = getLocalDataModelEntries(
-                        parsedBehavior.globalDataModel
-                    );
                 }
             } catch (error) {
                 throw new Error(`Could not inspect ${behavior?.source || baseName}: ${error?.message || error}`, { cause: error });
             }
 
-            // A Sub-SM exposes exactly the events forwarded by Nop states
-            // inside the child machine. Do not invent generic success/failure
-            // tokens: an empty child interface should remain visibly empty.
-            const events = behaviorEvents.map((eventId) => ({ id: eventId }));
 
-            return {
+            const node = {
                 id: getNodeId(),
                 position,
                 type: "submachine",
@@ -173,16 +170,15 @@ export function useEditorLibraryItems({
                     fullSkillName: baseName,
                     src: behavior.source,
                     isInitial: false,
-                    events,
-                    inheritedSlots,
-                    localDataModel,
+                    events: [],
                     onEntry: [],
                     onExit: [],
                     onOpenSubMachine: handleOpenSubMachine,
                 },
             };
+            return inspection ? reconcileWorkflowInterface(node, inspection) : node;
         },
-        [behaviorDirectories, fetchSkillData, handleOpenSubMachine]
+        [behaviorDirectories, handleOpenSubMachine]
     );
 
     const createNode = useCallback(

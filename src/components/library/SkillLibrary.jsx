@@ -175,6 +175,7 @@ function SkillLibrary({
                           searchedSkills,
                           packageSkills,
                           filteredSkills,
+                          isSearchingDescriptions = false,
                           subPackages,
                           selectedSubPackage,
                           setSelectedSubPackage,
@@ -388,7 +389,7 @@ function SkillLibrary({
                     <TextInput
                         className="skill-search"
                         type="text"
-                        placeholder="Search skills..."
+                        placeholder="Search names or descriptions..."
                         aria-label="Search skills"
                         value={searchText}
                         onChange={(e) => {
@@ -405,6 +406,9 @@ function SkillLibrary({
                         </button>
                     ) : <FiSearch className="search-icon" />}
                 </div>
+                {isSearchingDescriptions && (
+                    <div className="library-state" role="status">Searching skill descriptions...</div>
+                )}
 
                 <div className="filter-container">
                     <button
@@ -516,7 +520,7 @@ function SkillLibrary({
                         </Button>
                     </div>
                 )}
-                {skillLibraryStatus === "ready" && visibleItemCount === 0 && (
+                {skillLibraryStatus === "ready" && !isSearchingDescriptions && visibleItemCount === 0 && (
                     <div className="library-state" role="status">
                         {skillCount === 0 ? (
                             <>

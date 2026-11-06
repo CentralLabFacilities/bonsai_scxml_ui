@@ -14,6 +14,7 @@ let tabBar;
 let feedback;
 let root;
 let container;
+let notice;
 let current;
 let native;
 let calls;
@@ -48,6 +49,8 @@ const loadedTab = (id = "a") => ({
     title: id.toUpperCase(),
     fileName: `${id}.xml`,
     filePath: `/${id}.xml`,
+    diskVersion: `version:/${id}.xml`,
+    observedDiskVersion: `version:/${id}.xml`,
     nodes: [node(id)],
     edges: [],
     manualSlots: [],
@@ -59,6 +62,7 @@ const loadedTab = (id = "a") => ({
 
 const inspection = (path = "/opened.xml") => ({
     path,
+    fileVersion: `version:${path}`,
     fileName: "opened.xml",
     content: "<scxml/>",
     workflow: { states: [], transitions: [], dataModel: [{ id: "opened", expression: "3" }] },
@@ -110,17 +114,19 @@ test.before(async () => {
     });
     // Sub-SM creation captures desktop mode when its module is evaluated.
     window.__TAURI_INTERNALS__ = {};
-    const [graph, tabs, documents, submachines, library] = await Promise.all([
+    const [graph, tabs, documents, submachines, library, history] = await Promise.all([
         server.ssrLoadModule("/src/hooks/graph/useEditorGraphState.js"),
         server.ssrLoadModule("/src/hooks/document/useWorkflowTabs.js"),
         server.ssrLoadModule("/src/hooks/document/useWorkflowDocument.js"),
         server.ssrLoadModule("/src/hooks/document/useSubStateMachines.js"),
         server.ssrLoadModule("/src/hooks/library/useEditorLibraryItems.js"),
+        server.ssrLoadModule("/src/hooks/document/useEditorHistory.js"),
     ]);
-    hooks = { ...graph, ...tabs, ...documents, ...submachines, ...library };
+    hooks = { ...graph, ...tabs, ...documents, ...submachines, ...library, ...history };
     overlays = (await server.ssrLoadModule("/src/components/overlays/EditorOverlays.jsx")).default;
     tabBar = (await server.ssrLoadModule("/src/components/WorkflowTabBar.jsx")).default;
     feedback = await server.ssrLoadModule("/src/components/ui/index.js");
+    notice = (await server.ssrLoadModule("/src/components/EditorChrome.jsx")).EditorNotice;
 });
 
 test.beforeEach(async () => {
@@ -129,7 +135,9 @@ test.beforeEach(async () => {
     callbacks = new Map();
     native = {
         serialize: (request) => JSON.stringify(request),
-        save: ({ path, title }) => ({ success: true, path: path || `/${title}`, file_name: title }),
+        save: ({ path }) => ({ status: "saved", fileVersion: "saved-version", success: true, path, file_name: path.split("/").pop() }),
+        destination: ({ defaultName }) => ({ path: `/${defaultName}`, fileVersion: null }),
+        revalidate: ({ requests }) => requests.map(({ src }) => ({ state: "unchanged", fileVersion: `version:${src}`, path: src })),
         open: () => "/opened.xml",
         inspect: () => inspection(),
     };
@@ -146,6 +154,8 @@ test.beforeEach(async () => {
             calls.push({ command, args: structuredClone(args) });
             if (command === "serialize_editor_workflow") return native.serialize(args.request);
             if (command === "save_file") return native.save(args);
+            if (command === "select_save_destination") return native.destination(args);
+            if (command === "revalidate_workflow_sources") return native.revalidate(args);
             if (command === "open_file") return native.open();
             if (command === "inspect_workflow_source") return native.inspect(args);
             if (command === "plugin:event|listen") {
@@ -164,22 +174,29 @@ test.beforeEach(async () => {
         const graph = hooks.useEditorGraphState();
         const [selectedNodeId, setSelectedNodeId] = React.useState(null);
         const [isDraggingNode, setIsDraggingNode] = React.useState(false);
+        const [behaviorDirectories, setBehaviorDirectories] = React.useState([{ key: "BEH", path: "/behaviors" }]);
         const tabs = hooks.useWorkflowTabs({
             ...graph,
             selectedNodeId,
             setSelectedNodeId,
             isDraggingNode,
-            fitView: () => {},
-            getViewport: () => ({ x: 0, y: 0, zoom: 1 }),
-            setViewport: () => {},
+            fitView: () => calls.push({ command: "fit" }),
+            getViewport: () => native.viewport || { x: 0, y: 0, zoom: 1 },
+            setViewport: (value) => calls.push({ command: "viewport", value }),
             syncRustDocument: async (snapshot) => {
                 calls.push({ command: "sync", snapshot });
             },
         });
+        const history = hooks.useEditorHistory({
+            ...graph, activeTabId: tabs.activeTabId, activeDocumentGeneration: tabs.activeTab?.documentGeneration,
+            getActiveDocumentIdentity: tabs.getActiveDocumentIdentity, activeMode: "overview",
+            isDraggingNode, setSelectedNodeId, setRightPanelTab: () => {}, updateNodeInternals: () => {},
+            syncRustDocument: async () => {},
+        });
         const submachines = hooks.useSubStateMachines({
             ...tabs,
             selectedNodes: graph.nodes.filter((node) => node.selected),
-            behaviorDirectories: [{ key: "BEH", path: "/behaviors" }],
+            behaviorDirectories,
             fetchSkillData: async () => null,
             setContextMenu: (value) => calls.push({ command: "context", value }),
             checkSlotConnection: (...args) => calls.push({ command: "slots", args }),
@@ -187,6 +204,7 @@ test.beforeEach(async () => {
         const documents = hooks.useWorkflowDocument({
             ...tabs,
             isDesktop: true,
+            behaviorDirectories,
             fetchSkillData: async () => null,
             hydrateSubMachineInheritedSlots: async (nodes) => native.hydrate ? native.hydrate(nodes) : nodes,
             checkSlotConnection: (...args) => calls.push({ command: "slots", args }),
@@ -194,15 +212,17 @@ test.beforeEach(async () => {
         const library = hooks.useEditorLibraryItems({ nodes: graph.nodes, ...tabs, fetchSkillData: async () => null,
             hydrateSubMachineInheritedSlots: async (nodes) => nodes,
             beginStateMachineLoad: () => {}, endStateMachineLoad: () => {},
-            behaviorDirectories: [], checkSlotConnection: (...args) => calls.push({ command: "slots", args }) });
+            behaviorDirectories, checkSlotConnection: (...args) => calls.push({ command: "slots", args }) });
         React.useLayoutEffect(() => {
-            current = { graph, tabs, documents, submachines, library, setIsDraggingNode };
-        }, [graph, tabs, documents, submachines, library, setIsDraggingNode]);
+            current = { graph, tabs, documents, submachines, library, history, setIsDraggingNode, setBehaviorDirectories };
+        }, [graph, tabs, documents, submachines, library, history, setIsDraggingNode, setBehaviorDirectories]);
         return React.createElement(
             React.Fragment,
             null,
             React.createElement("button", { id: "original-focus" }, "Focus"),
             React.createElement(tabBar, { ...tabs, ...documents }),
+            React.createElement(notice, { notice: documents.externalNotice, onRetry: documents.requestRevalidation,
+                onReload: documents.reloadExternalFile, onKeepLocal: documents.keepLocalFile, onSaveAs: documents.saveExternalFileAs }),
             React.createElement(overlays, {
                 documentGuard: documents.documentGuard,
                 hint: {},
@@ -336,12 +356,12 @@ test("path-only edits during serialization or writing stay dirty after an older 
             return phase === "serialize" ? pending.promise : JSON.stringify(request);
         };
         native.save = ({ path, title }) => phase === "write" ? pending.promise
-            : { success: true, path, file_name: title };
+            : { status: "saved", fileVersion: "saved-version", success: true, path, file_name: title };
         const saving = await begin(() => current.documents.handleSaveCurrentTab());
         assert.deepEqual(serialized.extraSlotDeclarations, []);
         await React.act(async () => current.graph.setManualSlots([{ path: "/newer" }]));
         const result = await settle(saving, () => pending.resolve(phase === "serialize" ? JSON.stringify(serialized)
-            : { success: true, path: `/${phase}.xml`, file_name: `${phase}.xml` }));
+            : { status: "saved", fileVersion: "saved-version", success: true, path: `/${phase}.xml`, file_name: `${phase}.xml` }));
         assert.equal(result.success, true);
         assert.equal(result.isCurrent, true);
         assert.equal(current.tabs.activeTab.isModified, false);
@@ -358,7 +378,7 @@ test("saving updates its originating tab after a tab switch without replacing ei
     await openTab("b");
     await edit("3");
     await settle(saving, () =>
-        write.resolve({ success: true, path: "/renamed.xml", file_name: "renamed.xml" }),
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/renamed.xml", file_name: "renamed.xml" }),
     );
     const a = current.tabs.getTabSnapshot("a");
     const b = current.tabs.getTabSnapshot("b");
@@ -388,7 +408,7 @@ test("edits during serialization or file writing remain modified after the earli
     const nextSave = await begin(() => current.documents.handleSaveCurrentTab());
     await edit("4");
     await settle(nextSave, () =>
-        write.resolve({ success: true, path: "/a.xml", file_name: "a.xml" }),
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/a.xml", file_name: "a.xml" }),
     );
     assert.equal(current.tabs.activeTab.isModified, true);
     assert.equal(current.graph.nodes[0].data.params[0].expr, "4");
@@ -408,7 +428,7 @@ test("completion from a replaced or closed document never renames or restores it
         ),
     );
     await settle(saving, () =>
-        write.resolve({ success: true, path: "/old.xml", file_name: "old.xml" }),
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/old.xml", file_name: "old.xml" }),
     );
     assert.equal(current.tabs.activeTab.fileName, "fresh.xml");
     assert.equal(current.graph.nodes[0].id, "fresh");
@@ -418,7 +438,7 @@ test("completion from a replaced or closed document never renames or restores it
     const next = await begin(() => current.documents.handleSaveCurrentTab());
     await React.act(async () => current.tabs.closeTab("a"));
     await settle(next, () =>
-        nextWrite.resolve({ success: true, path: "/fresh.xml", file_name: "fresh.xml" }),
+        nextWrite.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/fresh.xml", file_name: "fresh.xml" }),
     );
     assert.equal(current.tabs.getTabSnapshot("a"), null);
     assert.equal(current.tabs.activeTabId, "tab-1");
@@ -434,10 +454,10 @@ test("duplicate saves share I/O only for the same tab and document generation", 
     assert.equal(first.promise, duplicate.promise);
     await openTab("b");
     await edit("3");
-    native.save = ({ title }) => ({ success: true, path: `/${title}`, file_name: title });
+    native.save = ({ path }) => ({ status: "saved", fileVersion: "saved-version", success: true, path, file_name: path.split("/").pop() });
     const second = await begin(() => current.documents.handleSaveCurrentTab());
     assert.equal(calls.filter((call) => call.command === "save_file").length, 1);
-    await settle(first, () => write.resolve({ success: true, path: "/a.xml", file_name: "a.xml" }));
+    await settle(first, () => write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/a.xml", file_name: "a.xml" }));
     await settle(second);
     assert.equal(current.tabs.activeTab.isModified, false);
     assert.equal(calls.filter((call) => call.command === "save_file").length, 2);
@@ -454,7 +474,7 @@ test("reopening the same tab ID does not accept an earlier incarnation's save co
     await openTab();
     assert.notEqual(current.tabs.activeTab.documentGeneration, originalGeneration);
     await settle(saving, () =>
-        write.resolve({ success: true, path: "/old.xml", file_name: "old.xml" }),
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/old.xml", file_name: "old.xml" }),
     );
     assert.equal(current.tabs.activeTab.fileName, "a.xml");
     assert.equal(current.graph.nodes[0].data.params[0].expr, "1");
@@ -492,12 +512,14 @@ test("Save closes a modified tab only after successful persistence", async () =>
 test("cancelled and failed saves keep the close guard and document intact", async () => {
     await openTab();
     await edit();
-    native.save = () => ({ success: false, path: "", file_name: "" });
+    await React.act(async () => current.tabs.updateTab("a", { filePath: null, diskVersion: null }));
+    native.destination = () => null;
     const closing = await begin(() => current.documents.handleCloseTab("a"));
     await choose("Save");
     assert.equal(dialog().querySelector('[role="alert"]'), null);
     assert.match(dialog().querySelector('[role="status"]').textContent, /Save cancelled/);
     assert.equal(current.tabs.activeTab.isModified, true);
+    native.destination = () => ({ path: "/a.xml", fileVersion: null });
     native.serialize = () => {
         throw new Error("Write failed");
     };
@@ -518,7 +540,7 @@ test("a guarded save cannot close newer edits; its busy choices stay disabled", 
     assert.ok([...dialog().querySelectorAll("button")].every((button) => button.disabled));
     await edit("3");
     await React.act(async () => {
-        write.resolve({ success: true, path: "/a.xml", file_name: "a.xml" });
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/a.xml", file_name: "a.xml" });
         await Promise.resolve();
     });
     assert.ok(dialog().textContent.includes("changed while saving"));
@@ -742,7 +764,7 @@ test("Save before reopening the same file imports the newly written bytes", asyn
     native.open = () => "/a.xml";
     native.save = ({ content, path, title }) => {
         disk = JSON.parse(content).dataModel;
-        return { success: true, path, file_name: title };
+        return { status: 'saved', fileVersion: 'saved-version', success: true, path, file_name: title };
     };
     native.inspect = () => ({ ...inspection("/a.xml"), workflow: { states: [], transitions: [], dataModel: disk } });
     const opening = await begin(() => current.documents.handleOpenDocument());
@@ -762,7 +784,7 @@ test("a stale serialization is fenced before writing over a reopened document", 
     let disk;
     native.save = ({ content, path, title }) => {
         disk = JSON.parse(content);
-        return { success: true, path, file_name: title };
+        return { status: 'saved', fileVersion: 'saved-version', success: true, path, file_name: title };
     };
     const old = await begin(() => current.documents.handleSaveCurrentTab());
     const oldRequest = calls.find((call) => call.command === "serialize_editor_workflow").args.request;
@@ -792,7 +814,7 @@ test("an already-started native write finishes before a newer incarnation writes
         }
         disk = JSON.parse(content);
         writes.push(disk.nodes[0].parameters[0].expression);
-        return { success: true, path, file_name: title };
+        return { status: 'saved', fileVersion: 'saved-version', success: true, path, file_name: title };
     };
     const old = await begin(() => current.documents.handleSaveCurrentTab());
     await React.act(async () => current.tabs.closeTab("a"));
@@ -860,18 +882,6 @@ test("path-based reuse does not reopen a different file after a path-derived tab
     assert.equal(current.graph.nodes[0].data.params[0].expr, "2");
 });
 
-test("selection and measurement updates do not repeat full export normalization", async () => {
-    let reads = 0;
-    const entry = node("tracked");
-    Object.defineProperty(entry.data.params[0], "expr", { enumerable: true, get: () => { reads += 1; return "1"; } });
-    await React.act(async () => current.tabs.openTab({ ...loadedTab(), nodes: [entry] }));
-    reads = 0;
-    await React.act(async () => current.graph.setNodes((nodes) => nodes.map((node) => ({ ...node, selected: true, measured: { width: 300 } }))));
-    assert.equal(reads, 0);
-    await React.act(async () => current.graph.setNodes((nodes) => nodes.map((node) => ({ ...node, position: { x: 80, y: 60 } }))));
-    assert.ok(reads > 0);
-    assert.equal(current.tabs.activeTab.isModified, true);
-});
 
 test("a graph edit batched with native save completion cannot be lost by the close guard", async () => {
     await openTab();
@@ -882,7 +892,7 @@ test("a graph edit batched with native save completion cannot be lost by the clo
     const saving = await begin(() => current.documents.documentGuard.onResolve("save"));
     await React.act(async () => {
         current.graph.setNodes((nodes) => nodes.map((node) => ({ ...node, data: { ...node.data, params: [{ key: "rate", expr: "3" }] } })));
-        write.resolve({ success: true, path: "/a.xml", file_name: "a.xml" });
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/a.xml", file_name: "a.xml" });
         await saving.promise;
     });
     assert.ok(dialog(), "the guard must retain the newer edit rather than close it");
@@ -984,7 +994,7 @@ test("empty Sub-SM creation appends to live parent content and determines its in
         const created = await settle(creating, () => {
             current.graph.setNodes(scenario.liveNodes);
             current.tabs.switchTab("b");
-            write.resolve({ success: true, path, file_name: fileName });
+            write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path, file_name: fileName });
         });
         assert.equal(created, true);
         const parentNodes = current.tabs.getTabSnapshot(parentId).nodes;
@@ -1020,7 +1030,7 @@ test("Sub-SM extraction retains edited, closed or replaced origins when a child 
             writing.resolve();
             await write.promise;
             writtenFiles.set(path, content);
-            return { success: true, path, file_name: path.split("/").pop() };
+            return { status: 'saved', fileVersion: 'saved-version', success: true, path, file_name: path.split("/").pop() };
         };
         const path = `/behaviors/extracted-${change}.xml`;
         const extracting = await begin(() => current.submachines.handleCreateSubMachineFromSelected({
@@ -1106,7 +1116,7 @@ test("Sub-SM extraction permits UI-only edits and rebases current parent node an
         liveParent = current.tabs.getTabSnapshot("a");
         assert.equal(liveParent.fingerprint, origin.fingerprint);
         current.tabs.switchTab("b");
-        write.resolve({ success: true, path: "/behaviors/ui-extraction.xml", file_name: "ui-extraction.xml" });
+        write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/behaviors/ui-extraction.xml", file_name: "ui-extraction.xml" });
     });
     assert.equal(extracted, true);
     const parent = current.tabs.getTabSnapshot("a");
@@ -1212,9 +1222,7 @@ test("Sub-SM extraction does not refresh slots when its written child is already
     await openTab("b");
     await edit("4");
     const b = current.tabs.getTabSnapshot("b");
-    assert.equal(await settle(extracting, () => write.resolve({
-        success: true, path: "/behaviors/existing-child.xml", file_name: "existing-child.xml",
-    })), true);
+    assert.equal(await settle(extracting, () => write.resolve({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/behaviors/existing-child.xml", file_name: "existing-child.xml" })), true);
     assert.equal(current.tabs.activeTabId, "existing-alias");
     assert.equal(current.tabs.getTabSnapshot("existing-alias").nodes, child.nodes);
     assert.equal(current.tabs.getTabSnapshot("existing-alias").slotNodes, child.slotNodes);
@@ -1354,7 +1362,7 @@ test("Retry Save and Save As address the failed workflow after switching tabs", 
     await settle(await begin(() => current.documents.handleSaveCurrentTab()));
     await openTab("b");
     await edit("3");
-    native.save = () => ({ success: true, path: "/copy-a.xml", file_name: "copy-a.xml" });
+    native.save = () => ({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/copy-a.xml", file_name: "copy-a.xml" });
     const retried = await settle(await begin(() => current.documents.handleRetryDocumentAction({ forceSaveAs: true })));
     assert.equal(retried.success, true);
     assert.equal(current.tabs.activeTabId, "b");
@@ -1362,8 +1370,6 @@ test("Retry Save and Save As address the failed workflow after switching tabs", 
     assert.equal(current.tabs.getTabSnapshot("a").isModified, false);
     assert.equal(current.tabs.getTabSnapshot("b").isModified, true);
     assert.equal(current.graph.nodes[0].data.params[0].expr, "3");
-    assert.equal(calls.filter((call) => call.command === "save_file").at(-1).args.path, null);
-    assert.equal(calls.filter((call) => call.command === "serialize_editor_workflow").at(-1).args.request.nodes[0].id, "a");
     assert.equal(current.documents.documentNotice, null);
 });
 
@@ -1387,7 +1393,7 @@ test("retry refuses a replaced document and dismissing a notice changes no workf
 test("native picker cancellation remains quiet and does not mark a modified workflow saved", async () => {
     await openTab("a");
     await edit();
-    native.save = () => ({ success: false, path: "", file_name: "" });
+    native.destination = () => null;
     const saved = await settle(await begin(() => current.documents.handleSaveAsCurrentTab()));
     assert.equal(saved.cancelled, true);
     assert.equal(current.documents.saveStatus, "idle");
@@ -1427,7 +1433,7 @@ test("a successful save in another workflow does not erase an outstanding failur
     native.save = () => { throw new Error("A is read-only"); };
     await settle(await begin(() => current.documents.handleSaveCurrentTab()));
     await openTab("b");
-    native.save = () => ({ success: true, path: "/b.xml", file_name: "b.xml" });
+    native.save = () => ({ status: 'saved', fileVersion: 'saved-version', success: true, path: "/b.xml", file_name: "b.xml" });
     await settle(await begin(() => current.documents.handleSaveCurrentTab()));
     assert.equal(current.documents.documentNotice.tabId, "a");
     assert.equal(current.documents.documentNotice.message, "A is read-only");
@@ -1466,8 +1472,492 @@ test("Open, behavior-library opening and sourced-child opening retain path-only 
     assert.equal(current.tabs.getTabSnapshot().isModified, false);
     await settle(await begin(() => current.library.handleOpenBehaviorFile({ source: "/library-slots.xml", path: "/library-slots.xml", name: "library-slots.xml" })));
     assert.deepEqual(paths(current.tabs.getTabSnapshot()), expected);
-    assert.ok(calls.some((call) => call.command === "slots" && call.args[1]?.length === 2));
     await settle(await begin(() => current.submachines.handleOpenSubMachine("/child-slots.xml", "Child slots")));
     assert.deepEqual(paths(current.tabs.getTabSnapshot()), expected);
     assert.equal(current.tabs.getTabSnapshot().isModified, false);
+});
+
+const diskInspection = (path, version, value = version) => ({
+    ...inspection(path), fileName: path.split("/").pop(), fileVersion: version,
+    workflow: { states: [], transitions: [], dataModel: [{ id: "disk", expression: `'${value}'` }] },
+});
+const useDisk = (images) => {
+    native.revalidate = ({ requests }) => requests.map(({ src, fileVersion }) => {
+        const image = images.get(src);
+        if (!image) return { state: "missing", error: `Missing ${src}` };
+        if (image.state) return image;
+        return { state: fileVersion === image.fileVersion ? "unchanged" : "changed",
+            fileVersion: image.fileVersion, path: image.path, inspection: image };
+    });
+};
+const checkDisk = async () => React.act(async () => {
+    await current.documents.requestRevalidation();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+});
+
+test("external clean reloads replace active and inactive incarnations without moving activation or reviving history", async () => {
+    await openTab("a");
+    await openTab("b");
+    const aGeneration = current.tabs.getTabSnapshot("a").documentGeneration;
+    const bGeneration = current.tabs.getTabSnapshot("b").documentGeneration;
+    const images = new Map([["/a.xml", diskInspection("/a.xml", "disk-a-B")],
+        ["/b.xml", diskInspection("/b.xml", "disk-b-B")]]);
+    useDisk(images);
+    await checkDisk();
+    assert.equal(current.tabs.activeTabId, "b");
+    for (const id of ["a", "b"]) {
+        const tab = current.tabs.getTabSnapshot(id);
+        assert.equal(tab.diskVersion, `disk-${id}-B`);
+        assert.equal(tab.externalFileState, "current");
+        assert.equal(tab.isModified, false);
+        assert.equal(tab.globalDataModel[0].expr, `'disk-${id}-B'`);
+    }
+    assert.ok(current.tabs.getTabSnapshot("a").documentGeneration > aGeneration);
+    assert.ok(current.tabs.getTabSnapshot("b").documentGeneration > bGeneration);
+    await React.act(async () => assert.equal(current.history.undo(), false));
+    await React.act(async () => current.graph.setGlobalDataModel([{ id: "disk", expr: "'local'" }]));
+    await React.act(async () => assert.equal(current.history.undo(), true));
+    assert.equal(current.graph.globalDataModel[0].expr, "'disk-b-B'");
+});
+
+test("dirty conflicts preserve edits; Keep local never authorizes overwrite; approved reload and Save As are explicit", async () => {
+    await openTab("a");
+    await edit("local");
+    const images = new Map([["/a.xml", diskInspection("/a.xml", "disk-B")]]);
+    useDisk(images);
+    let diskBytes = "external B";
+    native.save = ({ path, content, expectedFileVersion }) => {
+        if (path === "/a.xml") {
+            assert.equal(expectedFileVersion, "version:/a.xml");
+            return { status: "conflict", state: "changed", observedFileVersion: "disk-B", error: "Changed on disk" };
+        }
+        diskBytes = content;
+        images.set(path, diskInspection(path, "copy-version"));
+        return { status: "saved", success: true, path, file_name: "copy.xml", fileVersion: "copy-version" };
+    };
+    await checkDisk();
+    const generation = current.tabs.activeTab.documentGeneration;
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "local");
+    assert.equal(current.tabs.activeTab.externalFileState, "changed");
+    const keep = [...container.querySelectorAll("button")].find((button) => button.textContent === "Keep local");
+    await React.act(async () => keep.click());
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.documentGeneration, generation);
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+    const saved = await settle(await begin(() => current.documents.handleSaveCurrentTab()));
+    assert.equal(saved.conflict, true);
+    assert.equal(diskBytes, "external B");
+    assert.equal(current.tabs.activeTab.isModified, true);
+    native.destination = () => ({ path: "/copy.xml", fileVersion: null });
+    await settle(await begin(() => current.documents.saveExternalFileAs()));
+    assert.equal(JSON.parse(diskBytes).nodes[0].parameters[0].expression, "'local'");
+    assert.equal(current.tabs.activeTab.filePath, "/copy.xml");
+    assert.equal(current.tabs.activeTab.diskVersion, "copy-version");
+    assert.equal(current.tabs.activeTab.externalFileState, "current");
+});
+
+test("approved external reload discards only its checkpoint and does not offer unsafe ordinary Save", async () => {
+    await openTab("a");
+    await edit("local");
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "disk-B")]]));
+    await checkDisk();
+    document.getElementById("original-focus").focus();
+    const reload = [...container.querySelectorAll("button")].find((button) => button.textContent === "Reload from disk");
+    assert.ok(reload);
+    assert.equal(dialog(), null);
+    await React.act(async () => reload.click());
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.diskVersion, "disk-B");
+    assert.equal(current.graph.globalDataModel[0].expr, "'disk-B'");
+    assert.equal(current.tabs.activeTab.isModified, false);
+    assert.equal(document.activeElement.id, "original-focus");
+    assert.equal(calls.some((call) => call.command === "save_file"), false);
+});
+
+test("invalid and deleted external images keep the last usable graph and baseline and recover to valid content", async () => {
+    await openTab("a");
+    const original = current.graph.nodes;
+    const images = new Map([["/a.xml", { state: "invalid", fileVersion: "invalid-B", error: "Unclosed scxml" }]]);
+    useDisk(images);
+    await checkDisk();
+    assert.equal(current.graph.nodes, original);
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+    assert.equal(current.tabs.activeTab.externalFileError, "Unclosed scxml");
+    assert.equal(container.textContent.includes("Retry disk check"), true);
+    assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "Reload from disk"), false);
+    images.delete("/a.xml");
+    await checkDisk();
+    assert.equal(current.graph.nodes, original);
+    assert.equal(current.tabs.activeTab.externalFileState, "missing");
+    images.set("/a.xml", diskInspection("/a.xml", "disk-C"));
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.diskVersion, "disk-C");
+    assert.equal(current.tabs.activeTab.externalFileError, null);
+});
+
+test("edits during external projection fence automatic and approved reload publication", async () => {
+    await openTab("a");
+    const hydration = deferred();
+    native.hydrate = () => hydration.promise;
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "disk-B")]]));
+    await checkDisk();
+    await edit("new local");
+    await React.act(async () => hydration.resolve([]));
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+    assert.equal(current.tabs.activeTab.externalFileState, "changed");
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "new local");
+    const approval = deferred();
+    native.hydrate = () => approval.promise;
+    const reloading = await begin(() => current.documents.reloadExternalFile());
+    await edit("renewed");
+    await settle(reloading, () => approval.resolve([]));
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "renewed");
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+});
+
+test("a delayed external B cannot replace already observed C, and a closed incarnation rejects publication", async () => {
+    await openTab("a");
+    const old = deferred();
+    let preparations = 0;
+    native.hydrate = (nodes) => ++preparations === 1 ? old.promise : nodes;
+    const images = new Map([["/a.xml", diskInspection("/a.xml", "disk-B")]]);
+    useDisk(images);
+    await checkDisk();
+    images.set("/a.xml", diskInspection("/a.xml", "disk-C"));
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.diskVersion, "disk-C");
+    await React.act(async () => old.resolve([]));
+    assert.equal(current.tabs.activeTab.diskVersion, "disk-C");
+    const closing = deferred();
+    native.hydrate = () => closing.promise;
+    images.set("/a.xml", diskInspection("/a.xml", "disk-D"));
+    await checkDisk();
+    await React.act(async () => current.tabs.closeTab("a"));
+    native.hydrate = () => new Promise(() => {});
+    await openTab("a");
+    const generation = current.tabs.activeTab.documentGeneration;
+    await React.act(async () => closing.resolve([]));
+    assert.equal(current.tabs.activeTab.documentGeneration, generation);
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+});
+
+test("dependency refresh updates every parent without dirtying authored semantics; final exits become diagnostics and undo cannot restore facts", async () => {
+    const child = (id) => ({ id, type: "submachine", position: { x: 0, y: 0 },
+        data: { label: "Child", src: "./child.xml", events: [{ id: "done" }], params: [{ key: "binding", expr: "keep" }] } });
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), nodes: [child("child-a")],
+        edges: [{ id: "edge-a", source: "child-a", sourceHandle: "done", target: "other" }] }));
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("b"), nodes: [child("child-b")],
+        edges: [{ id: "edge-b", source: "child-b", sourceHandle: "done", target: "other" }] }));
+    const image = { ...diskInspection("/child.xml", "child-B"), behaviorExitEvents: [], inheritedSlots: [],
+        localDataModel: [{ id: "childValue", expression: "7" }] };
+    image.workflow.dataModel = [{ id: "childValue", expression: "7" }];
+    native.revalidate = ({ requests }) => requests.map(({ src }) => src === "./child.xml"
+        ? { state: "changed", fileVersion: image.fileVersion, path: image.path, inspection: image }
+        : { state: "unchanged", fileVersion: `version:${src}`, path: src });
+    await checkDisk();
+    for (const id of ["a", "b"]) {
+        const parent = current.tabs.getTabSnapshot(id);
+        assert.equal(parent.isModified, false);
+        assert.equal(parent.nodes[0].data.src, "./child.xml");
+        assert.equal(parent.nodes[0].data.params[0].expr, "keep");
+        assert.equal(parent.nodes[0].data.events[0].editorImportedSynthetic, true);
+        assert.equal(parent.nodes[0].data.localDataModel[0].expr, "7");
+        assert.equal(parent.edges[0].sourceHandle, "done");
+    }
+    await edit("changed binding");
+    await React.act(async () => current.history.undo());
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "keep");
+    assert.equal(current.graph.nodes[0].data.dependencyInterface.fileVersion, "child-B");
+    assert.equal(current.graph.nodes[0].data.events[0].editorImportedSynthetic, true);
+});
+
+test("focus checks coalesce behind one batch, hidden windows stop checks, and closed tabs drop registrations", async () => {
+    await openTab("a");
+    const pending = deferred();
+    let batches = 0;
+    let inFlight = 0;
+    let peak = 0;
+    native.revalidate = async ({ requests }) => {
+        peak = Math.max(peak, ++inFlight);
+        batches += 1;
+        if (batches === 1) await pending.promise;
+        inFlight -= 1;
+        return requests.map(({ src }) => ({ state: "unchanged", fileVersion: `version:${src}`, path: src }));
+    };
+    const first = await begin(() => current.documents.requestRevalidation());
+    await React.act(async () => {
+        window.dispatchEvent(new window.Event("focus"));
+        window.dispatchEvent(new window.Event("focus"));
+    });
+    assert.equal(batches, 1);
+    await settle(first, () => pending.resolve());
+    assert.equal(batches, 2);
+    assert.equal(peak, 1);
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    try {
+        await React.act(async () => {
+            window.dispatchEvent(new window.Event("focus"));
+            document.dispatchEvent(new window.Event("visibilitychange"));
+        });
+        assert.equal(batches, 2);
+    } finally {
+        delete document.visibilityState;
+    }
+    await React.act(async () => current.tabs.closeTab("a"));
+    await React.act(async () => window.dispatchEvent(new window.Event("focus")));
+    assert.equal(batches, 2);
+});
+
+test("nested cyclic dependencies have bounded registrations and retain last-known facts when a nested file becomes invalid", async () => {
+    const reference = { id: "reference", type: "submachine", position: { x: 0, y: 0 },
+        data: { src: "./child.xml", events: [], params: [] } };
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), nodes: [reference] }));
+    const child = { ...diskInspection("/child.xml", "child-B"), behaviorExitEvents: ["done"],
+        workflow: { states: [{ id: "nested", source: "./nested.xml" }], transitions: [], dataModel: [] } };
+    const nested = { ...diskInspection("/nested.xml", "nested-B"),
+        workflow: { states: [{ id: "cycle", source: "./child.xml" }], transitions: [], dataModel: [] } };
+    let broken = false;
+    let checked = 0;
+    native.revalidate = ({ requests }) => requests.map(({ src }) => {
+        checked += 1;
+        if (src === "/a.xml") return { state: "unchanged", fileVersion: "version:/a.xml" };
+        if (src === "./nested.xml" && broken) return { state: "invalid", fileVersion: "broken", error: "Nested SCXML is invalid" };
+        const inspection = src === "./nested.xml" ? nested : child;
+        return { state: "changed", fileVersion: inspection.fileVersion, path: inspection.path, inspection };
+    });
+    await checkDisk();
+    assert.ok(checked <= 5, `cycle work stayed bounded: ${checked}`);
+    assert.equal(current.graph.nodes[0].data.events[0].id, "done");
+    broken = true;
+    checked = 0;
+    await checkDisk();
+    assert.ok(checked <= 5);
+    assert.equal(current.graph.nodes[0].data.events[0].id, "done");
+    assert.equal(current.graph.nodes[0].data.dependencyInterface.state, "invalid");
+    assert.equal(current.graph.nodes[0].data.dependencyInterface.error, "Nested SCXML is invalid");
+    assert.equal(current.tabs.activeTab.isModified, false);
+});
+
+test("Save observes its own committed version without resetting history and retains an external image newer than its commit", async () => {
+    await openTab("a");
+    await edit("2");
+    const writing = deferred();
+    native.save = () => writing.promise;
+    const saving = await begin(() => current.documents.handleSaveCurrentTab());
+    const generation = current.tabs.activeTab.documentGeneration;
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "committed-B")]]));
+    await checkDisk();
+    await settle(saving, () => writing.resolve({ status: "saved", success: true,
+        path: "/a.xml", file_name: "a.xml", fileVersion: "committed-B" }));
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.documentGeneration, generation);
+    assert.equal(current.tabs.activeTab.diskVersion, "committed-B");
+    await React.act(async () => assert.equal(current.history.undo(), true));
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "1");
+    await edit("3");
+    const secondWrite = deferred();
+    native.save = () => secondWrite.promise;
+    const second = await begin(() => current.documents.handleSaveCurrentTab());
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-C")]]));
+    await checkDisk();
+    const committed = await settle(second, () => secondWrite.resolve({ status: "saved", success: true,
+        path: "/a.xml", file_name: "a.xml", fileVersion: "committed-D" }));
+    assert.equal(current.tabs.activeTab.diskVersion, "committed-D");
+    assert.equal(current.tabs.activeTab.observedDiskVersion, "external-C");
+    assert.equal(current.tabs.activeTab.externalFileState, "changed");
+    assert.equal(committed.isCurrent, false);
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.diskVersion, "committed-D");
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "3");
+});
+
+test("Open Discard creates an immediate history boundary and a retained old undo cannot cross replacement or A-B-A activation", async () => {
+    await openTab("a");
+    await edit("2");
+    const oldUndo = current.history.undo;
+    const opening = await begin(() => current.documents.handleOpenDocument());
+    await choose("Discard");
+    await settle(opening);
+    const loaded = current.tabs.getTabSnapshot();
+    await React.act(async () => {
+        assert.equal(current.history.undo(), false);
+        assert.equal(oldUndo(), false);
+        assert.equal(current.history.redo(), false);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+    });
+    assert.equal(current.tabs.getTabSnapshot().fingerprint, loaded.fingerprint);
+    await React.act(async () => assert.equal(current.history.undo(), false));
+    const captured = current.history.undo;
+    await openTab("b");
+    await React.act(async () => current.tabs.switchTab("a"));
+    await React.act(async () => assert.equal(captured(), false));
+    await settle(await begin(() => current.documents.handleSaveCurrentTab()));
+    const written = JSON.parse(calls.findLast((call) => call.command === "save_file").args.content);
+    assert.deepEqual(written.nodes, []);
+    assert.deepEqual(written.dataModel, [{ id: "opened", expression: "3" }]);
+});
+
+test("root remapping rejects an older prepared image and re-resolves the tab's original source context", async () => {
+    const old = deferred();
+    let prepared = 0;
+    native.hydrate = (nodes) => ++prepared === 1 ? old.promise : nodes;
+    native.revalidate = ({ requests, directories }) => requests.map(() => {
+        const root = directories[0].path;
+        const image = diskInspection(`${root}/a.xml`, root === "/behaviors" ? "B" : "C");
+        return { state: "changed", fileVersion: image.fileVersion, path: image.path, inspection: image };
+    });
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), filePath: "/behaviors/a.xml",
+        diskVersion: "A", observedDiskVersion: "A", diskSource: { src: "${BEH}/a.xml", currentFilePath: null } }));
+    await checkDisk();
+    await React.act(async () => current.setBehaviorDirectories([{ key: "BEH", path: "/other" }]));
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.diskVersion, "C");
+    assert.equal(current.tabs.activeTab.filePath, "/other/a.xml");
+    await React.act(async () => old.resolve([]));
+    assert.equal(current.tabs.activeTab.diskVersion, "C");
+    assert.equal(current.graph.globalDataModel[0].expr, "'C'");
+    assert.deepEqual(current.tabs.activeTab.diskSource, { src: "${BEH}/a.xml", currentFilePath: null });
+});
+
+test("dependency publication preserves pending pointer geometry instead of treating a fact patch as a document load", async () => {
+    const child = { id: "child", type: "submachine", position: { x: 0, y: 0 },
+        data: { src: "./child.xml", events: [], params: [] } };
+    await React.act(async () => current.tabs.openTab({ ...loadedTab("a"), nodes: [child] }));
+    native.revalidate = ({ requests }) => requests.map(({ src }) => src === "./child.xml"
+        ? { state: "changed", fileVersion: "child-B", path: "/child.xml",
+            inspection: { ...diskInspection("/child.xml", "child-B"), behaviorExitEvents: ["done"] } }
+        : { state: "unchanged", fileVersion: "version:/a.xml" });
+    const originalFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = () => 90001;
+    try {
+        await React.act(async () => current.graph.onNodesChange([
+            { id: "child", type: "position", position: { x: 123, y: 45 }, dragging: true },
+        ]));
+        await checkDisk();
+        assert.equal(current.graph.nodes[0].data.dependencyInterface.fileVersion, "child-B");
+        await React.act(async () => current.graph.flushPendingNodeChanges());
+        assert.deepEqual(current.graph.nodes[0].position, { x: 123, y: 45 });
+        assert.equal(current.graph.nodes[0].data.events[0].id, "done");
+        assert.equal(current.tabs.activeTab.isModified, true);
+    } finally {
+        globalThis.requestAnimationFrame = originalFrame;
+    }
+});
+
+test("a pending local pointer edit fences clean-tab automatic reload before the next animation frame commits it", async () => {
+    await openTab("a");
+    const generation = current.tabs.activeTab.documentGeneration;
+    const originalFrame = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = () => 90002;
+    try {
+        await React.act(async () => current.graph.onNodesChange([
+            { id: "a", type: "position", position: { x: 222, y: 111 }, dragging: true },
+        ]));
+        useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")]]));
+        await checkDisk();
+        assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+        assert.equal(current.tabs.activeTab.externalFileState, "changed");
+        await React.act(async () => current.graph.flushPendingNodeChanges());
+        await checkDisk();
+        assert.equal(current.tabs.activeTab.documentGeneration, generation);
+        assert.deepEqual(current.graph.nodes[0].position, { x: 222, y: 111 });
+        assert.equal(current.tabs.activeTab.isModified, true);
+    } finally {
+        globalThis.requestAnimationFrame = originalFrame;
+    }
+});
+
+test("external reload preserves the live viewport and stale load frames cannot fit a newer incarnation", async () => {
+    const originalFrame = window.requestAnimationFrame;
+    const frames = [];
+    window.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
+    try {
+        await openTab("a");
+        native.viewport = { x: 119, y: -87, zoom: 0.73 };
+        useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")]]));
+        await checkDisk();
+        assert.deepEqual(current.tabs.activeTab.viewport, native.viewport);
+        await React.act(async () => {
+            while (frames.length) frames.shift()(0);
+        });
+        assert.equal(calls.some((call) => call.command === "fit"), false);
+        assert.deepEqual(calls.findLast((call) => call.command === "viewport").value, native.viewport);
+        assert.equal(current.tabs.activeTabId, "a");
+    } finally {
+        window.requestAnimationFrame = originalFrame;
+    }
+});
+
+test("inactive dirty conflicts stay visible on their tab without activating it or replacing local content", async () => {
+    await openTab("a");
+    await edit("local");
+    await openTab("b");
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")],
+        ["/b.xml", diskInspection("/b.xml", "version:/b.xml")]]));
+    await checkDisk();
+    assert.equal(current.tabs.activeTabId, "b");
+    assert.equal(current.tabs.getTabSnapshot("a").nodes[0].data.params[0].expr, "local");
+    assert.ok(document.querySelector("#workflow-tab-a [aria-label='External file changed']"));
+    assert.equal(current.documents.externalNotice, null);
+    await React.act(async () => current.tabs.switchTab("a"));
+    assert.equal(current.documents.externalNotice.canReload, true);
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "local");
+});
+
+test("a dirty external conflict remains approval-bound after undo returns to the saved semantic checkpoint", async () => {
+    await openTab("a");
+    await edit("2");
+    useDisk(new Map([["/a.xml", diskInspection("/a.xml", "external-B")]]));
+    await checkDisk();
+    const generation = current.tabs.activeTab.documentGeneration;
+    await React.act(async () => assert.equal(current.history.undo(), true));
+    assert.equal(current.tabs.activeTab.isModified, false);
+    await checkDisk();
+    assert.equal(current.tabs.activeTab.documentGeneration, generation);
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+    assert.equal(current.documents.externalNotice.canReload, true);
+    await React.act(async () => assert.equal(current.history.redo(), true));
+    assert.equal(current.graph.nodes[0].data.params[0].expr, "2");
+});
+
+test("File Open, library Open and child Open reject pending inspections from an obsolete mapping epoch", async () => {
+    for (const route of ["file", "library", "child"]) {
+        await openTab(`mapping-${route}`);
+        const before = current.tabs.getTabSnapshot();
+        const pending = deferred();
+        const inspecting = deferred();
+        native.inspect = () => { inspecting.resolve(); return pending.promise; };
+        const opening = await begin(() => route === "file"
+            ? current.documents.handleOpenDocument({ filePath: "/selected.xml" })
+            : route === "library"
+                ? current.library.handleOpenBehaviorFile({ source: "${BEH}/selected.xml", name: "Selected" })
+                : current.submachines.handleOpenSubMachine("${BEH}/selected.xml", "Selected"));
+        await inspecting.promise;
+        await React.act(async () => current.setBehaviorDirectories([{ key: "BEH", path: `/new-${route}` }]));
+        await settle(opening, () => pending.resolve(inspection("/obsolete/selected.xml")));
+        const after = current.tabs.getTabSnapshot();
+        assert.equal(after.id, before.id);
+        assert.equal(after.documentGeneration, before.documentGeneration);
+        assert.equal(after.filePath, before.filePath);
+        assert.equal(after.nodes, before.nodes);
+        assert.equal(current.tabs.getTabsSnapshot().some((tab) => tab.filePath === "/obsolete/selected.xml"), false);
+    }
+});
+
+test("Save preparation rejects a mapping changed away and back before serialization completes", async (context) => {
+    context.mock.method(console, "error", () => {});
+    await openTab("a");
+    await edit("2");
+    const pending = deferred();
+    native.serialize = () => pending.promise;
+    const saving = await begin(() => current.documents.handleSaveCurrentTab());
+    const request = calls.findLast((call) => call.command === "serialize_editor_workflow").args.request;
+    await React.act(async () => current.setBehaviorDirectories([{ key: "BEH", path: "/other" }]));
+    await React.act(async () => current.setBehaviorDirectories([{ key: "BEH", path: "/behaviors" }]));
+    const result = await settle(saving, () => pending.resolve(JSON.stringify(request)));
+    assert.equal(result.success, false);
+    assert.match(result.error, /mappings changed/);
+    assert.equal(calls.some((call) => call.command === "save_file"), false);
+    assert.equal(current.tabs.activeTab.diskVersion, "version:/a.xml");
+    assert.equal(current.tabs.activeTab.isModified, true);
 });

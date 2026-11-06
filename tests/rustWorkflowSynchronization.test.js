@@ -65,19 +65,28 @@ test("real Rust workflow hooks preserve committed snapshots and native queue own
             server: { middlewareMode: true, hmr: false, ws: false, watch: { ignored: () => true } },
             optimizeDeps: { noDiscovery: true, include: [] },
         });
-        const [workflowModule, graphModule, containerModule, client, exporter] = await Promise.all([
+        const [workflowModule, graphModule, containerModule, client, exporter, tabsModule, historyModule] = await Promise.all([
             "/src/hooks/document/useRustWorkflowDocument.js", "/src/hooks/graph/useEditorGraphState.js",
             "/src/hooks/graph/useContainerCreation.js", "/src/tauri-client.js", "/src/utils/scxmlRustExport.js",
+            "/src/hooks/document/useWorkflowTabs.js", "/src/hooks/document/useEditorHistory.js",
         ].map((path) => server.ssrLoadModule(path)));
         const suspended = new Promise(() => {});
         function Harness() {
             const graph = graphModule.useEditorGraphState();
             const workflow = workflowModule.useRustWorkflowDocument(graph);
+            const [selectedNodeId, setSelectedNodeId] = React.useState(null);
+            const tabs = tabsModule.useWorkflowTabs({ ...graph, selectedNodeId, setSelectedNodeId,
+                fitView: noop, syncRustDocument: workflow.syncEditorState });
+            const history = historyModule.useEditorHistory({ ...graph, activeTabId: tabs.activeTabId,
+                activeDocumentGeneration: tabs.activeTab.documentGeneration,
+                getActiveDocumentIdentity: tabs.getActiveDocumentIdentity, activeMode: "overview",
+                isDraggingNode: false, setSelectedNodeId, setRightPanelTab: noop, updateNodeInternals: noop,
+                syncRustDocument: workflow.syncEditorState });
             const containers = containerModule.useContainerCreation({ ...graph, isDraggingNode: false,
                 setSelectedNodeId: noop, setActiveTab: noop, setContextMenu: noop, updateNodeInternals: noop,
                 syncEditorStateAfterCommit: workflow.syncEditorStateAfterCommit,
                 syncInsertedEditorStatesAfterCommit: () => assert.fail("lane actions must not use the insertion fallback") });
-            React.useLayoutEffect(() => { current = { graph, workflow, containers }; });
+            React.useLayoutEffect(() => { current = { graph, workflow, containers, tabs, history }; });
             if (graph.nodes.some((candidate) => candidate.id === "suspended")) throw suspended;
             return null;
         }
@@ -527,6 +536,43 @@ test("real Rust workflow hooks preserve committed snapshots and native queue own
             assert.equal(calls.length, 1);
             assert.equal(current.graph.nodes[0].data.label, "New document");
             assert.equal(frames.size, 0);
+        });
+        await t.test("external incarnation replacement supersedes queued undo and fences old native patches without losing the new baseline", async () => {
+            await mount();
+            await React.act(async () => current.tabs.replaceTabDocument("tab-1", {
+                nodes: [node("first", "A")], edges: [], manualSlots: [], globalDataModel: [],
+            }, { filePath: "/a.xml", diskVersion: "A" }));
+            await React.act(async () => current.graph.setNodes([node("first", "A edited")]));
+            const old = deferred();
+            const synchronized = [];
+            respond = (call) => {
+                if (call.name === "apply_workflow_command") return old.promise;
+                if (call.name === "replace_active_editor_workflow_document") synchronized.push(call.args.request);
+                return reply(call);
+            };
+            let mutation;
+            await React.act(async () => {
+                mutation = current.workflow.applyWorkflowCommand({ type: "renameState", stateId: "first", name: "Obsolete" });
+            });
+            const retainedUndo = current.history.undo;
+            await React.act(async () => assert.equal(current.history.undo(), true));
+            await React.act(async () => current.tabs.replaceTabDocument("tab-1", {
+                nodes: [node("first", "B")], edges: [], manualSlots: [], globalDataModel: [{ id: "version", expr: "'B'" }],
+            }, { filePath: "/b.xml", diskVersion: "B" }));
+            await React.act(async () => old.resolve({ revision: 900, patch: { states: [{ id: "first", label: "Obsolete" }] } }));
+            assert.equal(await mutation, null);
+            assert.deepEqual(synchronized.map((request) => request.nodes[0].label), ["B"]);
+            assert.equal(current.graph.nodes[0].data.label, "B");
+            assert.equal(current.tabs.activeTab.diskVersion, "B");
+            await React.act(async () => {
+                assert.equal(current.history.undo(), false);
+                assert.equal(retainedUndo(), false);
+                assert.equal(current.history.redo(), false);
+            });
+            await React.act(async () => current.graph.setNodes([node("first", "B edited")]));
+            await React.act(async () => assert.equal(current.history.undo(), true));
+            assert.equal(current.graph.nodes[0].data.label, "B");
+            assert.equal(current.tabs.activeTab.filePath, "/b.xml");
         });
     } finally {
         if (root) await React.act(async () => root.unmount());

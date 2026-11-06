@@ -8,11 +8,11 @@ const sub = { id: "sub", type: "submachine", data: {
     localDataModel: [{ id: "oldChildVariable" }],
 } };
 
-test("Problems uses current opened child variables for submachine OnEntry", () => {
+test("Problems uses disk-derived child variables despite unsaved child tabs", () => {
     const tabs = [{ id: "child", parentTabId: "root", sourcePath: sub.data.src,
         globalDataModel: [{ id: "#_STATE_PREFIX" }, { id: "_global" }, { id: "childCount" }] }];
     const request = buildActiveValidationRequest({ nodes: [sub], tabs, activeTabId: "root" });
-    assert.deepEqual(request.nodeOverlays[0].localDataModel.map((x) => x.id), ["childCount"]);
+    assert.deepEqual(request.nodeOverlays[0].localDataModel.map((x) => x.id), ["oldChildVariable"]);
     assert.equal(request.nodeOverlays[0].hasLocalDataModel, true);
 });
 

@@ -178,6 +178,8 @@ const ExitTokenRow = memo(function ExitTokenRow({
 
 function GeneralDetailsSection({
     selectedNode,
+    fetchSkillData,
+    skillLibraryRefreshVersion = 0,
     hasInitialNode,
     isSubMachine,
     isContainerState,
@@ -205,6 +207,23 @@ function GeneralDetailsSection({
 }) {
     const [nameError, setNameError] = useState("");
     useEffect(() => setNameError(""), [selectedNode.id]);
+    const skillName = !isSubMachine && !isContainerState && selectedNode.type === "custom"
+        ? String(selectedNode.data.fullSkillName || "").split("#")[0] : "";
+    const [loadedDescription, setLoadedDescription] = useState(null);
+    useEffect(() => {
+        if (!skillName || !fetchSkillData) return;
+        let cancelled = false;
+        void fetchSkillData(skillName).then((definition) => {
+            if (!cancelled && definition) {
+                setLoadedDescription({ skillName, version: skillLibraryRefreshVersion,
+                    description: definition.description || "" });
+            }
+        });
+        return () => { cancelled = true; };
+    }, [skillName, fetchSkillData, skillLibraryRefreshVersion]);
+    const description = loadedDescription?.skillName === skillName
+        && loadedDescription?.version === skillLibraryRefreshVersion
+        ? loadedDescription.description : selectedNode.data.description;
     const editName = (value, commit = false) => {
         const error = (commit ? onUpdateNameCommit : onUpdateName)?.(value);
         setNameError(typeof error === "string" ? error : "");
@@ -229,9 +248,9 @@ function GeneralDetailsSection({
 
     return (
         <div className="allgemein-container">
-            {selectedNode.data.description && (
+            {description && (
                 <div className="node-description">
-                    {selectedNode.data.description}
+                    {description}
                 </div>
             )}
 

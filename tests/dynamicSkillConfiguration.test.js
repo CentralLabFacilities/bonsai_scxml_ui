@@ -57,6 +57,8 @@ const fetchSkillData = (name, params) => {
 function HistoryProbe({ graph, tabs, selectedNodeId, setSelectedNodeId }) {
     const api = hooks.useEditorHistory({
         ...graph, activeTabId: tabs.activeTabId, activeMode: "overview", isDraggingNode: false,
+        activeDocumentGeneration: tabs.activeTab.documentGeneration,
+        getActiveDocumentIdentity: tabs.getActiveDocumentIdentity,
         selectedNodeId, setSelectedNodeId, setRightPanelTab: noop, updateNodeInternals: noop,
         syncRustDocument: syncDocument,
     });

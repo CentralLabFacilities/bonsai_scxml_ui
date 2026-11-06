@@ -552,7 +552,7 @@ test("isolated inspector editors preserve draft, focus, commit and render contra
             }
         });
 
-        await t.test("skill library fuzzy results retain category/package browsing, rank once and keep source identifiers", async () => {
+        await t.test("skill library relevance retains category/package browsing and source identifiers", async () => {
             const skills = Object.freeze(["org.skills.nav.wrok", "org.skills.nav.wo_r_k", "org.skills.person.homework", "org.skills.nav.worker", "org.skills.nav.work", "org.skills.nav.inner.Other", "org.skills.Direct"]);
             let view;
             function Harness(props) {
@@ -561,27 +561,76 @@ test("isolated inspector editors preserve draft, focus, commit and render contra
             }
             let props = { skills, selectedPackage: null, selectedSubPackage: null, activeFilter: "Everything", searchText: "work" };
             await mount(element(Harness, props));
-            assert.deepEqual(view.searchedSkills, [skills[4], skills[3], skills[2], skills[1], skills[0]]);
+            assert.deepEqual(view.searchedSkills, [skills[4], skills[3], skills[2]]);
             assert.deepEqual(view.filteredSkills, view.searchedSkills);
             assert.deepEqual(view.packages, ["nav", "person"]);
             assert.deepEqual(view.directSkills, [skills[6]]);
-            const ranked = view.searchedSkills;
             props = { ...props, activeFilter: "nav", selectedPackage: "nav" };
             await render(element(Harness, props));
-            assert.equal(view.searchedSkills, ranked, "package/category changes reuse the search ranking");
-            assert.deepEqual(view.packageSkills, [skills[4], skills[3], skills[1], skills[0]]);
+            assert.deepEqual(view.packageSkills, [skills[4], skills[3]]);
             assert.deepEqual(view.filteredSkills, view.packageSkills);
             assert.deepEqual(view.subPackages, ["inner"]);
             await render(element(Harness, { ...props, searchText: "wrk" }));
             assert.ok(view.packageSkills.includes(skills[4]));
             await render(element(Harness, { ...props, searchText: "wrok" }));
             assert.equal(view.packageSkills[0], skills[0]);
-            assert.ok(view.packageSkills.includes(skills[4]));
+            assert.ok(!view.packageSkills.includes(skills[4]), "an exact name suppresses typo guesses");
             await render(element(Harness, { ...props, searchText: "" }));
             assert.deepEqual(view.packageSkills, [skills[0], skills[1], skills[3], skills[4]]);
             await render(element(Harness, { ...props, selectedSubPackage: "inner", searchText: "othr" }));
             assert.deepEqual(view.packageSkills, [skills[5]]);
             assert.deepEqual(view.packages, ["nav", "person"]);
+        });
+
+        await t.test("description search loads on demand and ignores definitions from an older refresh", async () => {
+            const skills = ["org.skills.speech.Say"];
+            const pending = [];
+            const fetchSkillData = () => new Promise((resolve) => pending.push(resolve));
+            let view;
+            function Harness(props) {
+                view = libraryView.useSkillLibraryView(props);
+                return null;
+            }
+            const props = { skills, selectedPackage: null, selectedSubPackage: null,
+                activeFilter: "Everything", searchText: "", fetchSkillData, refreshVersion: 0 };
+            await mount(element(Harness, props));
+            assert.equal(pending.length, 0, "browsing does not fetch every definition");
+            await render(element(Harness, { ...props, searchText: "greet a person" }));
+            assert.equal(view.isSearchingDescriptions, true);
+            await render(element(Harness, { ...props, searchText: "greet a person", refreshVersion: 1 }));
+            await React.act(async () => pending[1]({ description: "Greet a person using speech." }));
+            assert.deepEqual(view.searchedSkills, skills);
+            assert.equal(view.isSearchingDescriptions, false);
+            await React.act(async () => pending[0]({ description: "Obsolete definition." }));
+            assert.deepEqual(view.searchedSkills, skills, "a stale response cannot replace the refreshed description");
+            await render(element(Harness, { ...props, searchText: "greet a persno", refreshVersion: 1 }));
+            assert.deepEqual(view.searchedSkills, []);
+            assert.equal(pending.length, 2, "typing reuses the loaded descriptions");
+            await render(element(Harness, { ...props, searchText: "", refreshVersion: 1 }));
+            await render(element(Harness, { ...props, searchText: "greet a person", refreshVersion: 1 }));
+            assert.deepEqual(view.searchedSkills, skills);
+            assert.equal(view.isSearchingDescriptions, false, "returning to search uses the completed description index");
+            assert.equal(pending.length, 2, "clearing search does not reload cached descriptions");
+        });
+
+        await t.test("skill details refresh cached descriptions without accepting replies for a previous selection", async () => {
+            const pending = [];
+            const fetchSkillData = (name) => new Promise((resolve) => pending.push({ name, resolve }));
+            const first = skill("first", { fullSkillName: "org.skills.First#1", description: "Saved first." });
+            const second = skill("second", { fullSkillName: "org.skills.Second#2", description: "Saved second." });
+            const props = { selectedNode: first, activeTab: "allgemein", setActiveTab: noop,
+                fetchSkillData, skillLibraryRefreshVersion: 0 };
+            await mount(element(details.default, props));
+            await render(element(details.default, { ...props, selectedNode: second }));
+            await React.act(async () => pending.filter(({ name }) => name === "org.skills.First")
+                .forEach(({ resolve }) => resolve({ description: "Late first." })));
+            assert.equal(container.querySelector(".node-description").textContent, "Saved second.");
+            await React.act(async () => pending.find(({ name }) => name === "org.skills.Second")
+                .resolve({ description: "Current second." }));
+            assert.equal(container.querySelector(".node-description").textContent, "Current second.");
+            await render(element(details.default, { ...props, selectedNode: second, skillLibraryRefreshVersion: 1 }));
+            await React.act(async () => pending.at(-1).resolve({ description: "Reloaded second." }));
+            assert.equal(container.querySelector(".node-description").textContent, "Reloaded second.");
         });
 
         await t.test("behavior fuzzy trees rank matches while preserving ancestors, source payloads and cached search state", async (context) => {
@@ -645,6 +694,48 @@ test("isolated inspector editors preserve draft, focus, commit and render contra
             } finally {
                 if (previousNative) window.__TAURI_INTERNALS__ = previousNative;
                 else delete window.__TAURI_INTERNALS__;
+            }
+        });
+
+        await t.test("behavior listings discover replacements on focus, visibility and manual root refresh", async () => {
+            const previousNative = window.__TAURI_INTERNALS__;
+            let entries = [];
+            window.__TAURI_INTERNALS__ = { invoke: async () => entries };
+            const directory = { key: "ROOT", path: "/robot" };
+            const refreshes = [];
+            const file = (name) => ({ kind: "file", name: `${name}.scxml`, path: `/robot/${name}.scxml`, source: `\${ROOT}/${name}.scxml` });
+            const rows = () => [...container.querySelectorAll(".behavior-file-row")].map((row) => row.textContent.trim());
+            try {
+                await mount(element(behaviors.default, { directories: [directory], onDirectoriesChange: noop, onRefresh: (root) => refreshes.push(root) }));
+                assert.deepEqual(rows(), []);
+                entries = [file("added")];
+                await React.act(async () => window.dispatchEvent(new window.Event("focus")));
+                assert.deepEqual(rows(), ["added"]);
+                entries = [file("renamed")];
+                await React.act(async () => document.dispatchEvent(new window.Event("visibilitychange")));
+                assert.deepEqual(rows(), ["renamed"]);
+                entries = [];
+                await click(container.querySelector('[title="Refresh"]'));
+                assert.deepEqual(rows(), []);
+                assert.deepEqual(refreshes, [directory]);
+            } finally {
+                if (previousNative) window.__TAURI_INTERNALS__ = previousNative;
+                else delete window.__TAURI_INTERNALS__;
+            }
+        });
+
+        await t.test("browser behavior library refresh does not invoke filesystem IPC", async () => {
+            const previousNative = window.__TAURI_INTERNALS__;
+            delete window.__TAURI_INTERNALS__;
+            const refreshes = [];
+            try {
+                await mount(element(behaviors.default, { directories: [{ key: "ROOT", path: "/robot" }], onDirectoriesChange: noop, onRefresh: (root) => refreshes.push(root) }));
+                await React.act(async () => window.dispatchEvent(new window.Event("focus")));
+                await click(container.querySelector('[title="Refresh"]'));
+                assert.deepEqual(refreshes, []);
+                assert.equal(container.querySelector('[role="alert"]'), null);
+            } finally {
+                if (previousNative) window.__TAURI_INTERNALS__ = previousNative;
             }
         });
 

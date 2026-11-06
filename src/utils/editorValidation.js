@@ -1,6 +1,5 @@
 import { normalizeSlotPath } from "./editorGraph.js";
 import { isManagedBoundaryEvent } from "./transitionEvents.js";
-import { getLocalDataModelEntries } from "./editorScxml.js";
 
 export function projectNodeWarningTitles(previous = new Map(), problems = []) {
     const byNodeId = new Map();
@@ -40,28 +39,8 @@ const mapAssignment = (assignment) => ({
     expression: String(assignment?.expr ?? assignment?.expression ?? ""),
 });
 
-/**
- * The inspector can use a freshly opened child tab's datamodel while the
- * parent submachine node still has the older cached localDataModel. Keep
- * Problems validation aligned with the same child-machine scope.
- */
-export const submachineActionDataModel = (node, tabs = [], activeTabId = null) => {
-    if (node?.type !== "submachine") return node?.data?.localDataModel;
-    const src = String(node?.data?.src || "");
-    const basename = (value) => String(value || "").split(/[\\/]/).pop()
-        .replace(/\.(xml|scxml)$/i, "");
-    const children = (tabs || []).filter((tab) => tab?.parentTabId === activeTabId);
-    const bySource = children.filter((tab) => String(tab.sourcePath || "") === src && src);
-    const fallbackName = basename(src);
-    const byName = children.filter((tab) =>
-        (String(tab.title || "") === String(node?.data?.label || "") ||
-         (fallbackName && basename(tab.fileName) === fallbackName)));
-    const tab = bySource.length === 1 ? bySource[0] : bySource.length ? null
-        : byName.length === 1 ? byName[0] : null;
-    return tab && Array.isArray(tab.globalDataModel)
-        ? getLocalDataModelEntries(tab.globalDataModel)
-        : node?.data?.localDataModel;
-};
+// Referenced interfaces always describe accepted disk bytes, never unsaved child tabs.
+export const submachineActionDataModel = (node) => node?.data?.localDataModel;
 
 const mapSlot = (slot) => ({
     key: String(slot?.key || ""),

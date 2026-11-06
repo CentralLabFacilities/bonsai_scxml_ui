@@ -9,6 +9,7 @@ const SKILL_LIBRARY_PROPS = [
     "searchedSkills",
     "packageSkills",
     "filteredSkills",
+    "isSearchingDescriptions",
     "subPackages",
     "selectedSubPackage",
     "setSelectedSubPackage",
@@ -35,4 +36,5 @@ export const areBehaviorLibraryPropsEqual = (previous, next) =>
     previous.activeLibraryTab === next.activeLibraryTab &&
     previous.onDirectoriesChange === next.onDirectoriesChange &&
     previous.onOpenBehavior === next.onOpenBehavior &&
+    previous.onRefresh === next.onRefresh &&
     previous.onLibraryTabChange === next.onLibraryTabChange;

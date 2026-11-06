@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::io;
 
 use super::library::{expand_home, normalize_key, BehaviorDirectoryMapping};
 
@@ -49,29 +50,39 @@ pub(crate) fn resolve_workflow_source_path(
     directories: &[BehaviorDirectoryMapping],
     current_file_path: Option<&str>,
 ) -> Result<ResolvedWorkflowPath, String> {
+    resolve_workflow_source_path_io(src, directories, current_file_path)
+        .map_err(|error| error.to_string())
+}
+
+/// Retain the IO error kind for typed revalidation; do not classify OS errors
+/// by localized message text. Each call resolves the current mapping/symlinks.
+pub(crate) fn resolve_workflow_source_path_io(
+    src: &str,
+    directories: &[BehaviorDirectoryMapping],
+    current_file_path: Option<&str>,
+) -> io::Result<ResolvedWorkflowPath> {
     let (candidate, root_key, root_path) =
-        resolve_workflow_path(src, directories, current_file_path)?;
+        resolve_workflow_path(src, directories, current_file_path)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
 
     let resolved_path = candidate.canonicalize().map_err(|error| {
-        format!(
-            "Could not resolve workflow file '{}': {error}",
-            candidate.display()
-        )
+        io::Error::new(error.kind(), format!(
+            "Could not resolve workflow file '{}': {error}", candidate.display()
+        ))
     })?;
 
     if let Some(root) = root_path {
         let canonical_root = root.canonicalize().map_err(|error| {
-            format!(
-                "Could not resolve Behavior Library directory '{}': {error}",
-                root.display()
-            )
+            io::Error::new(error.kind(), format!(
+                "Could not resolve Behavior Library directory '{}': {error}", root.display()
+            ))
         })?;
 
         if !resolved_path.starts_with(&canonical_root) {
-            return Err(format!(
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!(
                 "Workflow source '{}' is outside its Behavior Library directory.",
                 resolved_path.display()
-            ));
+            )));
         }
     }
 

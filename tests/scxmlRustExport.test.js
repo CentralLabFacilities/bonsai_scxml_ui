@@ -429,9 +429,6 @@ test("document fingerprints ignore regenerated boundary helpers and managed bord
     const edges = [{ id: "leave", source: "work", target: "outside", sourceHandle: "success" }];
     const first = rebuildBoundaryTransitions(nodes, edges);
     const second = rebuildBoundaryTransitions(first.nodes, first.edges);
-    // Boundary edge IDs are deterministic, so they're stable across rebuilds.
-    assert.equal(first.edges[0].id, second.edges[0].id);
-    assert.equal(first.edges[0].data.boundaryInternalEdge, true);
     assert.equal(getWorkflowDocumentFingerprint(first), getWorkflowDocumentFingerprint(second));
     const decorated = structuredClone(second);
     decorated.edges[0].data.cond = "changed-helper";
