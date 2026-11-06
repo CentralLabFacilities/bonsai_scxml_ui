@@ -320,7 +320,6 @@ export function useSubStateMachines({
                 currentTabPatch: options.runtimeNavigation ? () => ({}) : currentTabPatch,
                 expectedFingerprint: options.runtimeNavigation ? originTab.fingerprint : undefined,
                 fit: true,
-                fitOptions: { duration: 300 },
             });
             if (!opened) {
                 notify({

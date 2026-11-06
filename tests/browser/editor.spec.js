@@ -223,3 +223,256 @@ test("clipboard paste choices are natively modal and cancellation preserves the 
     await expect(dialog).toHaveCount(0);
     await expect(node).toHaveCount(1);
 });
+
+const workflowTabs = (page) => page.getByRole("tablist", { name: "Workflow tabs" }).getByRole("tab");
+
+async function settledCamera(page) {
+    await expect(page.locator('.react-flow[data-viewport-ready="true"]')).toBeVisible();
+    return page.evaluate(async () => {
+        let previous;
+        let stable = 0;
+        while (stable < 6) {
+            await new Promise(requestAnimationFrame);
+            const transform = document.querySelector(".react-flow__viewport")?.style.transform;
+            stable = transform && transform === previous ? stable + 1 : 0;
+            previous = transform;
+        }
+        return {
+            transform: previous,
+            nodes: [...document.querySelectorAll(".react-flow__node")].map((node) => {
+                const bounds = node.getBoundingClientRect();
+                return { id: node.dataset.id, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+            }),
+        };
+    });
+}
+
+// Observe the real DOM, including mutation-time visibility, not just the final
+// transform. A permanently hidden or unmeasured incoming graph cannot pass.
+async function startCameraRecording(page) {
+    await page.evaluate(() => {
+        const outgoing = document.querySelector(".react-flow");
+        const started = performance.now();
+        const samples = [];
+        let frame;
+        const sample = (kind) => {
+            const root = document.querySelector(".react-flow");
+            const viewport = root?.querySelector(".react-flow__viewport");
+            const nodes = [...(root?.querySelectorAll(".react-flow__node") ?? [])].map((node) => {
+                const bounds = node.getBoundingClientRect();
+                let visible = bounds.width > 0 && bounds.height > 0;
+                for (let element = node; element; element = element.parentElement) {
+                    const style = getComputedStyle(element);
+                    if (style.visibility !== "visible" || style.display === "none" || Number(style.opacity) === 0) visible = false;
+                }
+                return { id: node.dataset.id, visible, x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+            });
+            samples.push({
+                kind, time: performance.now() - started, incoming: Boolean(root && root !== outgoing),
+                tab: document.querySelector('[role="tab"][aria-selected="true"]')?.textContent,
+                transform: viewport?.style.transform, nodes,
+            });
+        };
+        const observer = new MutationObserver(() => sample("mutation"));
+        observer.observe(document.body, {
+            subtree: true, childList: true, attributes: true,
+            attributeFilter: ["style", "class", "aria-selected", "data-viewport-ready"],
+        });
+        const tick = () => { sample("frame"); frame = requestAnimationFrame(tick); };
+        frame = requestAnimationFrame(tick);
+        window.__stopCameraRecording = () => {
+            cancelAnimationFrame(frame);
+            observer.disconnect();
+            delete window.__stopCameraRecording;
+            return samples;
+        };
+    });
+}
+
+async function finishCameraRecording(page) {
+    // Include subsequent paints so a late fit/restore after the first correct
+    // frame is also caught. This is observation, never application readiness.
+    await page.evaluate(async () => {
+        for (let i = 0; i < 18; i++) await new Promise(requestAnimationFrame);
+    });
+    return page.evaluate(() => window.__stopCameraRecording());
+}
+
+function expectVisibleCamera(samples, saved, tabName, { compareBounds = true, requireFrame = true, incomingOnly = true } = {}) {
+    const expectedIds = saved.nodes.map((node) => node.id).sort();
+    const visible = samples.filter((sample) => (!incomingOnly || sample.incoming) && sample.tab === tabName && sample.nodes.some((node) => node.visible));
+    expect(visible.length, "incoming graph must actually become visible").toBeGreaterThan(0);
+    if (requireFrame) expect(visible.some((sample) => sample.kind === "frame"), "at least one painted-frame candidate must contain the graph").toBe(true);
+    // Batch failures: tracing thousands of individual per-node expectations
+    // obscures the switch itself and can dominate the medium-graph scenario.
+    const failures = [];
+    for (const sample of visible) {
+        const label = `${sample.kind} at ${sample.time.toFixed(1)} ms`;
+        if (sample.transform !== saved.transform) failures.push({ label, transform: sample.transform, expected: saved.transform });
+        if (JSON.stringify(sample.nodes.map((node) => node.id).sort()) !== JSON.stringify(expectedIds)) {
+            failures.push({ label, nodes: sample.nodes.map((node) => node.id), expectedIds });
+        }
+        for (const node of sample.nodes) {
+            if (!node.visible || node.width <= 0 || node.height <= 0) failures.push({ label, node });
+            if (compareBounds) {
+                const expected = saved.nodes.find((candidate) => candidate.id === node.id);
+                if (expected && ["x", "y", "width", "height"].some((key) => Math.abs(node[key] - expected[key]) >= 1)) {
+                    failures.push({ label, node, expected });
+                }
+            }
+        }
+    }
+    expect(failures).toEqual([]);
+}
+
+async function addCameraSkills(page, count) {
+    const add = page.getByRole("button", { name: `Add ${skill} to canvas`, exact: true });
+    for (let i = 0; i < count; i++) {
+        await add.click();
+        await expect(page.locator(".react-flow__node-custom")).toHaveCount(i + 1);
+    }
+}
+
+async function dragCameraHandle(page, handle, target) {
+    const bounds = await handle.boundingBox();
+    expect(bounds).not.toBeNull();
+    await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(target.x, target.y, { steps: 12 });
+    await page.mouse.up();
+}
+
+async function addRepresentativeCameraGraph(page) {
+    await addCameraSkills(page, 2);
+    const second = page.locator(".react-flow__node-custom").nth(1);
+    const bounds = await second.boundingBox();
+    await page.mouse.move(bounds.x + 70, bounds.y + 18);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 350, bounds.y + 18, { steps: 12 });
+    await page.mouse.up();
+    const first = page.locator(".react-flow__node-custom").first();
+    const target = await second.locator(".target-handle").boundingBox();
+    await dragCameraHandle(page, first.locator('[data-handleid="done"]'), { x: target.x + target.width / 2, y: target.y + target.height / 2 });
+    const pane = await page.locator(".react-flow__pane").boundingBox();
+    await dragCameraHandle(page, first.locator(".slot-skill-read-handle"), { x: pane.x + 150, y: pane.y + pane.height - 70 });
+    await expect(page.locator(".react-flow__node-slot")).toHaveCount(1);
+    await expect(page.locator(".react-flow__edge")).toHaveCount(2);
+    await page.locator(".react-flow__pane").click({ button: "right", position: { x: 70, y: 90 } });
+    await page.getByRole("button", { name: "New Compound State", exact: true }).click();
+    await expect(page.locator(".react-flow__node-compound")).toHaveCount(1);
+    await page.getByRole("button", { name: "Fit View", exact: true }).click();
+    await settledCamera(page);
+}
+
+async function distinctCameraWorkflows(page, fixture = "one-node") {
+    await openEditor(page);
+    if (fixture === "representative") await addRepresentativeCameraGraph(page);
+    else await addCameraSkills(page, fixture === "80-node" ? 80 : 1);
+    for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "Zoom Out", exact: true }).click();
+    const first = await settledCamera(page);
+    await page.getByRole("button", { name: "Create new workflow tab", exact: true }).click();
+    await addCameraSkills(page, 1);
+    await page.getByRole("button", { name: "Zoom In", exact: true }).click();
+    const second = await settledCamera(page);
+    expect(first.transform).not.toBe(second.transform);
+    return [first, second];
+}
+
+for (const fixture of ["one-node", "80-node", "representative"]) {
+    test(`saved cameras are correct on the first visible incoming ${fixture} graph`, async ({ page }) => {
+        test.setTimeout(60000);
+        const cameras = await distinctCameraWorkflows(page, fixture);
+        for (const index of [0, 1, 0, 1]) {
+            await startCameraRecording(page);
+            await workflowTabs(page).nth(index).click();
+            await settledCamera(page);
+            const samples = await finishCameraRecording(page);
+            expectVisibleCamera(samples, cameras[index], `Workflow ${index + 1}`);
+        }
+    });
+}
+
+test("mode changes and Code remounts preserve each workflow camera", async ({ page }) => {
+    const cameras = await distinctCameraWorkflows(page);
+    for (const mode of ["Overview Mode", "Event Mode", "Slot Mode", "Event Mode"]) {
+        await startCameraRecording(page);
+        await page.getByRole("button", { name: mode, exact: true }).click();
+        expect((await settledCamera(page)).transform).toBe(cameras[1].transform);
+        expectVisibleCamera(await finishCameraRecording(page), cameras[1], "Workflow 2", { compareBounds: false, incomingOnly: false });
+    }
+    await page.getByRole("button", { name: "Code View", exact: true }).click();
+    await expect(page.locator(".react-flow")).toHaveCount(0);
+    await startCameraRecording(page);
+    await page.getByRole("button", { name: "Event Mode", exact: true }).click();
+    await settledCamera(page);
+    expectVisibleCamera(await finishCameraRecording(page), cameras[1], "Workflow 2", { compareBounds: false });
+    // The tab switch happens while there is no mounted React Flow store to read.
+    await page.getByRole("button", { name: "Code View", exact: true }).click();
+    await expect(page.locator(".react-flow")).toHaveCount(0);
+    await workflowTabs(page).nth(0).click();
+    await startCameraRecording(page);
+    await page.getByRole("button", { name: "Event Mode", exact: true }).click();
+    await settledCamera(page);
+    expectVisibleCamera(await finishCameraRecording(page), cameras[0], "Workflow 1", { compareBounds: false });
+    await page.getByRole("button", { name: "Code View", exact: true }).click();
+    await expect(page.locator(".react-flow")).toHaveCount(0);
+    await workflowTabs(page).nth(1).click();
+    await startCameraRecording(page);
+    await page.getByRole("button", { name: "Event Mode", exact: true }).click();
+    await settledCamera(page);
+    expectVisibleCamera(await finishCameraRecording(page), cameras[1], "Workflow 2", { compareBounds: false });
+});
+
+test("empty first placement becomes ready and stays interactive without a delayed fit", async ({ page }) => {
+    await openEditor(page);
+    for (let index = 0; index < 2; index++) {
+        if (index) await page.getByRole("button", { name: "Create new workflow tab", exact: true }).click();
+        const root = page.locator('.react-flow[data-viewport-ready="true"]');
+        await expect(root).toBeVisible();
+        const bounds = await root.boundingBox();
+        expect(bounds.width).toBeGreaterThan(0);
+        expect(bounds.height).toBeGreaterThan(0);
+        await expect(page.locator(".react-flow__node")).toHaveCount(0);
+        await addCameraSkills(page, 1);
+        await page.getByRole("button", { name: "Zoom Out", exact: true }).click();
+        const camera = await settledCamera(page);
+        await startCameraRecording(page);
+        await page.getByRole("button", { name: "Overview Mode", exact: true }).click();
+        const samples = await finishCameraRecording(page);
+        const visible = samples.filter((sample) => sample.nodes.some((node) => node.visible));
+        expect(visible.length).toBeGreaterThan(0);
+        for (const sample of visible) expect(sample.transform).toBe(camera.transform);
+    }
+});
+
+test("rapid A to B to A activation cannot corrupt either saved camera", async ({ page }) => {
+    const cameras = await distinctCameraWorkflows(page);
+    await workflowTabs(page).nth(0).click();
+    await settledCamera(page);
+    await startCameraRecording(page);
+    // Invoke the actual tab buttons, returning to A in the mutation microtask
+    // that first sees B's mounted root, before a delayed placement frame.
+    await page.evaluate(() => new Promise((resolve) => {
+        const tabs = [...document.querySelectorAll('[role="tablist"][aria-label="Workflow tabs"] [role="tab"]')];
+        const outgoing = document.querySelector(".react-flow");
+        const observer = new MutationObserver(() => {
+            if (document.querySelector(".react-flow") === outgoing || tabs[1].getAttribute("aria-selected") !== "true") return;
+            observer.disconnect();
+            tabs[0].click();
+            resolve();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        tabs[1].click();
+    }));
+    await settledCamera(page);
+    const samples = await finishCameraRecording(page);
+    expectVisibleCamera(samples, cameras[0], "Workflow 1");
+    const intermediate = samples.filter((sample) => sample.incoming && sample.tab === "Workflow 2" && sample.nodes.some((node) => node.visible));
+    if (intermediate.length) expectVisibleCamera(intermediate, cameras[1], "Workflow 2", { requireFrame: false });
+    for (const index of [1, 0]) {
+        await startCameraRecording(page);
+        await workflowTabs(page).nth(index).click();
+        await settledCamera(page);
+        expectVisibleCamera(await finishCameraRecording(page), cameras[index], `Workflow ${index + 1}`);
+    }
+});

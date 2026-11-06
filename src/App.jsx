@@ -68,7 +68,7 @@ import { useEditorFlowChanges } from "./hooks/graph/useEditorFlowChanges";
 import { useEditorLibraryItems } from "./hooks/library/useEditorLibraryItems";
 import { useEditorDetailsCallbacks, useEditorDetailsController } from "./hooks/editor/useEditorDetailsController.js";
 import { useEditorPanelLayout, useEditorPreferences } from "./hooks/editor/useEditorPreferences.js";
-import { useEditorUiState, useRestoreCanvasViewportOnModeChange } from "./hooks/editor/useEditorUiState.js";
+import { useEditorUiState } from "./hooks/editor/useEditorUiState.js";
 import "./App.css";
 import "./styles/design-system.css";
 import "./styles/interaction-states.css";
@@ -511,8 +511,6 @@ function AppContent() {
         fitView,
         getNodes,
         setCenter,
-        getViewport,
-        setViewport,
     } = useReactFlow();
 
     const {
@@ -545,7 +543,6 @@ function AppContent() {
             rustWorkflowDocument.syncStateEditorPositions,
         onParallelSkillConflict: (message) => notify({ tone: "danger", message, id: "parallel-lane-duplicate", duration: 2300 }),
     });
-    useRestoreCanvasViewportOnModeChange({ activeMode, fitView, getNodes });
 
     const {
         parallelDropTargetId,
@@ -691,6 +688,14 @@ function AppContent() {
         activeTab: activeWorkflowTab,
         activeFingerprint: activeWorkflowFingerprint,
         getActiveDocumentIdentity,
+        canvasPlacement,
+        canvasReadyIdentity,
+        beginCanvasPlacement,
+        completeCanvasPlacement,
+        releaseCanvasPlacement,
+        recordCanvasViewport,
+        isCanvasPlacementReady,
+        waitForCanvasPlacement,
         getTabSnapshot,
         getTabsSnapshot,
         updateTab,
@@ -720,9 +725,6 @@ function AppContent() {
         hasPendingNodeChanges,
         selectedNodeId,
         setSelectedNodeId,
-        fitView,
-        getViewport,
-        setViewport,
         syncRustDocument: rustWorkflowDocument.syncEditorState,
         cancelFlowConnection,
         isDraggingNode,
@@ -788,6 +790,8 @@ function AppContent() {
         setSelectedNodeId,
         setRightPanelTab,
         fitView,
+        getActiveDocumentIdentity,
+        waitForCanvasPlacement,
     });
 
     const externalRevalidationRef = useRef(() => Promise.resolve());
@@ -1032,6 +1036,8 @@ function AppContent() {
         setRightPanelTab,
         updateSlotPath,
         updateSlotInherited,
+        getActiveDocumentIdentity,
+        waitForCanvasPlacement,
     });
 
     const handleProblemClick = useProblemNavigation({
@@ -1048,6 +1054,8 @@ function AppContent() {
         fitView,
         updateNodeInternals,
         selectEditorNode,
+        getActiveDocumentIdentity,
+        waitForCanvasPlacement,
     });
 
     const {
@@ -1190,6 +1198,9 @@ function AppContent() {
         fitView,
         switchTab,
         setActiveMode,
+        getActiveDocumentIdentity,
+        canvasReadyIdentity,
+        isCanvasPlacementReady,
     });
 
     const handleExecutionUpdate = useCallback((update) => {
@@ -1387,6 +1398,8 @@ function AppContent() {
         checkSlotConnection,
         selectEditorNode,
         fitView,
+        getActiveDocumentIdentity,
+        waitForCanvasPlacement,
     });
 
     const {
@@ -1448,10 +1461,10 @@ function AppContent() {
         visibleNodes: playbackVisibleNodes,
         visibleEdges: playbackVisibleEdges,
         fitView,
-        getViewport,
-        setViewport,
         switchTab,
         getActiveDocumentIdentity,
+        canvasReadyIdentity,
+        isCanvasPlacementReady,
         suspendFollow: isDraggingNode || drawerData.isOpen || activeMode === "code" || isHintPageOpen
             || isCreateSlotModalOpen || Boolean(documentGuard || pendingSubMachineCreation
                 || pendingSlotRename || stateMachineLoading || runtimePreparation || contextMenu),
@@ -1853,6 +1866,13 @@ function AppContent() {
                             visibleNodes={canvasRuntimeNodes}
                             visibleEdges={liveVisibleEdges}
                             documentKey={`${activeTabId}:${activeWorkflowTab?.documentGeneration ?? 0}`}
+                            canvasPlacement={canvasPlacement}
+                            canvasPlacementReady={canvasReadyIdentity === canvasPlacement.identity}
+                            getActiveDocumentIdentity={getActiveDocumentIdentity}
+                            beginCanvasPlacement={beginCanvasPlacement}
+                            completeCanvasPlacement={completeCanvasPlacement}
+                            releaseCanvasPlacement={releaseCanvasPlacement}
+                            recordCanvasViewport={recordCanvasViewport}
                             liveExecutionActive={liveActive}
                             smartRoutingNodes={smartRoutingNodes}
                             edgeFocusMode={edgeFocusMode}

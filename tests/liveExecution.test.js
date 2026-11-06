@@ -459,17 +459,22 @@ test("suspension cancels late camera/tab frames while keeping paint, and release
     assert.equal(fits.length, 1, "closing a drawer/modal without active-set change does not recenter");
 });
 
-test("a single proven child invocation switches only to its open tab and fits after viewport restoration", async () => {
+test("a child follow waits for placement readiness and does not repeat on unchanged polls", async () => {
     const workflow = documentSnapshot("root", [wrapper("wrapper", "s1")]);
     const child = childSnapshot("child", [skill("talk", "dialog.Talk#inside"), skill("other", "dialog.Other")]);
+    let ready = false;
     await mount(workflow, ["Talk#inside#s1", "Other#s1"], [child], {
+        isCanvasPlacementReady: () => ready,
         switchTab: (id) => { switches.push(id); activate(id); } });
-    await enableCamera(); await flushFrames();
-    assert.deepEqual(switches, ["child"]); assert.equal(green("talk"), true); assert.equal(fits.length, 0);
-    await flushFrames(); assert.equal(fits.length, 0);
-    await flushFrames(); assert.equal(fits.length, 1);
+    await enableCamera(); await flushFrames(4);
+    assert.deepEqual(switches, ["child"]); assert.equal(green("talk"), true);
+    assert.equal(fits.length, 0);
+    ready = true;
+    await update({ canvasReadyIdentity: identity }); await flushFrames();
+    assert.equal(fits.length, 1);
     assert.deepEqual(fits[0].nodes, [{ id: "other" }, { id: "talk" }]);
-    await poll(); await flushFrames(3); assert.deepEqual(switches, ["child"]); assert.equal(fits.length, 1);
+    await poll(); await flushFrames(3);
+    assert.deepEqual(switches, ["child"]); assert.equal(fits.length, 1);
 });
 
 test("parallel execution across root/child contexts follows the complete root representation without bouncing", async () => {
@@ -532,11 +537,17 @@ for (const field of ["generation", "fingerprint"]) test(`same-ID document ${fiel
     assert.equal(fits.length, 0); assert.deepEqual(switches, []);
 });
 
-test("child generation replacement before an owned post-switch frame cannot fit the replacement", async () => {
+test("child replacement cancels follow queued after placement readiness", async () => {
     const workflow = documentSnapshot("root", [wrapper("wrapper", "s1")]);
     const child = childSnapshot();
-    await mount(workflow, ["Talk#inside#s1"], [child], { switchTab: (id) => { switches.push(id); activate(id); } });
-    await enableCamera(); await flushFrames(); await flushFrames();
+    let ready = false;
+    await mount(workflow, ["Talk#inside#s1"], [child], {
+        isCanvasPlacementReady: () => ready,
+        switchTab: (id) => { switches.push(id); activate(id); },
+    });
+    await enableCamera(); await flushFrames(3);
+    ready = true;
+    await update({ canvasReadyIdentity: identity });
     const stale = [...frames.values()];
     await update({ activeDocumentGeneration: 2, tabs: [workflow, { ...child, documentGeneration: 2 }] });
     await forceFrames(stale); await flushFrames(3);

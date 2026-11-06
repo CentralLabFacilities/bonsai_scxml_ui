@@ -118,3 +118,122 @@ test("clean external replacement reloads without a modal; invalid and missing im
     await expect(notice).toHaveCount(0);
     await expect(page.locator(".workflow-panel .datamodel-compact-value-input")).toHaveValue("'C'");
 });
+
+test("first import waits for real measurements, fits once, and same-ID reload preserves navigation", async ({ page }) => {
+    await installExternalWorkflowFixture(page);
+    await page.addInitScript(() => {
+        const NativeResizeObserver = window.ResizeObserver;
+        const pending = new Map();
+        window.__holdCameraMeasurements = true;
+        // React Flow can also measure through explicit updateNodeInternals,
+        // outside ResizeObserver. Hold both real readiness paths.
+        for (const property of ["offsetWidth", "offsetHeight"]) {
+            const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, property);
+            Object.defineProperty(HTMLElement.prototype, property, {
+                configurable: true,
+                get() {
+                    return window.__holdCameraMeasurements && this.classList.contains("react-flow__node")
+                        ? 0 : descriptor.get.call(this);
+                },
+            });
+        }
+        window.__releaseCameraMeasurements = () => {
+            window.__holdCameraMeasurements = false;
+            for (const [observer, { callback, entries }] of pending) callback(entries, observer);
+            pending.clear();
+        };
+        window.ResizeObserver = class extends NativeResizeObserver {
+            constructor(callback) {
+                super((entries, observer) => {
+                    const delayed = entries.filter((entry) => entry.target.closest(".react-flow__node"));
+                    const immediate = entries.filter((entry) => !entry.target.closest(".react-flow__node"));
+                    if (immediate.length) callback(immediate, observer);
+                    if (!window.__holdCameraMeasurements) {
+                        if (delayed.length) callback(delayed, observer);
+                    } else if (delayed.length) {
+                        pending.set(observer, { callback, entries: delayed });
+                    }
+                });
+            }
+            disconnect() { pending.delete(this); super.disconnect(); }
+        };
+    });
+    await page.goto("/");
+    await page.evaluate(() => {
+        const image = window.__externalFixture.images["/workflow.xml"];
+        image.workflow.states = [0, 1].map((index) => ({
+            id: `state-${index}`, scxmlId: `demo.skills.Work#${index + 1}`,
+            fullSkillName: "demo.skills.Work", label: "Work", kind: "skill", parentId: null,
+            parameters: [], slots: [], events: [], onEntry: [], onExit: [],
+            editor: { x: index * 1500, y: index * 500,
+                positions: [{ x: index * 1500, y: index * 500, instanceId: String(index + 1) }] },
+        }));
+        image.workflow.initialStateId = "state-0";
+        image.workflow.initialScxmlStateId = "demo.skills.Work#1";
+    });
+    await page.getByRole("button", { name: "File", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Open", exact: true }).click();
+    await expect(page.locator(".react-flow__node-custom")).toHaveCount(2);
+    await expect(page.locator(".react-flow")).toHaveAttribute("data-viewport-ready", "false");
+    await expect(page.locator(".react-flow__viewport")).toHaveCSS("opacity", "0");
+    // Adjacent controls and a real canvas resize remain usable while measuring.
+    await page.getByRole("button", { name: "Toggle library", exact: true }).click();
+    await page.getByRole("button", { name: "Options", exact: true }).click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".react-flow")).toHaveAttribute("data-viewport-ready", "false");
+    await page.evaluate(() => {
+        const transforms = window.__importCameraTransforms = [];
+        const root = document.querySelector(".react-flow");
+        const viewport = root.querySelector(".react-flow__viewport");
+        const record = () => {
+            if (getComputedStyle(viewport).opacity !== "0" &&
+                [...root.querySelectorAll(".react-flow__node")].every((node) => node.getBoundingClientRect().width > 0)) {
+                transforms.push(viewport.style.transform);
+            }
+        };
+        const observer = new MutationObserver(record);
+        observer.observe(root, { subtree: true, attributes: true });
+        window.__stopImportCameraRecording = () => { record(); observer.disconnect(); return transforms; };
+        window.__releaseCameraMeasurements();
+    });
+    await expect(page.locator(".react-flow")).toHaveAttribute("data-viewport-ready", "true");
+    const fit = await page.evaluate(() => {
+        const root = document.querySelector(".react-flow");
+        const viewport = root.querySelector(".react-flow__viewport");
+        const matrix = new DOMMatrix(viewport.style.transform);
+        return { zoom: matrix.a, transform: viewport.style.transform, canvas: root.getBoundingClientRect().toJSON(),
+            nodes: [...root.querySelectorAll(".react-flow__node")].map((node) => node.getBoundingClientRect().toJSON()) };
+    });
+    await test.info().attach("initial-camera-bounds", { body: JSON.stringify(fit), contentType: "application/json" });
+    expect(fit.zoom).toBeLessThan(0.7);
+    for (const node of fit.nodes) {
+        expect(node.width).toBeGreaterThan(0);
+        expect(node.x).toBeGreaterThanOrEqual(fit.canvas.x);
+        expect(node.y).toBeGreaterThanOrEqual(fit.canvas.y);
+        expect(node.right).toBeLessThanOrEqual(fit.canvas.right);
+        expect(node.bottom).toBeLessThanOrEqual(fit.canvas.bottom);
+    }
+    await page.evaluate(async () => { for (let i = 0; i < 18; i++) await new Promise(requestAnimationFrame); });
+    const transforms = await page.evaluate(() => window.__stopImportCameraRecording());
+    expect(transforms.length).toBeGreaterThan(0);
+    expect([...new Set(transforms)]).toEqual([fit.transform]);
+    await page.getByRole("button", { name: "Zoom Out", exact: true }).click();
+    await page.evaluate(async () => { for (let i = 0; i < 18; i++) await new Promise(requestAnimationFrame); });
+    const navigated = await page.locator(".react-flow__viewport").evaluate((element) => element.style.transform);
+    expect(navigated).not.toBe(fit.transform);
+    await page.getByRole("button", { name: "Toggle library", exact: true }).click();
+    await page.evaluate(async () => { for (let i = 0; i < 18; i++) await new Promise(requestAnimationFrame); });
+    expect(await page.locator(".react-flow__viewport").evaluate((element) => element.style.transform)).toBe(navigated);
+    await page.evaluate(() => {
+        const image = window.__externalFixture.images["/workflow.xml"];
+        image.fileVersion = "B";
+        image.workflow.dataModel = [{ id: "external", expression: "'B'" }];
+        window.dispatchEvent(new Event("focus"));
+    });
+    await expect(page.locator(".workflow-panel .datamodel-compact-value-input")).toHaveValue("'B'");
+    await expect(page.locator(".react-flow")).toHaveAttribute("data-viewport-ready", "true");
+    await expect(page.locator(".react-flow__viewport")).toHaveCSS("opacity", "1");
+    expect(await page.locator(".react-flow__viewport").evaluate((element) => element.style.transform)).toBe(navigated);
+    await expect(page.locator(".react-flow__node-custom")).toHaveCount(2);
+});

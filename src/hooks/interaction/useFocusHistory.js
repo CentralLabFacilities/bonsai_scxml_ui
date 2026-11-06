@@ -28,6 +28,8 @@ export function useFocusHistory({
     setSelectedNodeId,
     setRightPanelTab,
     fitView,
+    getActiveDocumentIdentity,
+    waitForCanvasPlacement,
 }) {
     const [historyState, setHistoryState] = useState(() => ({
         entries: [],
@@ -35,7 +37,6 @@ export function useFocusHistory({
     }));
     const historyStateRef = useRef(historyState);
     const restoringRef = useRef(null);
-    const restoreTimeoutRef = useRef(null);
     const recordTimeoutRef = useRef(null);
     const lastObservedTabRef = useRef(activeTabId);
 
@@ -114,9 +115,6 @@ export function useFocusHistory({
 
     useEffect(
         () => () => {
-            if (restoreTimeoutRef.current !== null) {
-                clearTimeout(restoreTimeoutRef.current);
-            }
             if (recordTimeoutRef.current !== null) {
                 clearTimeout(recordTimeoutRef.current);
             }
@@ -146,7 +144,10 @@ export function useFocusHistory({
             restoringRef.current = target;
             publishHistoryState({ ...currentHistoryState, index: targetIndex });
 
-            const selectTarget = () => {
+            let identity;
+            const selectTarget = async () => {
+                if (waitForCanvasPlacement && !(await waitForCanvasPlacement(identity))) return;
+                if (getActiveDocumentIdentity && getActiveDocumentIdentity() !== identity) return;
                 const nodeId = target.nodeId || null;
 
                 setNodes((currentNodes) =>
@@ -165,30 +166,20 @@ export function useFocusHistory({
 
                 if (nodeId) {
                     setRightPanelTab("details");
-                    window.setTimeout(() => {
-                        fitView({
-                            nodes: [{ id: nodeId }],
-                            padding: 0.8,
-                            maxZoom: 1.2,
-                            duration: 250,
-                        });
-                    }, 40);
+                    fitView({
+                        nodes: [{ id: nodeId }],
+                        padding: 0.8,
+                        maxZoom: 1.2,
+                        duration: 250,
+                    });
                 } else {
-                    window.setTimeout(() => {
-                        fitView({ padding: 0.2, duration: 250 });
-                    }, 40);
+                    fitView({ padding: 0.2, duration: 250 });
                 }
             };
 
-            if (target.tabId !== activeTabId) {
-                switchTab(target.tabId);
-                restoreTimeoutRef.current = window.setTimeout(() => {
-                    restoreTimeoutRef.current = null;
-                    selectTarget();
-                }, 80);
-            } else {
-                selectTarget();
-            }
+            if (target.tabId !== activeTabId) switchTab(target.tabId);
+            identity = getActiveDocumentIdentity?.();
+            void selectTarget();
 
             // Do not remain in restoration mode forever if the referenced node
             // was deleted after the focus entry was recorded.
@@ -204,6 +195,8 @@ export function useFocusHistory({
             activeTabId,
             availableTabIds,
             fitView,
+            getActiveDocumentIdentity,
+            waitForCanvasPlacement,
             publishHistoryState,
             setNodes,
             setRightPanelTab,

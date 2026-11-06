@@ -2,6 +2,14 @@
    1. ROOT & GENERAL LAYOUT
    ========================================================================== */
 
+/* Placement never collapses measured graph content or blocks adjacent UI. */
+.react-flow[data-viewport-ready="false"] .react-flow__viewport {
+    opacity: 0;
+}
+.react-flow[data-viewport-ready="false"] {
+    pointer-events: none;
+}
+
 .container {
     display: flex;
     flex-direction: column;
