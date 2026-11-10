@@ -176,3 +176,62 @@ test("a freshly loaded parent recovers cached last-known interface facts while t
   assert.equal(fresh.data.src, stale.data.src);
   assert.equal(fresh.data.params, stale.data.params);
 });
+
+const childProjection = [
+  {
+    id: "reader",
+    type: "custom",
+    data: {
+      fullSkillName: "Reader",
+      inSlots: [{ key: "Model", type: "ecwm.Entity", inherited: { xpath: "/pick/model", state: "Reader" } }],
+      outSlots: [],
+    },
+  },
+  {
+    id: "writer",
+    type: "custom",
+    data: {
+      fullSkillName: "Writer",
+      inSlots: [],
+      outSlots: [{ key: "Out", type: "string", inherited: { xpath: "/pick/out" } }],
+    },
+  },
+];
+const childDeclarations = {
+  ...inspection,
+  inheritedSlots: [
+    { key: "", state: "", path: "/pick/model" },
+    { key: "", state: "", path: "/pick/out" },
+  ],
+};
+
+test("projected child nodes provide read/write access and datatypes for inherited slot edges", () => {
+  const updated = reconcileWorkflowInterface(parent(), childDeclarations, { edges, childNodes: childProjection });
+  const read = updated.data.inheritedSlots.find((slot) => slot.path === "pick/model");
+  const write = updated.data.inheritedSlots.find((slot) => slot.path === "pick/out");
+  assert.equal(read.access, "read");
+  assert.equal(read.type, "ecwm.Entity");
+  assert.equal(read.skillAccesses[0].skillName, "Reader");
+  assert.equal(write.access, "write");
+  assert.equal(write.type, "string");
+  assert.equal(updated.data.dependencyInterface.interfaceFileVersion, "version-b");
+});
+
+test("revalidation passes without a projection retain hydrated slot facts and stamp only fileVersion", () => {
+  const hydrated = reconcileWorkflowInterface(parent(), childDeclarations, { edges, childNodes: childProjection });
+  const later = reconcileWorkflowInterface(hydrated, { ...childDeclarations, fileVersion: "version-c" }, { edges });
+  assert.equal(later.data.inheritedSlots, hydrated.data.inheritedSlots);
+  assert.equal(later.data.dependencyInterface.fileVersion, "version-c");
+  assert.equal(later.data.dependencyInterface.interfaceFileVersion, "version-b");
+  // A new child byte version invalidates the retained facts for the refresh gate.
+  const rehydrated = reconcileWorkflowInterface(
+    later,
+    { ...childDeclarations, fileVersion: "version-c" },
+    { edges, childNodes: [] },
+  );
+  // Empty projection drops the stale usages; declarations keep the slots
+  // visible (edge-less) until real child usages reappear.
+  assert.equal(rehydrated.data.inheritedSlots.length, 2);
+  assert.ok(rehydrated.data.inheritedSlots.every((slot) => slot.access === null));
+  assert.equal(rehydrated.data.dependencyInterface.interfaceFileVersion, "version-c");
+});

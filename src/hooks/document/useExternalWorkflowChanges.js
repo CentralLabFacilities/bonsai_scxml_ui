@@ -25,6 +25,8 @@ export function useExternalWorkflowChanges(options) {
     pending: false,
     facts: new Map(),
     preparations: new Map(),
+    // "sourceKey|fileVersion" of submachine interfaces already re-projected.
+    interfaceRefreshes: new Set(),
     signature: "",
   });
   const mappingKey = JSON.stringify(options.behaviorDirectories || []);
@@ -56,10 +58,35 @@ export function useExternalWorkflowChanges(options) {
     return result;
   }, []);
 
+  const refreshSubMachineInterfaces = useCallback(async (tabSnapshot, targetNodes) => {
+    const context = latest.current;
+    if (typeof context.hydrateSubMachineInheritedSlots !== "function") return;
+    let hydrated;
+    try {
+      hydrated = await context.hydrateSubMachineInheritedSlots(targetNodes, tabSnapshot.filePath, tabSnapshot.edges);
+    } catch (error) {
+      console.warn("Could not refresh sub-state machine interfaces:", error);
+      return;
+    }
+    const live = context.getTabSnapshot(tabSnapshot.id);
+    if (!live || !sameDocument(live, tabSnapshot) || !Array.isArray(live.nodes)) return;
+    const byId = new Map(hydrated.map((node) => [node.id, node]));
+    const next = live.nodes.map((node) => byId.get(node.id) || node);
+    if (next.every((node, index) => node === live.nodes[index])) return;
+    // Same transactional guard as reconcileParents: only apply onto the
+    // exact graph that the hydration was derived from.
+    context.updateTab(live.id, (current) =>
+      sameDocument(current, live) && current.nodes === live.nodes ? { nodes: next } : null,
+    );
+    context.checkSlotConnection?.(next);
+  }, []);
+
   const reconcileParents = useCallback(() => {
     const context = latest.current;
     const facts = state.current.facts;
+    const refreshed = state.current.interfaceRefreshes;
     for (const tab of context.getTabsSnapshot()) {
+      const stale = [];
       const nodes = (tab.nodes || []).map((node) => {
         if (node.type !== "submachine" || !node.data?.src) return node;
         const fact = facts.get(sourceKey(node.data.src, tab.filePath));
@@ -77,11 +104,17 @@ export function useExternalWorkflowChanges(options) {
         };
         const failure = findError(fact);
         if (!failure && !fact.inspection) return node;
-        return reconcileWorkflowInterface(node, fact.inspection, {
+        const reconciled = reconcileWorkflowInterface(node, fact.inspection, {
           edges: tab.edges,
           state: failure?.state || "current",
           error: failure?.error || null,
         });
+        // Slot access/datatypes need the projected child (server skill join);
+        // re-project only when the child bytes actually changed.
+        const version = fact.fileVersion;
+        if (version && fact.inspection && reconciled.data?.dependencyInterface?.interfaceFileVersion !== version)
+          stale.push({ key: `${sourceKey(node.data.src, tab.filePath)}|${version}`, node: reconciled });
+        return reconciled;
       });
       if (nodes.some((node, index) => node !== tab.nodes[index])) {
         // Read again inside the graph transaction; never publish a
@@ -91,8 +124,18 @@ export function useExternalWorkflowChanges(options) {
           return { nodes };
         });
       }
+      const due = stale.filter((entry) => !refreshed.has(entry.key));
+      due.forEach((entry) => refreshed.add(entry.key));
+      // shortcut: hydration is derived from this pass' node data, so edits to
+      // the same node during the projection window are overwritten; re-run
+      // reconcile over the live graph if the window ever widens.
+      if (due.length)
+        void refreshSubMachineInterfaces(
+          tab,
+          due.map((entry) => entry.node),
+        );
     }
-  }, []);
+  }, [refreshSubMachineInterfaces]);
 
   const publishObservation = useCallback((tab, fact) => {
     const context = latest.current;
@@ -321,6 +364,7 @@ export function useExternalWorkflowChanges(options) {
     owner.alive = true;
     owner.epoch += 1;
     owner.facts.clear();
+    owner.interfaceRefreshes.clear();
     const checkVisible = () => {
       if (document.visibilityState !== "hidden") void requestRevalidation();
     };
@@ -333,6 +377,7 @@ export function useExternalWorkflowChanges(options) {
       owner.epoch += 1;
       owner.pending = false;
       owner.facts.clear();
+      owner.interfaceRefreshes.clear();
       owner.preparations.clear();
       window.clearInterval(timer);
       window.removeEventListener("focus", checkVisible);

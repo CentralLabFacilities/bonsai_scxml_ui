@@ -615,6 +615,8 @@ export function useWorkflowDocument({
     updateTab,
     replaceTabDocument,
     prepareImportedDocument,
+    hydrateSubMachineInheritedSlots,
+    checkSlotConnection,
     notify,
     saveAs: (tabId) => saveDocument({ tabId, forceSaveAs: true }),
   });

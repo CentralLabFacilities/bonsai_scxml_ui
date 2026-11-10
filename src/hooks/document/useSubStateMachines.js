@@ -172,7 +172,11 @@ export function useSubStateMachines({
             directories: behaviorDirectories,
             currentFilePath: parentFilePath,
           });
-          return reconcileWorkflowInterface(node, loaded, { edges });
+          // Slot access (read/write) and datatypes of inherited slots come from
+          // the projected child's skill nodes; the inspection DTO alone cannot
+          // provide them, so edges stay hidden without this projection.
+          const parsed = await projectWorkflowInspectionForEditor(loaded, { fetchSkillData, getNodeId });
+          return reconcileWorkflowInterface(node, loaded, { edges, childNodes: parsed.nodes });
         } catch (error) {
           console.warn(`Could not inspect inheritSlot declarations for ${node.data.src}:`, error);
           return reconcileWorkflowInterface(node, null, { state: "unreadable", error });
@@ -238,7 +242,13 @@ export function useSubStateMachines({
             return node;
           }
 
-          return reconcileWorkflowInterface(node, inspection, { edges: liveOriginSnapshot.edges });
+          // parsedNodes are the hydrated child nodes (patch runs at openTab
+          // time, after hydration completed) and carry the bubbled
+          // grandchild slot usages needed for parent slot edges.
+          return reconcileWorkflowInterface(node, inspection, {
+            edges: liveOriginSnapshot.edges,
+            childNodes: parsedNodes,
+          });
         }),
       });
       const parsedNodes = ensureSharedEditorInstanceIds(

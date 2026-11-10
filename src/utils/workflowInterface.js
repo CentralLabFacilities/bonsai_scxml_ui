@@ -3,7 +3,11 @@ import { getLogicalEdgeSourceHandle, getLogicalEdgeSourceId } from "./transition
 import { getLocalDataModelEntries } from "./editorScxml.js";
 
 /** Apply disk-derived facts without changing authored bindings, source or edges. */
-export function reconcileWorkflowInterface(node, inspection, { edges = [], state = "current", error = null } = {}) {
+export function reconcileWorkflowInterface(
+  node,
+  inspection,
+  { edges = [], state = "current", error = null, childNodes = null } = {},
+) {
   if (node?.type !== "submachine" || !node.data?.src) return node;
   const previous = node.data;
   if (!inspection) {
@@ -49,10 +53,17 @@ export function reconcileWorkflowInterface(node, inspection, { edges = [], state
       events.push({ ...event, editorImportedSynthetic: true, editorBoundarySynthetic: false });
     }
   }
-  const inheritedSlots = collectInheritedSlotUsages(
-    [],
-    inspection.inheritedSlotDeclarations || inspection.inheritedSlots || [],
-  );
+  // Access/type for inherited slot edges only exists in the projected child
+  // (skill definitions are a server-side join). Without a fresh projection,
+  // retain the last fully hydrated facts instead of clobbering them with the
+  // access-less declarations fallback.
+  const declarations = inspection.inheritedSlotDeclarations || inspection.inheritedSlots || [];
+  const hydratedBefore = previous.dependencyInterface?.interfaceFileVersion != null;
+  const inheritedSlots = Array.isArray(childNodes)
+    ? collectInheritedSlotUsages(childNodes, declarations)
+    : hydratedBefore
+      ? previous.inheritedSlots
+      : collectInheritedSlotUsages([], declarations);
   const localDataModel = getLocalDataModelEntries(
     inspection.workflow?.dataModel || inspection.localDataModel || [],
   ).map((entry) => ({
@@ -63,6 +74,10 @@ export function reconcileWorkflowInterface(node, inspection, { edges = [], state
   const dependencyInterface = {
     state,
     fileVersion: inspection.fileVersion ?? null,
+    // Version whose projected child produced the current inheritedSlots.
+    interfaceFileVersion: Array.isArray(childNodes)
+      ? (inspection.fileVersion ?? null)
+      : (previous.dependencyInterface?.interfaceFileVersion ?? null),
     path: inspection.path ?? null,
     error:
       state === "current" ? null : String(error?.message || error || "The referenced workflow could not be inspected."),
