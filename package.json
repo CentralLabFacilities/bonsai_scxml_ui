@@ -11,7 +11,7 @@
     "tauri:build": "bun run build && tauri build",
     "build:binary": "mkdir -p target/dist && bun run build --outDir target/dist && bun run src/embed-assets.js target/dist target/embedded-assets.js && bun build src/server.js --compile --target=bun-linux-x64 --outfile target/bonsai-ui && rm -rf target/dist",
     "lint": "eslint . --max-warnings=0",
-    "fmt": "bun fmt src tests && cd src-tauri && cargo fmt",
+    "format": "bun fmt src tests && cd src-tauri && cargo fmt",
     "test": "bun test",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --lib --no-default-features --locked",
     "test:browser": "playwright test",

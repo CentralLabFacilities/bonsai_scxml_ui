@@ -452,7 +452,14 @@ for (const [name, nodes, parentId, nativeType] of [
 }
 
 test("reuse manual, skill-bound and derived paths without type, position, metadata or clone overwrites", async () => {
-  const declaration = { id: "existing", key: "manual", state: "*", path: "/manual", type: "Integer", metadata: { keep: true } };
+  const declaration = {
+    id: "existing",
+    key: "manual",
+    state: "*",
+    path: "/manual",
+    type: "Integer",
+    metadata: { keep: true },
+  };
   const parent = skill("parent", "/bound", "Integer");
   const derived = slotNode("derived", { slotType: "Integer" });
   const alias = {
