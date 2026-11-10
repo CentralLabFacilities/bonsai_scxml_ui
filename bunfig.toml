@@ -1,3 +1,7 @@
 [fmt]
 printWidth = 120
 # semi = false
+
+# Playwright specs only run via `bun run test:browser`; bun's runner can't load them.
+[test]
+pathIgnorePatterns = ["tests/browser/**"]
