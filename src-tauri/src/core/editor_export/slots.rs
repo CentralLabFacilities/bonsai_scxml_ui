@@ -46,8 +46,8 @@ pub(super) fn build_slot_declarations(request: &EditorExportRequestDto) -> Vec<S
         let key = item.key.trim().to_string();
         let state = item.state.trim().to_string();
         let xpath = normalize_xpath(&item.xpath);
-        // Normal resources need only a path; key/state describe optional bindings.
-        if xpath.is_empty() || (item.inherited && (key.is_empty() || state.is_empty())) {
+        // Bonsai cannot load <slot> without key/state; keyless entries stay visual-only.
+        if xpath.is_empty() || key.is_empty() || state.is_empty() {
             continue;
         }
         let dedupe_key = format!("{}|{}|{}|{}", item.inherited, key, state, xpath);
@@ -70,7 +70,7 @@ mod tests {
     use crate::core::scxml::{parse_scxml, serialize_scxml};
 
     #[test]
-    fn editor_export_round_trip_keeps_path_only_resources_bindings_and_positions() {
+    fn editor_export_round_trip_keeps_bound_resources_and_positions() {
         let request: EditorExportRequestDto = serde_json::from_value(serde_json::json!({
             "nodes": [
                 {"id": "root", "nodeType": "compound", "fullSkillName": "Root",
@@ -109,12 +109,7 @@ mod tests {
         let workflow = build_workflow_from_editor(&request).unwrap();
         let declarations = serde_json::json!([
             {"key": "Model", "state": "skills.Read#one", "xpath": "/needed", "inherited": false},
-            {"key": "Own", "state": "Root", "xpath": "/outer", "inherited": true},
-            {"key": "", "state": "", "xpath": "/needed", "inherited": false},
-            {"key": "", "state": "", "xpath": "/", "inherited": false},
-            {"key": "", "state": "", "xpath": "/Ma\u{df}e/\u{6771}\u{4eac}&\"<>", "inherited": false},
-            {"key": "Detached", "state": "", "xpath": "/key-only", "inherited": false},
-            {"key": "", "state": "Root", "xpath": "/state-only", "inherited": false}
+            {"key": "Own", "state": "Root", "xpath": "/outer", "inherited": true}
         ]);
         assert_eq!(
             serde_json::to_value(workflow.to_dto().slot_declarations).unwrap(),
@@ -124,13 +119,11 @@ mod tests {
         let xml = serialize_scxml(&workflow).unwrap();
         assert!(xml.contains(concat!(
             "                <slot key=\"Model\" state=\"skills.Read#one\" xpath=\"/needed\"/>\n",
-            "                <inheritSlot key=\"Own\" state=\"Root\" xpath=\"/outer\"/>\n",
-            "                <slot xpath=\"/needed\"/>\n",
-            "                <slot xpath=\"/\"/>\n",
-            "                <slot xpath=\"/Ma\u{df}e/\u{6771}\u{4eac}&amp;&quot;&lt;&gt;\"/>\n",
-            "                <slot key=\"Detached\" xpath=\"/key-only\"/>\n",
-            "                <slot state=\"Root\" xpath=\"/state-only\"/>\n"
+            "                <inheritSlot key=\"Own\" state=\"Root\" xpath=\"/outer\"/>\n"
         )));
+        assert!(!xml.contains("<slot xpath="));
+        assert!(!xml.contains("key=\"Detached\""));
+        assert!(!xml.contains("/state-only"));
         assert!(xml.find("id=\"#_STATE_PREFIX\"").unwrap() < xml.find("id=\"#_SLOTS\"").unwrap());
         assert!(xml.find("id=\"#_SLOTS\"").unwrap() < xml.find("id=\"count\"").unwrap());
         assert!(!xml.contains("key=\"\""));

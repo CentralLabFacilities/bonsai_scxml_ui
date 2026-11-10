@@ -204,13 +204,16 @@ export const buildRustStateParameters = (parameters = []) =>
 
 // Explicit declarations belong to the parent document, even without a current
 // binding. Dependency-derived requirements never participate in this projection.
+// Keyless entries stay visual-only: Bonsai cannot load <slot> without key/state.
 const buildManualSlotDeclarations = (manualSlots = []) =>
-  (manualSlots || []).map((slot) => ({
-    key: String(slot?.key || ""),
-    state: String(slot?.inherited?.state || slot?.state || ""),
-    xpath: String(slot?.inherited?.xpath || slot?.path || ""),
-    inherited: slot?.slotKind === "inheritSlot" || Boolean(slot?.inherited),
-  }));
+  (manualSlots || [])
+    .map((slot) => ({
+      key: String(slot?.key || "").trim(),
+      state: String(slot?.inherited?.state || slot?.state || "").trim(),
+      xpath: String(slot?.inherited?.xpath || slot?.path || ""),
+      inherited: slot?.slotKind === "inheritSlot" || Boolean(slot?.inherited),
+    }))
+    .filter((slot) => slot.key && slot.state);
 
 export const buildRustSlotsSnapshot = ({ nodes = [], manualSlots = [], preparedGraph = null } = {}) => {
   const exportNodes = preparedGraph?.nodes || prepareNodesForScxml(nodes || []);

@@ -117,7 +117,7 @@ test("authored event transitions survive removal and restoration of their declar
   assert.deepEqual(stripWorkflowInterfaceForHistory(restored), stripWorkflowInterfaceForHistory(node));
 });
 
-test("explicit manual declarations persist without bindings or complete identities", () => {
+test("only fully identified manual declarations are exported; keyless ones stay visual", () => {
   const graph = {
     nodes: [],
     edges: [],
@@ -125,13 +125,12 @@ test("explicit manual declarations persist without bindings or complete identiti
     manualSlots: [
       { id: "manual-path", path: "/resource" },
       { id: "manual-inherited", path: "/inherited", slotKind: "inheritSlot" },
+      { id: "key-only", key: "keyless-state", path: "/stateless" },
       { key: "defaultslot", state: "*", path: "defaultslot" },
       { key: "unused", state: "Absent", path: "/unused" },
     ],
   };
   assert.deepEqual(buildRustEditorExportRequest(graph).extraSlotDeclarations, [
-    { key: "", state: "", xpath: "/resource", inherited: false },
-    { key: "", state: "", xpath: "/inherited", inherited: true },
     { key: "defaultslot", state: "*", xpath: "defaultslot", inherited: false },
     { key: "unused", state: "Absent", xpath: "/unused", inherited: false },
   ]);

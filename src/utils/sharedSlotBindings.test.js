@@ -139,7 +139,6 @@ test("right-click slot bindings export key and state, while obsolete malformed m
   });
   assert.deepEqual(result.extraSlotDeclarations, [
     { key: "Entity", state: "example.Writer#1", xpath: "/entity", inherited: false },
-    { key: "", state: "", xpath: "/entity", inherited: false },
   ]);
   assert.equal(result.states[0].inputSlots[0].key, "Entity");
 });

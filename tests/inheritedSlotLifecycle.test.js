@@ -452,7 +452,7 @@ for (const [name, nodes, parentId, nativeType] of [
 }
 
 test("reuse manual, skill-bound and derived paths without type, position, metadata or clone overwrites", async () => {
-  const declaration = { id: "existing", path: "/manual", type: "Integer", metadata: { keep: true } };
+  const declaration = { id: "existing", key: "manual", state: "*", path: "/manual", type: "Integer", metadata: { keep: true } };
   const parent = skill("parent", "/bound", "Integer");
   const derived = slotNode("derived", { slotType: "Integer" });
   const alias = {
@@ -503,6 +503,7 @@ test("reuse manual, skill-bound and derived paths without type, position, metada
 test("parent inheritance is preserved separately from child requirements and repeated children are idempotent", async () => {
   const inherited = {
     id: "parent-inherited",
+    key: "provided",
     path: "/provided",
     type: "String",
     slotKind: "inheritSlot",
@@ -958,6 +959,8 @@ test("rejected inspections after switch or unmount cannot publish an old documen
 
 test("keyboard/programmatic mixed deletion keeps protected declarations and bindings while deleting normal paths", async () => {
   const inherited = {
+    key: "protected",
+    state: "*",
     path: "/protected",
     type: "String",
     slotKind: "inheritSlot",
@@ -971,7 +974,7 @@ test("keyboard/programmatic mixed deletion keeps protected declarations and bind
         skill("normal-skill", "/normal"),
         child("child", [requirement("required")]),
       ],
-      [inherited, normal, { path: "/required", type: "String" }],
+      [inherited, normal, { key: "required", state: "*", path: "/required", type: "String" }],
     ),
   );
   const before = current.graph.getDocumentSnapshot();
