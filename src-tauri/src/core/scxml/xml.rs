@@ -32,51 +32,54 @@ impl XmlNode {
 }
 
 pub(super) fn parse_document(input: &str) -> Result<XmlNode, String> {
-    let normalized = input.replace("<!-->", "<!--").replace("</-->", "-->");
-    let bytes = normalized.as_bytes();
+    // Do not rewrite comments. `<!--> ... <!-->` is already a valid XML
+    // comment: its first `>` belongs to the contents, and the final `-->`
+    // closes it. Replacing both delimiters with `<!--` leaves the document
+    // unterminated and can make the importer reject otherwise valid SCXML.
+    let bytes = input.as_bytes();
     let mut cursor = 0usize;
     let mut stack: Vec<XmlNode> = Vec::new();
     let mut root: Option<XmlNode> = None;
 
     while cursor < bytes.len() {
-        let Some(relative_lt) = normalized[cursor..].find('<') else {
+        let Some(relative_lt) = input[cursor..].find('<') else {
             break;
         };
         cursor += relative_lt;
 
-        if normalized[cursor..].starts_with("<!--") {
-            let Some(relative_end) = normalized[cursor + 4..].find("-->") else {
+        if input[cursor..].starts_with("<!--") {
+            let Some(relative_end) = input[cursor + 4..].find("-->") else {
                 return Err("Comment not terminated".to_string());
             };
             cursor += 4 + relative_end + 3;
             continue;
         }
 
-        if normalized[cursor..].starts_with("<?") {
-            let Some(relative_end) = normalized[cursor + 2..].find("?>") else {
+        if input[cursor..].starts_with("<?") {
+            let Some(relative_end) = input[cursor + 2..].find("?>") else {
                 return Err("Processing instruction not terminated".to_string());
             };
             cursor += 2 + relative_end + 2;
             continue;
         }
 
-        if normalized[cursor..].starts_with("<![CDATA[") {
-            let Some(relative_end) = normalized[cursor + 9..].find("]]>") else {
+        if input[cursor..].starts_with("<![CDATA[") {
+            let Some(relative_end) = input[cursor + 9..].find("]]>") else {
                 return Err("CDATA section not terminated".to_string());
             };
             cursor += 9 + relative_end + 3;
             continue;
         }
 
-        if normalized[cursor..].starts_with("<!") {
-            let end = find_tag_end(&normalized, cursor + 2)?;
+        if input[cursor..].starts_with("<!") {
+            let end = find_tag_end(input, cursor + 2)?;
             cursor = end + 1;
             continue;
         }
 
-        if normalized[cursor..].starts_with("</") {
-            let end = find_tag_end(&normalized, cursor + 2)?;
-            let close_name = normalized[cursor + 2..end].trim();
+        if input[cursor..].starts_with("</") {
+            let end = find_tag_end(input, cursor + 2)?;
+            let close_name = input[cursor + 2..end].trim();
             let node = stack
                 .pop()
                 .ok_or_else(|| format!("Unexpected closing tag </{close_name}>"))?;
@@ -93,8 +96,8 @@ pub(super) fn parse_document(input: &str) -> Result<XmlNode, String> {
             continue;
         }
 
-        let end = find_tag_end(&normalized, cursor + 1)?;
-        let raw_tag = normalized[cursor + 1..end].trim();
+        let end = find_tag_end(input, cursor + 1)?;
+        let raw_tag = input[cursor + 1..end].trim();
         let self_closing = raw_tag.ends_with('/');
         let raw_tag = if self_closing {
             raw_tag[..raw_tag.len() - 1].trim_end()

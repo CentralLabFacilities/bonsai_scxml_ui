@@ -24,11 +24,6 @@ import {
   isNodeInsideContainer,
   getTransitionTargetHandleForNode,
 } from "./editorGeometry.js";
-const normalizeLegacyScxmlComments = (xmlText) =>
-  String(xmlText || "")
-    .replace(/<!-->/g, "<!--")
-    .replace(/<\/-->/g, "-->");
-
 const makeImportedSelfLoopControlPoints = () => [
   { id: `cp-${crypto.randomUUID()}`, anchor: "source", dx: 76, dy: -92 },
   { id: `cp-${crypto.randomUUID()}`, anchor: "target", dx: -76, dy: -92 },
@@ -538,14 +533,13 @@ const parseBehaviorExitForwarding = (stateElem, fullSkillName) => {
 };
 
 export const parseScxmlFile = async (xmlText, fetchSkillData, getNodeId, parsedWorkflow = null) => {
-  const normalizedXml = normalizeLegacyScxmlComments(xmlText);
   let xmlDoc;
 
   // Rust is the single authoritative SCXML parser. Its semantic WorkflowDto
   // is projected onto the small Element facade consumed by the React Flow
   // import adapter below.
   try {
-    const workflow = parsedWorkflow || (await parseScxmlWorkflow(normalizedXml));
+    const workflow = parsedWorkflow || (await parseScxmlWorkflow(xmlText));
     xmlDoc = workflowDtoToScxmlDocument(workflow);
   } catch (error) {
     throw new Error("Fehler in der XML-Struktur:\n" + String(error?.message || error || "Unknown SCXML parse error"), {

@@ -61,6 +61,54 @@ mod tests {
     }
 
     #[test]
+    fn imports_unmodified_grasp_workflow_with_header_comment_and_nested_states() {
+        // Regression for real Bonsai files containing the exact header syntax
+        // below. This is a valid XML comment; the SCXML must not be edited.
+        let xml = r##"<?xml version="1.0" encoding="UTF-8"?>
+<!-->
+Will try to pickup the entity in /graspEntity
+needs the corresponding spirit in /Spirit
+<!-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml" version="1.0" initial="Nop#init">
+  <datamodel>
+    <data id="#_STATE_PREFIX" expr="'de.unibi.citec.clf.bonsai.skills.'"/>
+    <data id="#_SLOTS"><slots>
+      <inheritSlot key="Language" state="*" xpath="/language"/>
+    </slots></data>
+  </datamodel>
+  <state id="Nop#init">
+    <transition event="Nop.fatal" target="GraspWrapper"/>
+  </state>
+  <state id="GraspWrapper" initial="FindGoodPosition">
+    <state id="FindGoodPosition" initial="ecwm.util.GetNavgoalToEntity">
+      <state id="ecwm.util.GetNavgoalToEntity">
+        <transition event="GetNavgoalToEntity.success.need_move" target="nav.drive.NavigateTo#GraspDistance"/>
+      </state>
+      <state id="nav.drive.NavigateTo#GraspDistance"/>
+    </state>
+    <!-- An ordinary internal documentation comment -->
+    <state id="error_recovery" src="${ROBOCUP}/behaviors/grasping/error_recovery.xml"/>
+  </state>
+  <state id="Nop#success">
+    <transition event="Nop.fatal"><send event="success.grasped"/></transition>
+  </state>
+</scxml>"##;
+
+        let parsed = parse_scxml(xml).expect("Unchanged SCXML should import");
+        assert_eq!(parsed.initial_scxml_state_id.as_deref(), Some("Nop#init"));
+        assert_eq!(parsed.states.len(), 7);
+        assert_eq!(parsed.slot_declarations.len(), 1);
+        assert!(parsed.states.iter().any(|state| {
+            state.scxml_id == "error_recovery"
+                && state.source.as_deref() == Some("${ROBOCUP}/behaviors/grasping/error_recovery.xml")
+        }));
+        assert!(parsed.transitions.iter().any(|transition| {
+            transition.target_scxml_id.is_empty()
+                && transition.sent_events.first().map(String::as_str) == Some("success.grasped")
+        }));
+    }
+
+    #[test]
     fn reads_legacy_and_prefixed_editor_metadata_and_writes_only_prefixed() {
         let legacy = SAMPLE;
         let prefixed = legacy
