@@ -229,7 +229,7 @@ export function useEditorDisplay({
   hiddenNodeIds,
   parallelDropTargetId,
   compoundDropTargetId,
-  problemNodeIds,
+  nodeProblemSeverities,
   nodeWarningTitles = EMPTY_WARNING_TITLES,
 }) {
   const routingHandlersRef = useRef({
@@ -1665,17 +1665,17 @@ export function useEditorDisplay({
     cloneGroupByNodeId,
   ]);
 
-  // Diagnostics are UI-only. Reuse each source node unless its own warning or
-  // Variables styling changed, before building the cached hover variants.
+  // Diagnostics are UI-only: preserve node identity unless its own badge or
+  // severity changes. This avoids rerendering every graph node on each update.
   const problemNodeSnapshot = useDerivedGraphSnapshot(
-    [baseVisibleNodes, problemNodeIds, nodeWarningTitles],
+    [baseVisibleNodes, nodeProblemSeverities, nodeWarningTitles],
     (snapshot = { cache: new Map(), nodes: [] }) => {
       const cache = new Map();
       const projected = baseVisibleNodes.map((node) => {
         const warningTitle = nodeWarningTitles.get(node.id) || "";
-        const hasProblem = Boolean(problemNodeIds?.has(node.id));
+        const severity = nodeProblemSeverities?.get(node.id) || null;
         const cached = snapshot.cache.get(node.id);
-        if (cached?.sourceNode === node && cached.warningTitle === warningTitle && cached.hasProblem === hasProblem) {
+        if (cached?.sourceNode === node && cached.warningTitle === warningTitle && cached.severity === severity) {
           cache.set(node.id, cached);
           return cached.value;
         }
@@ -1684,13 +1684,14 @@ export function useEditorDisplay({
         if ((node.data?.editorWarningTitle || "") !== warningTitle) {
           value = { ...value, data: { ...node.data, editorWarningTitle: warningTitle } };
         }
-        const classNames = String(node.className || "")
+        const classNames = String(value.className || "")
           .split(/\s+/)
-          .filter(Boolean);
-        if (hasProblem && !classNames.includes("editor-node-problem")) {
-          value = { ...value, className: [...classNames, "editor-node-problem"].join(" ") };
-        }
-        cache.set(node.id, { sourceNode: node, warningTitle, hasProblem, value });
+          .filter((name) => name && name !== "editor-node-problem" && name !== "editor-node-warning");
+        if (severity) classNames.push("editor-node-problem");
+        if (severity === "warning") classNames.push("editor-node-warning");
+        const className = classNames.join(" ");
+        if (className !== (value.className || "")) value = { ...value, className };
+        cache.set(node.id, { sourceNode: node, warningTitle, severity, value });
         return value;
       });
       if (

@@ -36,28 +36,39 @@
   box-shadow: var(--ui-state-focus-ring);
 }
 
-/* Problem is persistent. When a problem node is selected/hovered, keep the
-   red problem ring and add the transient interaction ring outside it. */
+/* Validation is persistent: red for errors and deep orange for warnings.
+   Keep the diagnostic ring visible under hover, selection and keyboard focus. */
 .react-flow__node.editor-node-problem {
+  --editor-node-problem-ring: var(--ui-state-invalid-ring);
   outline: none !important;
-  box-shadow: var(--ui-state-invalid-ring) !important;
+  box-shadow: var(--editor-node-problem-ring) !important;
+}
+
+.react-flow__node.editor-node-problem.editor-node-warning {
+  --editor-node-problem-ring: 0 0 0 3px rgba(194, 65, 12, 0.9);
+}
+
+/* The accessible palette uses yellow instead of red/orange, and retains
+   distinct problem severity without altering SCXML or validation results. */
+:root[data-colorblind-mode] .react-flow__node.editor-node-problem.editor-node-warning {
+  --editor-node-problem-ring: 0 0 0 3px rgba(240, 228, 66, 0.9);
 }
 
 .react-flow__node.editor-node-problem.selected {
   box-shadow:
-    var(--ui-state-invalid-ring),
+    var(--editor-node-problem-ring),
     0 0 0 6px rgba(56, 189, 248, 0.42) !important;
 }
 
 .react-flow__node.editor-node-problem:is(.editor-hover-highlight, .editor-canvas-fast-hover-highlight):not(.selected) {
   box-shadow:
-    var(--ui-state-invalid-ring),
+    var(--editor-node-problem-ring),
     0 0 0 6px rgba(147, 197, 253, 0.28) !important;
 }
 
 .react-flow__node.editor-node-problem:focus-visible {
   box-shadow:
-    var(--ui-state-invalid-ring),
+    var(--editor-node-problem-ring),
     0 0 0 6px rgba(224, 242, 254, 0.72),
     0 0 0 9px rgba(56, 189, 248, 0.24) !important;
 }

@@ -21,6 +21,56 @@ export function getValidationNodeDisplayName(node) {
   return instanceId && !baseName.endsWith(`#${instanceId}`) ? `${baseName}#${instanceId}` : baseName;
 }
 
+/**
+ * Map diagnostics to their responsible graph nodes for persistent highlighting.
+ * A problem's nodeId is authoritative; focusNodeIds can include innocent
+ * neighbors merely to make navigation easier, so do not mark them all.
+ * Exceptions: a slot-type mismatch involves both endpoints; a diagnostic
+ * without an owner may still provide focus nodes or a canonical slot path.
+ * Error takes precedence over warning when a node has both.
+ */
+export function projectNodeProblemSeverities(problems = [], edges = []) {
+  const byNodeId = new Map();
+  const byEdgeId = new Map((edges || []).map((edge) => [edge.id, edge]));
+
+  const mark = (nodeId, severity) => {
+    if (!nodeId) return;
+    const current = byNodeId.get(nodeId);
+    if (severity === "error" || !current) byNodeId.set(nodeId, severity);
+  };
+
+  for (const problem of problems || []) {
+    const severity = problem?.severity;
+    if (severity !== "error" && severity !== "warning") continue;
+
+    // The declared owner is more precise than navigation focus targets.
+    // For transition-only problems, the logical edge source is the owner.
+    const edge = problem.category === "Transitions" ? byEdgeId.get(problem.edgeId) : null;
+    const source = edge?.data?.boundaryOriginalSource ||
+      edge?.data?.compoundOriginalSource ||
+      edge?.data?.parallelOriginalSource ||
+      edge?.source;
+    const owner = String(problem.nodeId || source || "").trim();
+    if (owner) mark(owner, severity);
+
+    // Slot-type mismatches affect both reader and writer. For other problems,
+    // do not mark incidental navigation targets as if they caused the issue.
+    if (
+      (problem.category === "Slots" && problem.title === "Slot type mismatch") ||
+      (!owner && problem.category !== "Transitions")
+    ) {
+      for (const focusNodeId of problem.focusNodeIds || []) mark(focusNodeId, severity);
+    }
+
+    // Slot-level diagnostics, e.g. "Slot has no writer", target the slot
+    // node itself, without blaming all the correctly connected readers.
+    const slotPath = normalizeSlotPath(problem.slotPath);
+    if (slotPath) mark(`slot-${slotPath}`, severity);
+  }
+
+  return byNodeId;
+}
+
 export function projectNodeWarningTitles(previous = new Map(), problems = []) {
   const byNodeId = new Map();
   for (const problem of problems) {

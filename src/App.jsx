@@ -28,6 +28,7 @@ import { useWorkflowTabs } from "./hooks/document/useWorkflowTabs";
 import { useFocusHistory } from "./hooks/interaction/useFocusHistory";
 import { useWorkflowDocument } from "./hooks/document/useWorkflowDocument";
 import { useEditorAnalysis } from "./hooks/graph/useEditorAnalysis";
+import { projectNodeProblemSeverities } from "./utils/editorValidation.js";
 import { useEditorDisplay } from "./hooks/graph/useEditorDisplay";
 import { useSkillLibraryView } from "./hooks/library/useSkillLibraryView";
 import { useNodeDrag } from "./hooks/interaction/useNodeDrag";
@@ -1118,17 +1119,11 @@ function AppContent() {
     [setContextMenu],
   );
 
-  const variableProblemNodeIds = useMemo(
-    () =>
-      new Set(
-        editorProblems
-          .filter((problem) => problem.category === "Variables")
-          .flatMap((problem) =>
-            problem.focusNodeIds?.length ? problem.focusNodeIds : problem.nodeId ? [problem.nodeId] : [],
-          )
-          .filter(Boolean),
-      ),
-    [editorProblems],
+  // Preserve the severity of every node-owned diagnostic, not only Variables.
+  // A node with both warnings and errors must remain red.
+  const nodeProblemSeverities = useMemo(
+    () => projectNodeProblemSeverities(editorProblems, edges),
+    [editorProblems, edges],
   );
 
   const hoverTransitionBadge = useCallback(
@@ -1182,7 +1177,7 @@ function AppContent() {
     hiddenNodeIds,
     parallelDropTargetId,
     compoundDropTargetId,
-    problemNodeIds: variableProblemNodeIds,
+    nodeProblemSeverities,
   });
 
   const {
