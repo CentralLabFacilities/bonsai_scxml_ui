@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { MarkerType } from "@xyflow/react";
-import { updateSharedSlotBinding } from "../../../utils/sharedSlotBindings.js";
+import { updateSharedSlotBinding, withoutReplacedSkillDeclarations } from "../../../utils/sharedSlotBindings.js";
 import {
   SLOT_CONNECTION_COLORS,
   getSlotConnectionEndpoint,
   getSlotEdgeEndpoints,
-  getSlotPathForKey,
+  getDefaultSlotPath,
   getSlotPathFromNode,
-  normalizeSlotPath,
   parseSlotConnectionHandle,
   planInheritedSlotRename,
   renameParentSlot,
@@ -274,7 +273,8 @@ export const useSlotConnections = (options) => {
               }),
             },
       );
-      return commit({ ...model, nodes }, model, consumer, slotNodeId, preferredEdgeId);
+      const manualSlots = withoutReplacedSkillDeclarations(model.manualSlots, consumer.node, consumer.slot);
+      return commit({ ...model, nodes, manualSlots }, model, consumer, slotNodeId, preferredEdgeId);
     },
     [getModel, commit],
   );
@@ -379,12 +379,7 @@ export const useSlotConnections = (options) => {
         slotIndex: endpoint.slotIndex,
         inheritIndex: endpoint.inheritIndex,
         canCreate: endpoint.origin === "skill" && !reconnectRef.current,
-        previewPath:
-          endpoint.origin === "skill"
-            ? endpoint.slot.inherited
-              ? `/${normalizeSlotPath(endpoint.slot.inherited.xpath || endpoint.slot.path)}`
-              : `/${getSlotPathForKey(model, endpoint.slot.type)}`
-            : null,
+        previewPath: endpoint.origin === "skill" ? `/${getDefaultSlotPath(model)}` : null,
       };
       dragRef.current = { ...drag, identity: getIdentity(), signature: endpointSignature(endpoint), completed: false };
       setSlotConnectionDrag(drag);
@@ -408,20 +403,13 @@ export const useSlotConnections = (options) => {
       const model = getModel();
       const consumer = getSlotConnectionEndpoint(drag.nodeId, drag.handleId, model);
       if (endpointSignature(consumer) !== drag.signature) return false;
-      const inherited = consumer.slot.inherited;
-      const path = inherited
-        ? normalizeSlotPath(inherited.xpath || consumer.slot.path)
-        : getSlotPathForKey(model, consumer.slot.type);
-      if (model.slotNodes.some((node) => getSlotPathFromNode(node) === path)) {
-        reportError(`/${path} already exists. Connect to its handle instead.`);
-        return false;
-      }
+      // Dropping a skill handle on empty canvas creates a NEW, normal
+      // default slot. Reusing its old inherited XPath or copying the
+      // inherited flag would create conflicting SCXML declarations.
+      const path = getDefaultSlotPath(model);
       const formattedPath = `/${path}`;
-      const inheritedState = inherited ? String(inherited.state || "*") : null;
-      const newInherited = inherited ? { ...inherited, state: inheritedState, xpath: formattedPath } : null;
-      // The new slot node is a visual endpoint, not an independent SCXML
-      // declaration. Connecting this skill slot below creates the actual
-      // key/state/path binding. Do not persist a second wildcard <slot>.
+      // The slot node is a visual endpoint, not a second declaration. The
+      // moved skill binding is serialized by the slot snapshot below.
       const slotNodes = [
         ...model.slotNodes,
         {
@@ -434,10 +422,10 @@ export const useSlotConnections = (options) => {
             key: path,
             state: "*",
             slotType: consumer.slot.type,
-            inherited: Boolean(inherited),
-            currentMachineInherited: Boolean(inherited),
-            inheritedFrom: inherited?.state || "",
-            ...(inherited ? { slotKind: "inheritSlot" } : {}),
+            inherited: false,
+            currentMachineInherited: false,
+            inheritedFrom: "",
+            slotKind: "slot",
           },
         },
       ];
@@ -448,13 +436,14 @@ export const useSlotConnections = (options) => {
               ...node,
               data: updateSharedSlotBinding(node.data, consumer.access, consumer.slotIndex, {
                 path: formattedPath,
-                inherited: newInherited,
+                inherited: null,
               }),
             },
       );
-      return commit({ ...model, nodes, slotNodes }, model, consumer, `slot-${path}`);
+      const manualSlots = withoutReplacedSkillDeclarations(model.manualSlots, consumer.node, consumer.slot);
+      return commit({ ...model, nodes, manualSlots, slotNodes }, model, consumer, `slot-${path}`);
     },
-    [cancelSlotConnection, getIdentity, getModel, reportError, commit],
+    [cancelSlotConnection, getIdentity, getModel, commit],
   );
 
   const handleSlotReconnectStart = useCallback(

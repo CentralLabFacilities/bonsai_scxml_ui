@@ -170,6 +170,24 @@ export function expandSharedSlotEdgeRemovals(nodes, slotEdges, changes) {
   return additions.length ? [...changes, ...additions] : changes;
 }
 
+/**
+ * A skill request has one SCXML mapping for its (state, key) pair. When its
+ * handle is reconnected, the skill binding is the authoritative declaration;
+ * imported manual copies of the old mapping must not survive as a second
+ * <slot>/<inheritSlot> for that same request. Keep declarations belonging to
+ * other skills (including wildcard mappings) untouched.
+ */
+export function withoutReplacedSkillDeclarations(manualSlots = [], skillNode, request) {
+  const state = String(skillNode?.data?.fullSkillName || skillNode?.data?.label || skillNode?.id || "").trim();
+  const key = String(request?.key || "").trim();
+  if (!state || !key) return manualSlots;
+  const filtered = manualSlots.filter((declaration) =>
+    String(declaration?.key || "").trim() !== key ||
+    String(declaration?.state || "").trim() !== state,
+  );
+  return filtered.length === manualSlots.length ? manualSlots : filtered;
+}
+
 /** API refresh may expose the missing direction after a binding already exists.
  * Copy ONLY into an unbound counterpart; never select between two old paths.
  */

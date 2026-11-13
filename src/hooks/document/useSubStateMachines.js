@@ -315,7 +315,7 @@ export function useSubStateMachines({
         });
         return false;
       }
-      checkSlotConnection(parsedNodes, [], parsed.editorSlotNodes || []);
+      checkSlotConnection(parsedNodes, parsed.manualSlots || [], parsed.editorSlotNodes || []);
     } catch (err) {
       console.error("Sub-Machine loading error:", err);
       notify({
