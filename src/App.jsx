@@ -114,12 +114,7 @@ function AppContent() {
   } = useRuntimeEventTimeline();
   // Fast automatic transitions may enter the next state before React paints.
   // Keep the transition's canvas highlight briefly without delaying events.
-  const runtimeMemory = useRuntimeMemorySlots({
-    enabled:
-      isRuntimeCommanderOpen ||
-      runtimeEventTimeline.frames.length > 0 ||
-      ["RUNNING", "PAUSED"].includes(runtimeEventTimeline.status),
-  });
+  const runtimeMemory = useRuntimeMemorySlots();
   const runtimeMemoryRef = useRef(runtimeMemory);
   const runtimeTabsRef = useRef([]);
   const runtimeSkillEntriesRef = useRef(new Map());
@@ -132,7 +127,7 @@ function AppContent() {
     (message) => {
       if (message.type === "started") {
         resetRuntimeEvents();
-        runtimeMemoryRef.current.reset();
+        if (!runtimeMemoryRef.current.consumePreparedStart()) runtimeMemoryRef.current.reset();
         runtimeSkillEntriesRef.current.clear();
       }
       // Only actual skill exits are selectable skill snapshots. SCXML also
@@ -168,7 +163,7 @@ function AppContent() {
           // A qualified editor ID may differ from the short runtime ID,
           // and resolving the skill again on exit must not be required
           // to preserve this execution's historical slot observation.
-          const mappedSlots = match ? configuredSkillSlots(match.node) : null;
+          const mappedSlots = match?.node?.type === "custom" ? configuredSkillSlots(match.node) : null;
           runtimeSkillEntriesRef.current.set(state, [
             ...stack,
             {
@@ -183,6 +178,7 @@ function AppContent() {
             editorMatch: match?.node?.id || null,
             slotPaths: mappedSlots?.map((slot) => slot.path) ?? null,
           });
+          runtimeMemoryRef.current.capture(state, mappedSlots || [], message.sequence, "skill-entry", message.sequence);
         }
         ingestRuntimeEvent({ ...message, skillSnapshot: isSkill });
       } else {
@@ -190,19 +186,15 @@ function AppContent() {
           message.type === "state_exited" ? { ...message, skillSnapshot: Boolean(exitedSkill) } : message,
         );
       }
-      if (message.type === "started" || message.type === "state_exited") {
-        void runtimeMemoryRef.current.refresh();
-      }
       if (message.type === "state_exited") {
         const state = String(message.details?.state || message.data?.state || "");
         const stack = runtimeSkillEntriesRef.current.get(state) || [];
         const entry = stack[stack.length - 1] ?? null;
         const entrySequence = typeof entry === "number" ? entry : (entry?.sequence ?? null);
         runtimeSkillEntriesRef.current.set(state, stack.slice(0, -1));
-        const mappedSlots = entry?.slots ?? (exitedSkill ? configuredSkillSlots(exitedSkill.node) : null);
-        // Every observed skill entry needs a linked exit capture, even if
-        // the editor could not resolve its slot mappings. The Memory hook
-        // retains an independent path cache for such cases.
+        const mappedSlots = entry?.slots ?? (exitedSkill?.node?.type === "custom" ? configuredSkillSlots(exitedSkill.node) : null);
+        // Preserve exit boundaries for timeline inspection, without any new
+        // HTTP reads. Only entry events fetch mapped MemorySlots.
         traceSlot("skill.exit", {
           state,
           sequence: message.sequence,
@@ -231,9 +223,8 @@ function AppContent() {
         }
       }
       if (message.type === "transition") {
-        // Transition snapshots refer to their source skill's configured
-        // slots. Never attribute a write to that skill: GET only observes
-        // the values available after the transition.
+        // Preserve a transition boundary using previously observed values;
+        // no additional HTTP request is made for transitions.
         const source = String(message.details?.source || message.data?.source || "");
         const root = liveRunRef.current?.workflow;
         const tabsAtLoad = liveRunRef.current?.tabsSnapshot || [];
@@ -241,7 +232,7 @@ function AppContent() {
         const match = (root && resolveRuntimeSkill(root, knownTabs, source)) || skillForRuntimeState(knownTabs, source);
         // All transition rows have a Memory observation. A missing editor
         // mapping must not silently drop the run-wide slot cache.
-        const transitionSlots = match ? configuredSkillSlots(match.node) : [];
+        const transitionSlots = match?.node?.type === "custom" ? configuredSkillSlots(match.node) : [];
         traceSlot("transition.capture", {
           source,
           sequence: message.sequence,
@@ -2187,6 +2178,7 @@ function AppContent() {
             setRuntimeAssignmentsOpen(false);
           },
           onRuntimeStarted: showRuntimeAssignments,
+          onBeforeRuntimeStart: () => runtimeMemoryRef.current.prepareStart(),
           workflowTab: activeWorkflowTab,
           workflowFingerprint: activeWorkflowFingerprint,
           getTabSnapshot,

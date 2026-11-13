@@ -1,4 +1,4 @@
-import { inferSlotWriteHistory, normalizeMemoryPath, historicalSlotValue } from "./runtimeMemorySlots.js";
+import { inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots.js";
 import { isInternalRuntimeName } from "./runtimeEventFrames.js";
 
 const asTime = (value) => {
@@ -72,7 +72,7 @@ export function snapshotVariableValues(timeline, frame) {
  * publishing a datamodel_assignment event. This happens for some manual-event
  * runs. Event history is always preferred so multiple assignments remain
  * distinct. A difference is not fabricated when values are unchanged. */
-function appendSnapshotValueDifferences(changes, timeline, frames, index, memory) {
+function appendSnapshotValueDifferences(changes, timeline, frames, index) {
   const frame = frames[index];
   const previous = frames[index - 1];
   const before = runtimeValueMap(
@@ -111,64 +111,9 @@ function appendSnapshotValueDifferences(changes, timeline, frames, index, memory
     });
   }
 
-  // The MemorySlot value sections can have linked captures even if a write
-  // was not emitted or attributed. Reconcile against those same observed
-  // values instead of leaving "Changes" empty for a manually stepped skill.
-  const paths = new Set([
-    ...(memory?.writes || []).map((entry) => normalizeMemoryPath(entry.path)),
-    ...(memory?.observations || []).flatMap((item) =>
-      [...(item.slots || []), ...(item.cache || [])].map((entry) => normalizeMemoryPath(entry.path)),
-    ),
-  ]);
-  for (const path of paths) {
-    if (!path || changes.some((change) => change.kind === "slot" && change.path === path)) continue;
-    const current = historicalSlotValue(
-      memory?.observations || [],
-      frame,
-      path,
-      memory?.writes || [],
-      memory?.skillExecutions || [],
-    );
-    // Transitions need not have their own Memory observation. Use the
-    // nearest earlier *available* frame so the previous value isn't lost.
-    let prior = null;
-    for (let earlier = index - 1; earlier >= 0; earlier -= 1) {
-      const candidate = historicalSlotValue(
-        memory?.observations || [],
-        frames[earlier],
-        path,
-        memory?.writes || [],
-        memory?.skillExecutions || [],
-      );
-      if (candidate?.status === "available") {
-        prior = candidate;
-        break;
-      }
-    }
-    if (
-      current?.status !== "available" ||
-      (prior?.status === "available" && String(prior.value) === String(current.value))
-    )
-      continue;
-    // Avoid presenting a stale, late GET as a confirmed initial write.
-    if (!previous && !memory?.writes?.some((entry) => normalizeMemoryPath(entry.path) === path)) continue;
-    changes.push({
-      id: `inferred-slot:${frame.id}:${path}`,
-      kind: "slot",
-      name: path,
-      path,
-      scope: "slot",
-      dataType: current.type || memory?.used?.[path] || "",
-      previous: prior?.value,
-      previousKnown: prior?.status === "available",
-      value: current.value,
-      sequence: frame.exitSequence || frame.sequence,
-      timestamp: current.observedAt || frame.exitTimestamp || frame.timestamp,
-      timeMs: asTime(current.observedAt || frame.exitTimestamp || frame.timestamp),
-      inferred: true,
-      sourceState: current.sourceState || frame.state,
-    });
-  }
+  // MemorySlot changes are never inferred from differences between adjacent
+  // frame caches. Those caches are observed values, not evidence of a write.
+  // Only slot_written / slot_cleared events can create MemorySlot change rows.
 }
 
 /** Show writes and assignments in the current visible skill *as they arrive*.
@@ -209,6 +154,10 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
     existing.add(id);
   }
 
+  // A transition can display the latest slot *value* but never owns a slot
+  // write. Likewise, a skill without a declared writable mapping must not
+  // claim an unrelated SSE write merely because it arrived during the run.
+  if (frame.type !== "state_entered") return;
   // SSE reception times use wall time; the entry timestamp originates from
   // the same host's SCXML backend. Never pull an older write into the active
   // row, and never use a later HTTP GET as a historical write.
@@ -216,7 +165,12 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
   const since = Number.isFinite(enteredAt) ? enteredAt : frame.receivedAtMs;
   if (!Number.isFinite(since)) return;
   const writerPaths = new Set((options.writerPaths || []).map(normalizeMemoryPath));
-  const previousByPath = new Map();
+  const baseline = (memory?.observations || []).find((item) => item.kind === "pre-start");
+  const previousByPath = new Map(
+    (baseline?.cache || [])
+      .filter((entry) => entry.status === "available")
+      .map((entry) => [normalizeMemoryPath(entry.path), entry]),
+  );
   const receivedWrites = (memory?.writes || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   for (let i = 0; i < receivedWrites.length; i += 1) {
     const write = receivedWrites[i];
@@ -229,7 +183,7 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
     // A tiny grace window is safe only for a path declared writable by
     // this *selected* skill; otherwise use the strict entry timestamp.
     const graceMs = writerPaths.has(path) ? 35 : 0;
-    if (Number.isFinite(observedAtMs) && observedAtMs >= since - graceMs && !existing.has(id)) {
+    if (writerPaths.has(path) && Number.isFinite(observedAtMs) && observedAtMs >= since - graceMs && !existing.has(id)) {
       changes.push({
         id,
         kind: "slot",
@@ -266,6 +220,13 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   const executions = memory?.skillExecutions || [];
   const bounds = frames.map((_, index) => frameEndSequence(frames, index, timeline, executions));
   const changes = [];
+  // Map the execution identity directly to its selectable skill row. SCXML
+  // transition messages and state_exited may have different event ordering;
+  // sequence-range bucketing would put a write on the next transition/skill.
+  const skillFrameIndexes = new Map(
+    frames.flatMap((candidate, index) => candidate.type === "state_entered"
+      ? [[`${candidate.state}\u0000${candidate.sequence}`, index]] : []),
+  );
   for (const assignment of timeline?.assignmentHistory || []) {
     const sequence = Number(assignment.sequence);
     if (assignment.sequence == null || frameIndexForSequence(bounds, sequence) !== selectedIndex) continue;
@@ -291,9 +252,14 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   for (const path of paths) {
     const inferred = inferSlotWriteHistory(writes, executions, path);
     const typed = memory?.used?.[path] || memory?.live?.[path]?.type || "";
-    let prior;
+    const baseline = (memory?.observations || []).find((item) => item.kind === "pre-start");
+    let prior = (baseline?.cache || []).find((entry) =>
+      normalizeMemoryPath(entry.path) === path && entry.status === "available",
+    );
     for (const write of inferred) {
-      const index = frameIndexForSequence(bounds, write.assignedSequence);
+      // A write belongs to its skill execution, whose selectable row is
+      // state_entered. Never allocate a MemorySlot write to a transition row.
+      const index = skillFrameIndexes.get(`${write.sourceState}\u0000${write.assignedEntrySequence}`);
       if (index === selectedIndex) {
         changes.push({
           id: `slot:${path}:${write.order ?? write.localIndex}`,
@@ -317,7 +283,7 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
     }
   }
   appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memory, bounds, options);
-  appendSnapshotValueDifferences(changes, timeline, frames, selectedIndex, memory);
+  appendSnapshotValueDifferences(changes, timeline, frames, selectedIndex);
   // SCXML timestamp originates at the backend; slot timestamps are UI SSE
   // reception times. Cross-stream ordering at equal timestamps is approximate.
   return changes.sort((a, b) => {

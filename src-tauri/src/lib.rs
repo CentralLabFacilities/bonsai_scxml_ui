@@ -17,6 +17,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(core::document::WorkflowDocumentStore::default())
         .manage(workspace::execution::RuntimeWorkflowStaging::default())
+        .manage(commands::memory::MemorySubscription::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
@@ -40,6 +41,10 @@ pub fn run() {
             commands::validation::validate_active_workflow,
             commands::slots::resolve_editor_slot_ancestry,
             commands::slots::resolve_active_editor_slot_ancestry,
+            commands::memory::memory_used_slots,
+            commands::memory::memory_get_slot,
+            commands::memory::memory_subscribe,
+            commands::memory::memory_unsubscribe,
             commands::transitions::analyze_editor_transitions,
             commands::runtime::parse_runtime_log_text,
             commands::runtime::prepare_runtime_replay_cache,

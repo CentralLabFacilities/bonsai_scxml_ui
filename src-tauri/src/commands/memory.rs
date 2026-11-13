@@ -223,6 +223,18 @@ async fn stream_memory(channel: Channel<MemoryMessage>) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
+    fn forwards_resync_required_and_ignores_keepalive_comments() {
+        let mut decoder = SseDecoder::default();
+        let mut events = Vec::new();
+        for byte in b": keepalive\n\nevent: resync_required\ndata: {}\n\n" {
+            if let Some(event) = decoder.push(*byte).unwrap() {
+                events.push(event);
+            }
+        }
+        assert_eq!(events, vec![("resync_required".into(), "{}".into())]);
+    }
+
+    #[test]
     fn handles_named_events_split_at_arbitrary_boundaries() {
         let mut decoder = SseDecoder::default();
         let mut events = Vec::new();

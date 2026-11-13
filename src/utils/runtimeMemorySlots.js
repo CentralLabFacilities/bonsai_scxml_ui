@@ -74,8 +74,8 @@ export function latestSlotObservation(observations, path, beforeMs = Infinity) {
     const at = entry.observedAtPerf ?? entry.observedAtMs;
     if (typeof at !== "number" || at > beforeMs || at < selectedAt) continue;
     // The skill-specific list is deliberately small. The separate cache
-    // contains every path discovered by Memory WebSupport at this point,
-    // without asserting that the skill read or wrote those other paths.
+    // contains only paths actually sampled by earlier HTTP requests,
+    // without asserting that this skill read or wrote those other paths.
     const value = [...(entry.slots || []), ...(entry.cache || [])].find(
       (item) => normalizeMemoryPath(item.path) === normalized && item.status === "available",
     );
@@ -334,6 +334,9 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
   const result = events.map((event, index) => ({
     ...event,
     assignedSequence: assignments[index].exitSequence,
+    // A selectable skill snapshot is keyed by state_entered, not state_exited.
+    // Keep both boundaries so writes can be displayed on their owning skill.
+    assignedEntrySequence: assignments[index].entrySequence,
     sourceState: assignments[index].state,
     observationSource: "inferred-sse-write",
   }));
@@ -355,38 +358,70 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
       receivedAtMs: item.observedAtMs,
       sourceState: item.sourceState,
       assignedSequence: item.assignedSequence,
+      assignedEntrySequence: item.assignedEntrySequence,
     })),
   });
   return result;
 }
 
-/** Skill snapshots display the value at the end of that skill's execution,
- * while transition snapshots display the value at their own event boundary. */
-export function slotFrameBoundarySequence(frame, skillExecutions = []) {
-  if (!frame) return -Infinity;
-  if (frame.type === "state_entered") {
-    const skill = skillExecutions.find(
-      (entry) => entry.entrySequence === frame.sequence && entry.state === frame.state,
-    );
-    return skill?.exitSequence ?? frame.sequence;
-  }
-  return frame.sequence ?? -Infinity;
+/** Skill snapshots summarize an execution beginning at state_entered.
+ * A write is attributed to its writer's entry (not the writer's later exit).
+ * This also makes the value available on following transition snapshots,
+ * without attributing a second write to those transitions. */
+export function slotFrameBoundarySequence(frame) {
+  return frame?.sequence ?? -Infinity;
 }
 
-/** A skill entry represents that execution's post-exit state; the linked
- * capture is frozen synchronously at its exit. Transitions are frozen at their
- * own event boundary. Never backfill a frame using a later HTTP sample. */
+/** Resolve the value at a selectable skill-execution snapshot or transition.
+ * Writes are inferred from SSE notifications and completed skill executions;
+ * the initial HTTP baseline is used only until the first eligible write.
+ * There is no HTTP sampling on a skill boundary. */
 export function historicalSlotValue(observations, frame, path, writes = [], skillExecutions = []) {
   if (!frame) return null;
   if (writes.some((item) => normalizeMemoryPath(item.path) === normalizeMemoryPath(path))) {
     const inferred = inferSlotWriteHistory(writes, skillExecutions, path);
-    const bound = slotFrameBoundarySequence(frame, skillExecutions);
-    // Use write order + inferred skill completion. A later GET must never
-    // override this ledger or turn a future value into an earlier one.
-    const selected = [...inferred].reverse().find((item) => item.assignedSequence <= bound);
-    return selected
-      ? { ...selected, path: normalizeMemoryPath(path), status: "available", captureKind: "slot-write", inferred: true }
+    const bound = slotFrameBoundarySequence(frame);
+    // An entry row describes the WHOLE skill execution. Its own writes must
+    // therefore be visible on that row, even though their exit sequence is
+    // later than its state_entered event. Subsequent transitions inherit the
+    // value without being considered the writer. No cross-stream ordering
+    // exists: this attribution remains explicitly labelled as an inference.
+    const selected = [...inferred].reverse().find((item) =>
+      Number.isFinite(item.assignedEntrySequence)
+        ? item.assignedEntrySequence <= bound
+        : item.assignedSequence <= bound,
+    );
+    const availableWrite = (item) => item
+      ? { ...item, path: normalizeMemoryPath(path), status: "available", captureKind: "slot-write", inferred: true }
       : null;
+    const usePerf = Number.isFinite(frame.receivedAtPerf);
+    const at = (item) => usePerf ? item.observedAtPerf : item.observedAtMs;
+    const frameAt = usePerf ? frame.receivedAtPerf : (frame.receivedAtMs ?? Infinity);
+    const observed = (observations || []).filter((item) =>
+      Number.isFinite(at(item)) && at(item) <= frameAt);
+    const gap = [...observed].reverse().find((item) => item.kind === "stream-gap");
+    if (gap) {
+      // An SSE interruption invalidates values that might have been changed
+      // while disconnected. After reconnect, an HTTP resync becomes the new
+      // reliable baseline (at its actual observation time, never earlier).
+      const resync = [...observed].reverse().find((item) =>
+        item.kind === "resync" && at(item) >= at(gap));
+      const resyncedValue = resync?.cache?.find((item) =>
+        normalizeMemoryPath(item.path) === normalizeMemoryPath(path) && item.status === "available");
+      if (selected && at(selected) >= (resync ? at(resync) : at(gap)))
+        return availableWrite(selected);
+      if (resyncedValue)
+        return { ...resyncedValue, captureKind: "resync", sourceState: "" };
+      return selected && at(selected) >= at(gap) ? availableWrite(selected) : null;
+    }
+    if (selected) return availableWrite(selected);
+    // A future SSE write must not erase the all-slot HTTP baseline for
+    // earlier frames. Until there is an eligible write, show the value read
+    // before Start, never the write received afterward.
+    const initial = observed.find((item) => item.kind === "pre-start");
+    const baseline = initial?.cache?.find((item) =>
+      normalizeMemoryPath(item.path) === normalizeMemoryPath(path) && item.status === "available");
+    return baseline ? { ...baseline, captureKind: "pre-start", sourceState: "" } : null;
   }
   const snapshot = observationForRuntimeFrame(observations, frame);
   const normalized = normalizeMemoryPath(path);
@@ -415,18 +450,18 @@ export function historicalSlotValue(observations, frame, path, writes = [], skil
   return preceding || linkedValue || null;
 }
 
-/** Snapshot linked to the selected skill occurrence or transition. HTTP values
- * were observed after exit/transition, so never label them as instantaneous. */
+/** Snapshot linked to a selected skill entry or transition. Prefer the entry
+ * boundary; preserve the legacy exit linkage for older recorded observations. */
 export function observationForRuntimeFrame(observations, frame) {
   if (!frame) return null;
   const items = observations || [];
   if (frame.type === "state_entered") {
     return (
-      [...items]
-        .reverse()
-        .find(
-          (item) => item.kind === "skill-exit" && item.state === frame.state && item.entrySequence === frame.sequence,
-        ) || null
+      [...items].reverse().find(
+        (item) => item.kind === "skill-entry" && item.state === frame.state && item.sequence === frame.sequence,
+      ) || [...items].reverse().find(
+        (item) => item.kind === "skill-exit" && item.state === frame.state && item.entrySequence === frame.sequence,
+      ) || null
     );
   }
   if (frame.type === "transition") {

@@ -58,6 +58,7 @@ export default function RuntimeCommander({
   onRuntimeSeek,
   onRuntimeLive,
   onRuntimeStarted,
+  onBeforeRuntimeStart,
   behaviorDirectories = [],
 }) {
   const [configuration, setConfiguration] = useState(loadRuntimeConfiguration);
@@ -623,6 +624,10 @@ export default function RuntimeCommander({
           terminalStopRequestedRef.current = false;
           setTerminalStopPending(false);
           onRuntimeReset?.();
+          // Complete the all-slot baseline before the engine can enter its
+          // initial state. Missing Memory WebSupport does not block Start.
+          await onBeforeRuntimeStart?.();
+          if (ownerRef.current !== owner || operation.controller.signal.aborted) return;
         }
         sent = true;
         await requestWebCommander(action, { method: "POST", body, signal: operation.controller.signal });
