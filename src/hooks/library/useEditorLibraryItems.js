@@ -1,4 +1,6 @@
 import { useCallback, useLayoutEffect, useRef } from "react";
+import { useFeedback } from "../../components/ui/index.js";
+import { attachFileProblemsToNodes, notifyFileValidationErrors, validateFileLocalScxml } from "../../utils/fileLocalScxmlValidation.js";
 
 import { reconcileWorkflowInterface } from "../../utils/workflowInterface.js";
 import { getNodeId } from "../../utils/editorGeometry";
@@ -29,6 +31,7 @@ export function useEditorLibraryItems({
   endStateMachineLoad,
   onExternalRevalidate,
 }) {
+  const { notify } = useFeedback();
   const mappingEpoch = useRef(0);
   const mappingKey = JSON.stringify(behaviorDirectories || []);
   useLayoutEffect(() => {
@@ -79,6 +82,10 @@ export function useEditorLibraryItems({
         );
         if (epoch !== mappingEpoch.current) return;
 
+        const fileValidationProblems = attachFileProblemsToNodes(
+          validateFileLocalScxml(loaded.content),
+          parsedNodes,
+        );
         const newTabObj = {
           id: tabId,
           title: behavior.name?.replace(/\.(xml|scxml)$/i, "") || loaded.fileName,
@@ -95,6 +102,7 @@ export function useEditorLibraryItems({
           slotNodes: [],
           slotEdges: [],
           manualSlots: parsed.manualSlots || [],
+          fileValidationProblems,
           parentTabId: null,
           selectedNodeId: null,
           viewport: null,
@@ -102,11 +110,13 @@ export function useEditorLibraryItems({
           globalDataModel: parsed.globalDataModel,
         };
 
-        openTab(newTabObj, {
+        if (openTab(newTabObj, {
           fit: true,
           fitOptions: { duration: 300 },
-        });
-        checkSlotConnection(parsedNodes, parsed.manualSlots || [], parsed.editorSlotNodes || []);
+        })) {
+          checkSlotConnection(parsedNodes, parsed.manualSlots || [], parsed.editorSlotNodes || []);
+          notifyFileValidationErrors(notify, loaded.fileName || behavior.name, fileValidationProblems);
+        }
       } catch (error) {
         console.error("Could not open behavior:", error);
         throw error;
@@ -125,6 +135,7 @@ export function useEditorLibraryItems({
       openTab,
       checkSlotConnection,
       onExternalRevalidate,
+      notify,
     ],
   );
 

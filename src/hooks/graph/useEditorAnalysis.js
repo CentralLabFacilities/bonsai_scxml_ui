@@ -622,9 +622,12 @@ export function useEditorAnalysis({
     : validationResult.query?.validationSource === validationSource
       ? validationResult.problems
       : EMPTY_PROBLEMS;
-  const editorProblems = useDerivedGraphSnapshot([nativeOrBrowserProblems, semanticNodes], () => {
+  const fileProblems = activeWorkflowTab?.isModified ? EMPTY_PROBLEMS : activeWorkflowTab?.fileValidationProblems || EMPTY_PROBLEMS;
+  const editorProblems = useDerivedGraphSnapshot([nativeOrBrowserProblems, semanticNodes, fileProblems], () => {
     const dependencyProblems = collectWorkflowDependencyProblems(semanticNodes);
-    return dependencyProblems.length ? [...nativeOrBrowserProblems, ...dependencyProblems] : nativeOrBrowserProblems;
+    return fileProblems.length || dependencyProblems.length
+      ? [...nativeOrBrowserProblems, ...fileProblems, ...dependencyProblems]
+      : nativeOrBrowserProblems;
   });
   const validationRevisionRef = useRef(0);
   const semanticNodeCount = semanticNodes?.length || 0;

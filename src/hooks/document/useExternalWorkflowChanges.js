@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { revalidateWorkflowSources } from "../../tauri-client.js";
 import { reconcileWorkflowInterface } from "../../utils/workflowInterface.js";
+import { notifyFileValidationErrors } from "../../utils/fileLocalScxmlValidation.js";
 
 const sourceKey = (src, currentFilePath) => JSON.stringify([src, currentFilePath || null]);
 const tabSource = (tab) => tab.diskSource || { src: tab.filePath, currentFilePath: null };
@@ -228,17 +229,26 @@ export function useExternalWorkflowChanges(options) {
             externalFileError: null,
             externalKeptVersion: null,
             inheritedGlobalDataModel: current.inheritedGlobalDataModel,
+            fileValidationProblems: prepared.fileValidationProblems,
             selectedNodeId: null,
             viewport: current.viewport,
             preserveViewport: true,
           });
-          latest.current.notify({
-            id: `workflow-reload-${tab.id}`,
-            tone: "info",
-            title: "Workflow reloaded from disk",
-            message: `${inspection.fileName || tab.fileName} reflects external changes.`,
-            duration: 4000,
-          });
+          if (prepared.fileValidationProblems.length) {
+            notifyFileValidationErrors(
+              latest.current.notify,
+              inspection.fileName || tab.fileName,
+              prepared.fileValidationProblems,
+            );
+          } else {
+            latest.current.notify({
+              id: `workflow-reload-${tab.id}`,
+              tone: "info",
+              title: "Workflow reloaded from disk",
+              message: `${inspection.fileName || tab.fileName} reflects external changes.`,
+              duration: 4000,
+            });
+          }
           return true;
         } catch (error) {
           const current = latest.current.getTabSnapshot(tab.id);

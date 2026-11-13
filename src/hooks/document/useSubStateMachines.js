@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { isTauri, saveFile } from "../../tauri-client.js";
 import { reserveSubmachineStateName } from "../../utils/libraryInitialState.js";
 import { useFeedback } from "../../components/ui/index.js";
+import { attachFileProblemsToNodes, notifyFileValidationErrors, validateFileLocalScxml } from "../../utils/fileLocalScxmlValidation.js";
 import { reconcileWorkflowInterface } from "../../utils/workflowInterface.js";
 import { getNodeId } from "../../utils/editorGeometry";
 import {
@@ -273,6 +274,10 @@ export function useSubStateMachines({
         originTab.title || originTab.fileName || "Parent",
       );
 
+      const fileValidationProblems = attachFileProblemsToNodes(
+        validateFileLocalScxml(inspection.content),
+        parsedNodes,
+      );
       const newTabObj = {
         id: tabId,
         title: label || baseName,
@@ -289,6 +294,7 @@ export function useSubStateMachines({
         slotNodes: [],
         slotEdges: [],
         manualSlots: parsed.manualSlots || [],
+        fileValidationProblems,
         parentTabId: originTab.id,
         selectedNodeId: null,
         viewport: null,
@@ -316,6 +322,7 @@ export function useSubStateMachines({
         return false;
       }
       checkSlotConnection(parsedNodes, parsed.manualSlots || [], parsed.editorSlotNodes || []);
+      notifyFileValidationErrors(notify, fileName, fileValidationProblems);
     } catch (err) {
       console.error("Sub-Machine loading error:", err);
       notify({

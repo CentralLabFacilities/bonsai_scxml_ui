@@ -12,6 +12,7 @@ import { getNodeId } from "../../utils/editorGeometry";
 import { ensureSharedEditorInstanceIds, normalizeSharedScxmlStateIdentity } from "../../utils/editorScxml";
 import { isEditorShortcutBlocked } from "../interaction/useGlobalEditorShortcuts.js";
 import { useFeedback } from "../../components/ui/index.js";
+import { attachFileProblemsToNodes, notifyFileValidationErrors, validateFileLocalScxml } from "../../utils/fileLocalScxmlValidation.js";
 
 const checkpoint = (snapshot) =>
   snapshot
@@ -373,6 +374,10 @@ export function useWorkflowDocument({
           ),
         );
         return {
+          fileValidationProblems: attachFileProblemsToNodes(
+            validateFileLocalScxml(inspection.content),
+            parsedNodes,
+          ),
           document: {
             nodes: parsedNodes,
             edges: parsed.edges,
@@ -446,11 +451,13 @@ export function useWorkflowDocument({
               parentTabId: null,
               selectedNodeId: null,
               viewport: null,
+              fileValidationProblems: imported.fileValidationProblems,
             });
             if (!installed) return null;
             if (getTabSnapshot()?.id === target.id) {
               checkSlotConnection(imported.document.nodes, [], imported.editorSlotNodes);
             }
+            notifyFileValidationErrors(notify, fileName, imported.fileValidationProblems);
             if (imported.parameterErrors.length > 0) {
               const count = imported.parameterErrors.length;
               notify({
