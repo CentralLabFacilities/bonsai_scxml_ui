@@ -2,9 +2,29 @@ import { inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots
 import { isInternalRuntimeName } from "./runtimeEventFrames.js";
 
 const asTime = (value) => {
-  const parsed = Date.parse(value || "");
+  const parsed = typeof value === "number" ? value : Date.parse(value || "");
   return Number.isFinite(parsed) ? parsed : NaN;
 };
+
+/** Sort only the timeline presentation, not the runtime reducer's event stream.
+ * Preserve the reducer index so seeking still selects the original snapshot.
+ * Timestamps come from the SCXML backend; sequence is the deterministic
+ * tie-breaker when multiple events share the same millisecond. */
+export function chronologicalRuntimeFrames(frames = []) {
+  return frames.map((frame, index) => ({ frame, index })).sort((a, b) => {
+    const aTime = asTime(a.frame?.timestamp);
+    const bTime = asTime(b.frame?.timestamp);
+    const aValid = Number.isFinite(aTime);
+    const bValid = Number.isFinite(bTime);
+    if (aValid && bValid && aTime !== bTime) return aTime - bTime;
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    const aSequence = a.frame?.sequence == null ? NaN : Number(a.frame.sequence);
+    const bSequence = b.frame?.sequence == null ? NaN : Number(b.frame.sequence);
+    if (Number.isFinite(aSequence) && Number.isFinite(bSequence) && aSequence !== bSequence)
+      return aSequence - bSequence;
+    return a.index - b.index;
+  });
+}
 
 /** A selectable state row summarizes the complete skill execution, whereas a
  * transition row is instantaneous. Each event belongs to one interval only;
@@ -287,12 +307,20 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   // SCXML timestamp originates at the backend; slot timestamps are UI SSE
   // reception times. Cross-stream ordering at equal timestamps is approximate.
   return changes.sort((a, b) => {
-    const aTime = Number.isFinite(a.timeMs) ? a.timeMs : Infinity;
-    const bTime = Number.isFinite(b.timeMs) ? b.timeMs : Infinity;
-    if (aTime !== bTime) return aTime - bTime;
-    if (a.kind === b.kind)
-      return a.kind === "slot" ? (a.order ?? 0) - (b.order ?? 0) : (a.sequence ?? 0) - (b.sequence ?? 0);
-    return a.kind === "variable" ? -1 : 1;
+    const aTime = Number.isFinite(a.timeMs) ? a.timeMs : asTime(a.timestamp);
+    const bTime = Number.isFinite(b.timeMs) ? b.timeMs : asTime(b.timestamp);
+    const aValid = Number.isFinite(aTime);
+    const bValid = Number.isFinite(bTime);
+    if (aValid && bValid && aTime !== bTime) return aTime - bTime;
+    if (aValid !== bValid) return aValid ? -1 : 1;
+    // SSE and SCXML do not have a shared sequence: equal-time cross-stream
+    // changes require a deterministic tie-break, not a claim of exact order.
+    if (a.kind !== b.kind) return a.kind === "variable" ? -1 : 1;
+    const aOrder = a.kind === "slot" ? a.order : a.sequence;
+    const bOrder = b.kind === "slot" ? b.order : b.sequence;
+    if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder)
+      return aOrder - bOrder;
+    return 0;
   });
 }
 

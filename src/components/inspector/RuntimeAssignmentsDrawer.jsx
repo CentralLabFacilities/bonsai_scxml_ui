@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FiChevronLeft, FiChevronRight, FiActivity } from "react-icons/fi";
 import { inferLiteralValueType } from "../../utils/valueTypes.js";
 import { getRuntimeVariableValues } from "../../utils/runtimeValueDisplay.js";
@@ -11,6 +11,7 @@ import {
 import { traceSlot, summarizeSlot } from "../../utils/slotReplayTrace.js";
 import {
   changesForRuntimeSnapshot,
+  chronologicalRuntimeFrames,
   formatRuntimeChangeValue,
   snapshotVariableValues,
 } from "../../utils/runtimeSnapshotChanges.js";
@@ -244,7 +245,7 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
     <CollapsibleSection title="Changes in this snapshot" count={changes.length} className="runtime-snapshot-changes">
       {changes.length ? (
         <div className="runtime-snapshot-change-list">
-          {changes.map((change) => {
+          {changes.map((change, index) => {
             const local = change.kind === "variable" && change.scope === "local";
             const type = local ? valueType(change.value, change.dataType || declaredTypeByName.get(change.name)) : null;
             return (
@@ -252,7 +253,8 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
                 key={change.id}
                 className={`runtime-snapshot-change-row ${change.kind === "slot" ? "slot" : "variable"}${local ? ` local datamodel-type-accent datamodel-type-accent-${type}` : ""}`}
               >
-                <div className="runtime-snapshot-change-heading">
+                <div className="runtime-snapshot-change-heading" title={change.timestamp || undefined}>
+                  <span className="runtime-snapshot-change-order" aria-label={`Change ${index + 1}`}>{index + 1}.</span>
                   <span className="runtime-snapshot-change-kind">
                     {change.kind === "slot" ? "MemorySlot" : change.scope === "global" ? "Global" : "Local"}
                   </span>
@@ -289,11 +291,9 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
   );
 }
 
-function RuntimeEventHistory({ timeline, onSeek, onLive }) {
-  const frames = timeline?.frames || [];
-  const selected = timeline?.index ?? -1;
-  const start = Math.max(0, Math.min(Math.max(0, frames.length - 100), selected - 55));
-  const shown = frames.slice(start, start + 100);
+function RuntimeEventHistory({ timeline, orderedFrames, selectedOrder, onSeek, onLive, onFocusSnapshot }) {
+  const start = Math.max(0, Math.min(Math.max(0, orderedFrames.length - 100), selectedOrder - 55));
+  const shown = orderedFrames.slice(start, start + 100);
   const eventLabel = (entry) =>
     entry.type === "transition"
       ? `${displayState(entry.transition?.source)} → ${displayState(entry.transition?.target)}`
@@ -301,53 +301,54 @@ function RuntimeEventHistory({ timeline, onSeek, onLive }) {
   return (
     <CollapsibleSection
       title="Skill & transition snapshots"
-      count={frames.length}
+      count={orderedFrames.length}
       className="runtime-drawer-timeline"
       action={
         <button
           className="runtime-drawer-live-button"
           type="button"
           onClick={onLive}
-          disabled={!frames.length}
+          disabled={!orderedFrames.length}
           aria-pressed={Boolean(timeline?.watching)}
         >
           Live
         </button>
       }
     >
-      {!frames.length ? (
+      {!orderedFrames.length ? (
         <p className="runtime-assignments-empty">Waiting for the next matching run.</p>
       ) : (
         <>
           <input
             type="range"
             min="0"
-            max={frames.length - 1}
-            value={Math.max(0, selected)}
-            onChange={(event) => onSeek?.(Number(event.target.value))}
+            max={orderedFrames.length - 1}
+            value={Math.max(0, selectedOrder)}
+            onChange={(event) => onSeek?.(orderedFrames[Number(event.target.value)]?.index)}
             aria-label="Seek execution timeline"
           />
           <div className="runtime-drawer-event-list">
-            {shown.map((entry, relative) => {
-              const index = start + relative;
+            {shown.map(({ frame: entry, index }, relative) => {
+              const order = start + relative;
               return (
                 <button
                   key={entry.id}
                   type="button"
-                  className={`runtime-drawer-event ${index === selected ? "selected" : ""}`}
-                  aria-current={index === selected ? "step" : undefined}
+                  className={`runtime-drawer-event ${order === selectedOrder ? "selected" : ""}`}
+                  aria-current={order === selectedOrder ? "step" : undefined}
                   onClick={() => onSeek?.(index)}
-                  title={entry.timestamp || ""}
+                  onDoubleClick={() => onFocusSnapshot?.(index)}
+                  title={[entry.timestamp, "Double-click to focus this snapshot and enable Follow focus"].filter(Boolean).join(" · ")}
                 >
-                  <span className="runtime-drawer-event-sequence">{index + 1}</span>
+                  <span className="runtime-drawer-event-sequence">{order + 1}.</span>
                   <span className="runtime-drawer-event-label">{eventLabel(entry)}</span>
                 </button>
               );
             })}
           </div>
-          {frames.length > shown.length && (
+          {orderedFrames.length > shown.length && (
             <small className="runtime-assignments-empty">
-              Showing {start + 1}–{start + shown.length} of {frames.length}; use the slider to navigate.
+              Showing {start + 1}–{start + shown.length} of {orderedFrames.length}; use the slider to navigate.
             </small>
           )}
         </>
@@ -370,6 +371,7 @@ export default function RuntimeAssignmentsDrawer({
   open = false,
   onSeek,
   onLive,
+  onFocusSnapshot,
 }) {
   const variables = getRuntimeVariableValues(declaredVariables, snapshotVariableValues(timeline, frame));
   // Bonsai's Global/Local convention is name-based, NOT Java SCXML context:
@@ -382,6 +384,8 @@ export default function RuntimeAssignmentsDrawer({
     .filter(({ name }) => !name.startsWith("_"))
     .sort((a, b) => a.name.localeCompare(b.name));
   const frames = timeline?.frames || [];
+  const orderedFrames = useMemo(() => chronologicalRuntimeFrames(frames), [frames]);
+  const selectedOrder = orderedFrames.findIndex(({ index }) => index === timeline?.index);
   return (
     <aside
       id="runtime-assignments-panel"
@@ -395,7 +399,7 @@ export default function RuntimeAssignmentsDrawer({
           <strong>
             <FiActivity /> Run assignments
           </strong>
-          <small>{frames.length ? `Snapshot ${timeline.index + 1} of ${frames.length}` : "No snapshots yet"}</small>
+          <small>{frames.length ? `Snapshot ${selectedOrder + 1} of ${frames.length}` : "No snapshots yet"}</small>
           {frame && (
             <span title={frame.timestamp}>
               {frame.kind === "state"
@@ -408,7 +412,14 @@ export default function RuntimeAssignmentsDrawer({
           {timeline?.outcome && <small>Run: {timeline.outcome}</small>}
         </header>
         <div className="runtime-assignments-scroll">
-          <RuntimeEventHistory timeline={timeline} onSeek={onSeek} onLive={onLive} />
+          <RuntimeEventHistory
+            timeline={timeline}
+            orderedFrames={orderedFrames}
+            selectedOrder={selectedOrder}
+            onSeek={onSeek}
+            onLive={onLive}
+            onFocusSnapshot={onFocusSnapshot}
+          />
           <SnapshotChanges
             timeline={timeline}
             memory={memory}

@@ -385,20 +385,21 @@ export function useLiveExecution({
     (previous) => projectLive(previous, model, JSON.parse(statesKey), validTabs, activeTabId, visibleNodes, liveActive),
   );
   const runtimeNodes = useMemo(() => {
-    if (!activeTransition?.ids.size) return projection.nodes;
     return projection.nodes.map((node) => {
-      if (!activeTransition.sourceIds.has(node.id) && !activeTransition.targetIds.has(node.id)) return node;
+      const existing = String(node.className || "").split(/\s+/).filter(Boolean);
+      const active = existing.includes("runtime-log-target-node") || existing.includes("runtime-live-context-node");
+      const animate = liveActive && liveExecution?.watching !== false && status === "RUNNING" && active;
+      const transitionSource = activeTransition?.sourceIds.has(node.id);
+      const transitionTarget = activeTransition?.targetIds.has(node.id);
+      if (!animate && !transitionSource && !transitionTarget) return node;
+      if (animate) existing.push("runtime-live-running-node");
       // Transition focus is a second overlay. Never remove the active
       // state highlight while decorating its incoming/outgoing edge.
-      const existing = String(node.className || "")
-        .split(/\s+/)
-        .filter(Boolean);
-      existing.push(
-        activeTransition.sourceIds.has(node.id) ? "runtime-live-transition-source" : "runtime-live-transition-target",
-      );
+      if (transitionSource) existing.push("runtime-live-transition-source");
+      if (transitionTarget) existing.push("runtime-live-transition-target");
       return { ...node, className: existing.join(" ") };
     });
-  }, [projection.nodes, activeTransition]);
+  }, [projection.nodes, activeTransition, liveActive, status, liveExecution?.watching]);
   const wantsCamera = following && Boolean(liveExecution?.followCamera) && status === "RUNNING";
   const action = liveExecution?.action;
   const followRef = useRef({ model: null, statesKey: null, enabled: false, pending: null });
@@ -459,7 +460,7 @@ export function useLiveExecution({
       if (!activeKeys.has(key)) nav.parallelLocks.delete(key);
     }
     if (!activeKeys.size) nav.manualTab = false;
-    if (!following || status !== "RUNNING" || suspendFollow || !rootValid || !model) return;
+    if (!following || !["RUNNING", "PAUSED"].includes(status) || suspendFollow || !rootValid || !model) return;
 
     // When the followed invocation has finished, return to its Parallel.
     // Do NOT jump to a different lane, and do not override manual tabs.
@@ -477,7 +478,8 @@ export function useLiveExecution({
     // Pick the first entered sourced state machine in a Parallel, based on
     // the WebSocket state-entry order. Once selected, other lanes cannot
     // steal navigation even when the first lane finishes earlier.
-    if (wantsCamera && liveExecution?.autoOpenSubMachines && onOpenSubMachine && !nav.manualTab) {
+    // Opening nested documents is a navigation option, not a camera-follow option.
+    if (liveExecution?.autoOpenSubMachines && onOpenSubMachine && !nav.manualTab) {
       const history = liveExecution?.snapshot?.stateEntryHistory || [];
       for (const view of parallelViews) {
         if (nav.parallelLocks.has(view.key) || view.exiting) continue;
@@ -490,13 +492,16 @@ export function useLiveExecution({
         const first = firstActiveSubMachine(model, candidates.length ? candidates : currentStates, view.key);
         if (first) nav.parallelLocks.set(view.key, first.wrapper.suffix);
       }
+      // Allow the same wrapper to auto-open again on a later invocation.
+      const activeWrapperKeys = new Set(model.wrappers.filter((wrapper) =>
+        currentStates.some((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix)),
+      ).map((wrapper) => `${wrapper.context.document.tab.id}:${wrapper.group.id}:${wrapper.suffix}`));
+      for (const key of nav.keys) if (!activeWrapperKeys.has(key)) nav.keys.delete(key);
       const wrappers = model.wrappers.filter(
         (wrapper) =>
           wrapper.context.document.tab.id === activeTabId &&
           contextValid(wrapper.context, validTabs) &&
-          currentStates.some((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix)) &&
-          // Already entered a child invocation? Don't reopen its wrapper.
-          !model.contexts.some((ctx) => ctx.parent === wrapper.context && ctx.wrapper === wrapper.group),
+          currentStates.some((state) => state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix)),
       );
       const eligible = wrappers.filter((wrapper) => {
         const owner = parallelOf(wrapper.context, wrapper.group.id);
@@ -575,16 +580,20 @@ export function useLiveExecution({
 
   useLayoutEffect(() => {
     const follow = followRef.current;
-    const changed =
-      follow.model !== model || follow.statesKey !== statesKey || follow.focusRequest !== liveExecution?.focusRequest;
-    follow.focusRequest = liveExecution?.focusRequest;
-    const explicitlyEnabled =
-      wantsCamera && (!follow.enabled || (action !== follow.action && ["start", "resume"].includes(action)));
+    // Model identity can change when the editor graph moves or a tab updates;
+    // that is not a state transition and must never recenter the viewport.
+    const changed = follow.workflow !== workflow || follow.statesKey !== statesKey;
+    // Explicit historical snapshot focus must also work when the active state
+    // did not change (or when the editor camera was moved manually).
+    const requested = follow.focusRequest !== liveExecution?.focusRequest;
+    // Resume/toggling Run options must not recenter a manually moved viewport.
+    follow.workflow = workflow;
     follow.model = model;
     follow.statesKey = statesKey;
     follow.enabled = wantsCamera;
     follow.action = action;
-    if (changed || explicitlyEnabled) {
+    follow.focusRequest = liveExecution?.focusRequest;
+    if (changed || requested) {
       follow.pending = {
         tabId: activeTabId,
         generation: activeDocumentGeneration,
@@ -663,6 +672,7 @@ export function useLiveExecution({
     statesKey,
     wantsCamera,
     action,
+    liveExecution?.focusRequest,
     liveActive,
     rootValid,
     activeTabId,
@@ -671,7 +681,6 @@ export function useLiveExecution({
     suspendFollow,
     projection,
     activeTransition,
-    liveExecution?.focusRequest,
     fitView,
     switchTab,
     getActiveDocumentIdentity,

@@ -57,6 +57,8 @@ export default function RuntimeCommander({
   selectedRuntimeFrame,
   onRuntimeSeek,
   onRuntimeLive,
+  onRuntimeFocusSnapshot,
+  focusCameraRequest,
   onRuntimeStarted,
   onBeforeRuntimeStart,
   behaviorDirectories = [],
@@ -101,6 +103,12 @@ export default function RuntimeCommander({
   const loadedWorkflowRef = useRef(null);
   const followingRef = useRef(false);
   const followCameraRef = useRef(true);
+  // Double-clicking a snapshot in Run Assignments also activates Follow focus here.
+  useEffect(() => {
+    if (!focusCameraRequest) return;
+    setFollowCamera(true);
+    followCameraRef.current = true;
+  }, [focusCameraRequest]);
   const displayOptionsRef = useRef({
     autoOpenSubMachines: false,
     autoExpandCompounds: false,
@@ -108,12 +116,16 @@ export default function RuntimeCommander({
   });
   const observedRunningRef = useRef(false);
   const terminalStopRequestedRef = useRef(false);
+  // A stopped engine may publish its execution stop before control status is ready.
+  // During this brief interval, poll only /status (never expensive state lists).
+  const stopReadyPendingRef = useRef(false);
   const [terminalStopPending, setTerminalStopPending] = useState(false);
   const acceptedRunRef = useRef(false);
   const eventVersionRef = useRef(0);
   const eventRef = useRef(null);
   const id = useId();
-  const shouldObserve = isOpen || isFollowing;
+  // A hidden Run window must not cancel a pending load/start/stop operation.
+  const shouldObserve = isOpen || isFollowing || Boolean(busyAction);
 
   const updateConfiguration = (path) => {
     setConfiguration(path);
@@ -208,7 +220,9 @@ export default function RuntimeCommander({
     setIsRefreshing(true);
     const startedAtVersion = eventVersionRef.current;
     try {
-      const next = await getWebCommanderSnapshot(request.controller.signal);
+      const next = stopReadyPendingRef.current
+        ? { status: await getWebCommanderStatus(request.controller.signal), currentStates: [], stateIds: [], transitions: [], checkedAt: Date.now() }
+        : await getWebCommanderSnapshot(request.controller.signal);
       if (ownerRef.current !== owner || readRef.current !== request) return;
       setSnapshot((current) => {
         // Preserve newer live-event state, but never retain an obsolete
@@ -219,7 +233,9 @@ export default function RuntimeCommander({
       });
       setStatusError("");
       setHttpConnected(true);
-      setStatusRecoveryPending(shouldRetryControlStatusSnapshot(next));
+      const retryStoppedStatus = stopReadyPendingRef.current && ["RUNNING", "PAUSED", "LOADING"].includes(next.status);
+      stopReadyPendingRef.current = retryStoppedStatus;
+      setStatusRecoveryPending(retryStoppedStatus || shouldRetryControlStatusSnapshot(next));
       if (followingRef.current && ["RUNNING", "PAUSED"].includes(next.status)) observedRunningRef.current = true;
       else if (followingRef.current && observedRunningRef.current) {
         followingRef.current = false;
@@ -462,7 +478,8 @@ export default function RuntimeCommander({
   }, [workflowTab?.id, workflowTab?.parentTabId]);
 
   const close = () => {
-    if (operationRef.current) return;
+    // Hiding the window is never the same as stopping or cancelling the engine.
+    // The command remains in flight, and can be inspected again on reopening.
     if (browseRef.current) browseRef.current.cancelled = true;
     if (panelRef.current?.contains(document.activeElement) && openerRef.current?.isConnected) {
       openerRef.current.focus();
@@ -517,6 +534,7 @@ export default function RuntimeCommander({
       if (action === "load") {
         terminalStopRequestedRef.current = false;
         setTerminalStopPending(false);
+        stopReadyPendingRef.current = false;
         const pathToConfig = configuration.trim();
         if (!pathToConfig) throw new Error("Choose a Bonsai configuration first.");
         const identity = getActiveDocumentIdentity();
@@ -620,6 +638,7 @@ export default function RuntimeCommander({
           action === "fire_event" ? selectedEventName : action === "stop_events" ? JSON.stringify(enabled) : undefined;
         if (action === "fire_event" && !body) throw new Error("Enter a transition event first.");
         if (action === "start") {
+          stopReadyPendingRef.current = false;
           setTimelineExpanded(false);
           terminalStopRequestedRef.current = false;
           setTerminalStopPending(false);
@@ -630,7 +649,11 @@ export default function RuntimeCommander({
           if (ownerRef.current !== owner || operation.controller.signal.aborted) return;
         }
         sent = true;
+        const controlSentAt = performance.now();
         await requestWebCommander(action, { method: "POST", body, signal: operation.controller.signal });
+        if (action === "stop" && performance.now() - controlSentAt > 1500) {
+          console.info(`[Bonsai Runtime] Stop HTTP acknowledgement took ${Math.round(performance.now() - controlSentAt)} ms after the request was sent.`);
+        }
         if (ownerRef.current !== owner) return;
         if (action === "stop_events") setAutomaticEnabled(enabled);
         // The engine may not publish a live status event while paused.
@@ -668,7 +691,23 @@ export default function RuntimeCommander({
           });
         }
       }
-      if (ownerRef.current === owner) await refreshStatus();
+      if (ownerRef.current === owner) {
+        if (action === "stop") {
+          // Stop is already acknowledged. The states/all_states/transitions
+          // requests do not affect readiness, and can be slow after shutdown.
+          const status = await getWebCommanderStatus(operation.controller.signal);
+          if (ownerRef.current === owner) {
+            setSnapshot({ status, currentStates: [], stateIds: [], transitions: [], checkedAt: Date.now(), statusStale: false });
+            setHttpConnected(true);
+            setStatusError("");
+            const retryStoppedStatus = ["RUNNING", "PAUSED", "LOADING"].includes(status);
+            stopReadyPendingRef.current = retryStoppedStatus;
+            setStatusRecoveryPending(retryStoppedStatus);
+          }
+        } else {
+          await refreshStatus();
+        }
+      }
     } catch (reason) {
       if (ownerRef.current === owner) {
         const message = `${String(reason?.message || reason)}${sent ? " A request may have reached the engine. Refresh status before retrying." : ""}`;
@@ -678,7 +717,10 @@ export default function RuntimeCommander({
           setLoadMessages([`Error: ${message}`]);
           setDiagnosticsPopupOpen(true);
         }
-        if (sent) await refreshStatus();
+        if (sent) {
+          if (action === "stop") stopReadyPendingRef.current = true;
+          await refreshStatus();
+        }
       }
     } finally {
       if (operationRef.current === operation) {
@@ -691,8 +733,7 @@ export default function RuntimeCommander({
   if (previouslyOpen !== isOpen) {
     setPreviouslyOpen(isOpen);
     setIsBrowsing(false);
-    if (!isFollowing) {
-      setBusyAction("");
+    if (!isFollowing && !operationRef.current) {
       setIsRefreshing(false);
       setSnapshot(null);
     }
@@ -950,7 +991,6 @@ export default function RuntimeCommander({
               className="runtime-commander-icon-button"
               aria-label="Close run panel"
               title="Close run panel"
-              disabled={busy}
               onClick={close}
             >
               <FiX />
@@ -983,7 +1023,11 @@ export default function RuntimeCommander({
               </button>
               {timelineExpanded && (
                 <div id={`${id}-timeline-content`} className="runtime-event-timeline-content">
-                  <div className="runtime-event-timeline-header">
+                  <div
+                    className="runtime-event-timeline-header"
+                    onDoubleClick={() => onRuntimeFocusSnapshot?.(runtimeTimeline.index)}
+                    title="Double-click to focus this snapshot and enable Follow focus"
+                  >
                     <strong>
                       {selectedRuntimeFrame?.kind === "state"
                         ? String(selectedRuntimeFrame.state || "Skill")
@@ -1008,6 +1052,7 @@ export default function RuntimeCommander({
                     value={Math.max(0, runtimeTimeline.index)}
                     onChange={(event) => onRuntimeSeek?.(Number(event.target.value))}
                     aria-label="Select runtime snapshot"
+                    onDoubleClick={() => onRuntimeFocusSnapshot?.(runtimeTimeline.index)}
                   />
                   <div className="runtime-event-timeline-navigation">
                     <button

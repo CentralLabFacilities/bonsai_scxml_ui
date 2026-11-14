@@ -91,6 +91,8 @@ function AppContent() {
   const [runAssignmentsWidth, setRunAssignmentsWidth] = useState(null);
   const runAssignmentsResizeRef = useRef(null);
   const [runtimeManualSkillSelection, setRuntimeManualSkillSelection] = useState(false);
+  // Explicitly refocus a selected historical snapshot without making ordinary timeline seeking move the camera.
+  const [runtimeFocusRequest, setRuntimeFocusRequest] = useState(0);
   const [liveExecution, setLiveExecution] = useState(null);
   const [runtimeExpandedContainers, setRuntimeExpandedContainers] = useState({});
   // Container resizing updates frame geometry continuously but defers
@@ -112,6 +114,13 @@ function AppContent() {
     seedBaseline: seedRuntimeBaseline,
     confirmResume: confirmRuntimeResume,
   } = useRuntimeEventTimeline();
+  const focusRuntimeSnapshot = useCallback((index) => {
+    setRuntimeManualSkillSelection(false);
+    seekRuntimeEvent(index);
+    // The Run window owns its Follow focus control; keep the shared option in sync.
+    liveOptionsRef.current = { ...liveOptionsRef.current, followCamera: true };
+    setRuntimeFocusRequest((request) => request + 1);
+  }, [seekRuntimeEvent]);
   // Fast automatic transitions may enter the next state before React paints.
   // Keep the transition's canvas highlight briefly without delaying events.
   const runtimeMemory = useRuntimeMemorySlots();
@@ -1312,7 +1321,8 @@ function AppContent() {
         stateIds: [],
       },
       action: "event_snapshot",
-      focusRequest: selectedRuntimeFrame.id,
+      focusRequest: runtimeFocusRequest,
+      watching: runtimeEventTimeline.watching,
     });
   }, [
     selectedRuntimeFrame,
@@ -1320,6 +1330,7 @@ function AppContent() {
     runtimeEventTimeline.watching,
     runtimeEventTimeline.status,
     recentRuntimeTransition,
+    runtimeFocusRequest,
   ]);
 
   const { handleNodesChange, handleVisibleEdgesChange } = useEditorFlowChanges({
@@ -2155,6 +2166,7 @@ function AppContent() {
               setRuntimeManualSkillSelection(false);
               seekRuntimeEvent(index);
             }}
+            onFocusSnapshot={focusRuntimeSnapshot}
             onLive={goLiveRuntimeEvent}
             open={runtimeAssignmentsOpen}
           />
@@ -2198,6 +2210,8 @@ function AppContent() {
             seekRuntimeEvent(index);
           },
           onRuntimeLive: goLiveRuntimeEvent,
+          onRuntimeFocusSnapshot: focusRuntimeSnapshot,
+          focusCameraRequest: runtimeFocusRequest,
           unresolvedStates,
           runtimeParallelViews,
           runtimeActiveSubMachines,

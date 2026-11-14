@@ -11969,7 +11969,8 @@ dialog.skill-paste-choice-overlay {
   overscroll-behavior: contain;
 }
 .runtime-drawer-event-sequence {
-  flex-basis: 24px;
+  flex-basis: 30px;
+  font-size: 10px;
 }
 
 /* Run Assignments is resizable independently of the Inspector (down to 190px). */
@@ -12034,6 +12035,12 @@ dialog.skill-paste-choice-overlay {
   gap: 3px 7px;
   align-items: center;
   margin-bottom: 4px;
+}
+.runtime-snapshot-change-order {
+  margin-right: auto;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-text-secondary, #94a3b8);
 }
 .runtime-snapshot-change-kind {
   font-size: 10px;
@@ -12257,4 +12264,52 @@ dialog.skill-paste-choice-overlay {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* A moving ring is the ONLY yellow active-state indicator while running.
+   Preserve editor selection and problem/error rings independently. Paused
+   snapshots retain their existing static marker when the animation stops. */
+@property --bonsai-runtime-ring-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes bonsai-runtime-ring-orbit {
+  to { --bonsai-runtime-ring-angle: 360deg; }
+}
+/* Running nodes use the orbiting marker, not the full yellow outline. */
+.react-flow__node.runtime-live-running-node {
+  outline: none;
+}
+.react-flow__node.runtime-live-running-node:not(.editor-node-problem) {
+  box-shadow: none;
+}
+.react-flow__node.runtime-live-running-node.selected:not(.editor-node-problem) {
+  box-shadow: var(--ui-state-selected-ring);
+}
+.react-flow__node.runtime-live-running-node::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 10px;
+  padding: 3px;
+  pointer-events: none;
+  z-index: 5;
+  background: conic-gradient(
+    from var(--bonsai-runtime-ring-angle),
+    transparent 0deg, transparent 245deg,
+    rgba(250, 204, 21, 0.30) 256deg,
+    #facc15 308deg, #fde68a 336deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: bonsai-runtime-ring-orbit 2.3s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__node.runtime-live-running-node::after {
+    animation: none;
+  }
 }
