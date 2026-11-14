@@ -7,6 +7,32 @@ export const normalizeMemoryPath = (value) => {
   return path ? `/${path.replace(/^\/+/, "")}` : "";
 };
 
+/** Preserve the Java write-time timestamp (Unix milliseconds). Older Memory
+ * WebSupport versions have no timestamp, so their arrival time is the only
+ * available fallback. Do not confuse that fallback with actual write time. */
+export function memoryWriteTiming(timestamp, receivedAtMs) {
+  const fromBackend = typeof timestamp === "number" && Number.isSafeInteger(timestamp) && timestamp >= 0;
+  const observedAtMs = fromBackend ? timestamp : receivedAtMs;
+  return {
+    observedAtMs,
+    observedAt: new Date(observedAtMs).toISOString(),
+    timestampSource: fromBackend ? "backend" : "arrival",
+  };
+}
+
+/** Order memory writes by when Java captured them, not when SSE delivered
+ * them. At millisecond ties, retain the stream's original arrival order. */
+export function chronologicalMemoryWrites(writes = []) {
+  const time = (item) => Number.isFinite(item.observedAtMs)
+    ? item.observedAtMs : Date.parse(item.observedAt || "");
+  return writes.slice().sort((a, b) => {
+    const aTime = time(a);
+    const bTime = time(b);
+    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) return aTime - bTime;
+    return (a.order ?? a.localIndex ?? 0) - (b.order ?? b.localIndex ?? 0);
+  });
+}
+
 /** The mappings belong to the editor's semantic skill node, never to a slot
  * globally discovered via Memory WebSupport. inheritSlot's xpath wins. */
 export function configuredSkillSlots(node) {
@@ -207,12 +233,9 @@ export function freezeSlotEventBoundary(mappedSlots, liveValues, metadata) {
 const writeInferenceCache = new WeakMap();
 
 /** Associate Memory SSE writes with the most plausible completed skill,
- * using wall-clock proximity AND declared writable slots. SSE and SCXML do
- * not share a sequence, so this is an inference, not exact causal ordering.
- *
- * The matching is monotonic: when two slot writes are received together, the
- * first cannot be assigned to a *later* skill than the second. This is useful
- * when WebKit/Tauri delivers two already-completed SSE writes in one burst.
+ * using their backend write times AND declared writable slots. SSE and SCXML
+ * do not share a sequence, so this remains an inference, not exact causality.
+ * Matching is monotonic in write-time order; event-arrival order breaks ties.
  * The values themselves remain immutable, unlike delayed GET observations. */
 export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
   const normalized = normalizeMemoryPath(path);
@@ -229,8 +252,8 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
   if (byPath.has(normalized)) return byPath.get(normalized);
   const events = writes
     .filter((write) => normalizeMemoryPath(write.path) === normalized)
-    .map((write, index) => ({ ...write, localIndex: index }))
-    .sort((a, b) => (a.order ?? a.localIndex) - (b.order ?? b.localIndex));
+    .map((write, index) => ({ ...write, localIndex: index }));
+  const chronologicalEvents = chronologicalMemoryWrites(events);
   const allCandidates = skillExecutions
     .filter(
       (skill) =>
@@ -238,7 +261,7 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
     )
     .slice()
     .sort((a, b) => a.exitSequence - b.exitSequence);
-  if (!events.length || !allCandidates.length) return [];
+  if (!chronologicalEvents.length || !allCandidates.length) return [];
 
   // Give known writers priority over arbitrary neighbouring skill exits.
   // Memory SSE can deliver two writes within one millisecond, while the SCXML
@@ -281,22 +304,22 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
     const unbound = output.some((slot) => !normalizeMemoryPath(slot.path));
     const family = runtimeSkillStateKey(skill.state).replace(/#.*$/, "");
     const hintPenalty = exact ? 0 : unbound ? 0.7 : declaredWriters.has(family) ? 1.5 : output.length ? 30 : 6;
-    // The SSE timestamp is reception time; an SCXML event's timestamp is
-    // generated in the same local JVM/host but may arrive by another route.
-    // Keep a soft time score so declarations and write order can correct
-    // short batches delivered together.
+    // The write timestamp is captured by Java on the writing thread, while
+    // the SCXML exit timestamp originates from the runtime. Older SSE events
+    // without a timestamp fall back to reception time. Keep a soft time score
+    // because no shared sequence establishes exact cross-stream ordering.
     const delta = Math.abs(
       (event.observedAtMs ?? Date.parse(event.observedAt)) - (skill.endedAtMs ?? skill.receivedAtMs),
     );
     return hintPenalty + (Number.isFinite(delta) ? Math.min(delta / 125, 80) : 15);
   };
   const assignments = [];
-  if (events.length <= candidates.length && events.length <= 200 && candidates.length <= 2000) {
+  if (chronologicalEvents.length <= candidates.length && chronologicalEvents.length <= 200 && candidates.length <= 2000) {
     // Minimum-cost ordered matching, with distinct writer executions.
     const back = [];
-    let previous = candidates.map((skill) => cost(events[0], skill));
+    let previous = candidates.map((skill) => cost(chronologicalEvents[0], skill));
     back.push(candidates.map(() => -1));
-    for (let i = 1; i < events.length; i += 1) {
+    for (let i = 1; i < chronologicalEvents.length; i += 1) {
       const next = Array(candidates.length).fill(Infinity);
       const links = Array(candidates.length).fill(-1);
       let best = Infinity;
@@ -307,7 +330,7 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
           bestIndex = j - 1;
         }
         if (bestIndex >= 0) {
-          next[j] = best + cost(events[i], candidates[j]);
+          next[j] = best + cost(chronologicalEvents[i], candidates[j]);
           links[j] = bestIndex;
         }
       }
@@ -315,14 +338,14 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
       back.push(links);
     }
     let last = previous.indexOf(Math.min(...previous));
-    for (let i = events.length - 1; i >= 0; i -= 1) {
+    for (let i = chronologicalEvents.length - 1; i >= 0; i -= 1) {
       assignments[i] = candidates[last];
       last = back[i][last];
     }
   } else {
     // For unusually long runs, bounded-memory monotonic greedy matching.
     let position = 0;
-    for (const event of events) {
+    for (const event of chronologicalEvents) {
       let best = position;
       for (let j = position; j < candidates.length; j += 1) {
         if (cost(event, candidates[j]) < cost(event, candidates[best])) best = j;
@@ -331,7 +354,7 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
       position = best;
     }
   }
-  const result = events.map((event, index) => ({
+  const result = chronologicalEvents.map((event, index) => ({
     ...event,
     assignedSequence: assignments[index].exitSequence,
     // A selectable skill snapshot is keyed by state_entered, not state_exited.
@@ -355,7 +378,8 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
     assignments: result.map((item) => ({
       value: item.value,
       order: item.order,
-      receivedAtMs: item.observedAtMs,
+      writeAtMs: item.observedAtMs,
+      timestampSource: item.timestampSource,
       sourceState: item.sourceState,
       assignedSequence: item.assignedSequence,
       assignedEntrySequence: item.assignedEntrySequence,

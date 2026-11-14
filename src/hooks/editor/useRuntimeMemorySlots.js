@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { normalizeMemoryPath, freezeSlotEventBoundary } from "../../utils/runtimeMemorySlots.js";
+import { normalizeMemoryPath, freezeSlotEventBoundary, memoryWriteTiming } from "../../utils/runtimeMemorySlots.js";
 import { traceSlot, summarizeSlot } from "../../utils/slotReplayTrace.js";
 
 const BASE = "http://127.0.0.1:8081";
@@ -293,12 +293,15 @@ export function useRuntimeMemorySlots() {
       const path = normalizeMemoryPath(parsed?.path);
       if (!path) return;
       writeVersionRef.current[path] = (writeVersionRef.current[path] || 0) + 1;
-      const observedAtMs = Date.now();
-      const observedAtPerf = performance.now();
-      const observedAt = new Date(observedAtMs).toISOString();
+      const receivedAtMs = Date.now();
+      const receivedAtPerf = performance.now();
+      // Java captures timestamp on the MemorySlot writing thread. The SSE
+      // delivery time is kept separately for diagnostics and compatibility.
+      const { observedAtMs, observedAt, timestampSource } = memoryWriteTiming(parsed.timestamp, receivedAtMs);
       const value = name === "slot_cleared" ? "null" : String(parsed.value ?? "null");
       const order = ++writeOrderRef.current;
-      traceSlot("sse.slot", { name, path, order, value: value.slice(0, 200) });
+      traceSlot("sse.slot", { name, path, order, observedAtMs, receivedAtMs,
+        timestampSource, value: value.slice(0, 200) });
       // Updates before the initial snapshot finishes belong to the baseline,
       // not to any subsequently entered skill.
       const duringRun = recordingRef.current;
@@ -306,12 +309,14 @@ export function useRuntimeMemorySlots() {
         ...previous,
         writes: duringRun
           ? [...previous.writes, { path, value, name, status: "available", order,
-              observedAtMs, observedAtPerf, observedAt }].slice(-5000)
+              observedAtMs, receivedAtMs, receivedAtPerf, observedAtPerf: receivedAtPerf,
+              observedAt, timestampSource }].slice(-5000)
           : previous.writes,
         live: {
           ...previous.live,
           [path]: { path, value, type: previous.used[path] || previous.live[path]?.type || "",
-            status: "available", stale: false, observedAt, observationSource: "sse-write" },
+            status: "available", stale: false, observedAt, observedAtMs,
+            timestampSource, observationSource: "sse-write" },
         },
       }));
     };

@@ -1,4 +1,4 @@
-import { inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots.js";
+import { chronologicalMemoryWrites, inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots.js";
 import { isInternalRuntimeName } from "./runtimeEventFrames.js";
 
 const asTime = (value) => {
@@ -178,8 +178,8 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
   // write. Likewise, a skill without a declared writable mapping must not
   // claim an unrelated SSE write merely because it arrived during the run.
   if (frame.type !== "state_entered") return;
-  // SSE reception times use wall time; the entry timestamp originates from
-  // the same host's SCXML backend. Never pull an older write into the active
+  // Java write timestamps and SCXML timestamps are both Unix wall time.
+  // Never pull an older write into the active
   // row, and never use a later HTTP GET as a historical write.
   const enteredAt = asTime(frame.timestamp);
   const since = Number.isFinite(enteredAt) ? enteredAt : frame.receivedAtMs;
@@ -191,7 +191,7 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
       .filter((entry) => entry.status === "available")
       .map((entry) => [normalizeMemoryPath(entry.path), entry]),
   );
-  const receivedWrites = (memory?.writes || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const receivedWrites = chronologicalMemoryWrites(memory?.writes || []);
   for (let i = 0; i < receivedWrites.length; i += 1) {
     const write = receivedWrites[i];
     const path = normalizeMemoryPath(write.path);
@@ -304,8 +304,8 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   }
   appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memory, bounds, options);
   appendSnapshotValueDifferences(changes, timeline, frames, selectedIndex);
-  // SCXML timestamp originates at the backend; slot timestamps are UI SSE
-  // reception times. Cross-stream ordering at equal timestamps is approximate.
+  // Both timestamps originate in Java (older SSE backends fall back to
+  // arrival time). Equal-time cross-stream ordering is still approximate.
   return changes.sort((a, b) => {
     const aTime = Number.isFinite(a.timeMs) ? a.timeMs : asTime(a.timestamp);
     const bTime = Number.isFinite(b.timeMs) ? b.timeMs : asTime(b.timestamp);
