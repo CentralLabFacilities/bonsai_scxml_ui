@@ -1,4 +1,4 @@
-import { chronologicalMemoryWrites, inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots.js";
+import { inferSlotWriteHistory, normalizeMemoryPath } from "./runtimeMemorySlots.js";
 import { isInternalRuntimeName } from "./runtimeEventFrames.js";
 
 const asTime = (value) => {
@@ -61,6 +61,37 @@ function frameIndexForSequence(bounds, sequence) {
   return low < bounds.length ? low : -1;
 }
 
+/** A state's onentry/onexit assignments belong to its execution even if
+ * the engine publishes state_entered immediately after the onentry action or
+ * state_exited immediately before the onexit action. Use the exact runtime
+ * sourceState when it names a selectable skill; never match by the short skill
+ * label (parent and child may both contain Wait). Other assignments retain the
+ * original sequence-interval attribution. */
+function frameIndexForAssignment(frames, bounds, assignment) {
+  const sequence = Number(assignment.sequence);
+  if (!Number.isFinite(sequence)) return -1;
+  const source = String(assignment.source || "");
+  if (source) {
+    let best = -1;
+    let bestDistance = Infinity;
+    for (let index = 0; index < frames.length; index += 1) {
+      const frame = frames[index];
+      if (frame.type !== "state_entered" || frame.state !== source) continue;
+      const entry = Number(frame.sequence);
+      if (!Number.isFinite(entry)) continue;
+      const exit = Number(frame.exitSequence);
+      const end = Number.isFinite(exit) && frame.exitSequence != null ? exit : entry;
+      const distance = sequence < entry ? entry - sequence : sequence > end ? sequence - end : 0;
+      if (distance < bestDistance || (distance === bestDistance && entry <= sequence)) {
+        best = index;
+        bestDistance = distance;
+      }
+    }
+    if (best >= 0) return best;
+  }
+  return frameIndexForSequence(bounds, sequence);
+}
+
 /** Normalize the reducer's scope-qualified IDs to the display names used by
  * Global/Local Variables. SCXML uses nested scopes; the UI groups by the name
  * prefix rather than the runtime scope name. */
@@ -120,6 +151,8 @@ function appendSnapshotValueDifferences(changes, timeline, frames, index) {
       kind: "variable",
       name,
       scope: name.startsWith("_") ? "global" : "local",
+      owner: value.scope,
+      source: value.source,
       dataType: value.dataType || prior?.dataType || "",
       previous: prior?.value,
       previousKnown: Boolean(prior),
@@ -162,6 +195,8 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
       kind: "variable",
       name: assignment.key,
       scope: String(assignment.key || "").startsWith("_") ? "global" : "local",
+      owner: assignment.scope,
+      source: assignment.source,
       dataType: assignment.dataType || "",
       previous: assignment.previous,
       previousKnown: assignment.oldValueKnown,
@@ -178,8 +213,8 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
   // write. Likewise, a skill without a declared writable mapping must not
   // claim an unrelated SSE write merely because it arrived during the run.
   if (frame.type !== "state_entered") return;
-  // Java write timestamps and SCXML timestamps are both Unix wall time.
-  // Never pull an older write into the active
+  // SSE reception times use wall time; the entry timestamp originates from
+  // the same host's SCXML backend. Never pull an older write into the active
   // row, and never use a later HTTP GET as a historical write.
   const enteredAt = asTime(frame.timestamp);
   const since = Number.isFinite(enteredAt) ? enteredAt : frame.receivedAtMs;
@@ -191,7 +226,7 @@ function appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memo
       .filter((entry) => entry.status === "available")
       .map((entry) => [normalizeMemoryPath(entry.path), entry]),
   );
-  const receivedWrites = chronologicalMemoryWrites(memory?.writes || []);
+  const receivedWrites = (memory?.writes || []).slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   for (let i = 0; i < receivedWrites.length; i += 1) {
     const write = receivedWrites[i];
     const path = normalizeMemoryPath(write.path);
@@ -249,13 +284,15 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   );
   for (const assignment of timeline?.assignmentHistory || []) {
     const sequence = Number(assignment.sequence);
-    if (assignment.sequence == null || frameIndexForSequence(bounds, sequence) !== selectedIndex) continue;
+    if (assignment.sequence == null || frameIndexForAssignment(frames, bounds, assignment) !== selectedIndex) continue;
     const scope = String(assignment.key || "").startsWith("_") ? "global" : "local";
     changes.push({
       id: `variable:${sequence}:${assignment.scope}:${assignment.key}`,
       kind: "variable",
       name: assignment.key,
       scope,
+      owner: assignment.scope,
+      source: assignment.source,
       dataType: assignment.dataType || "",
       previous: assignment.previous,
       previousKnown: assignment.oldValueKnown,
@@ -304,8 +341,8 @@ export function changesForRuntimeSnapshot(timeline, frame, memory, options = {})
   }
   appendPendingLiveChanges(changes, timeline, frames, selectedIndex, memory, bounds, options);
   appendSnapshotValueDifferences(changes, timeline, frames, selectedIndex);
-  // Both timestamps originate in Java (older SSE backends fall back to
-  // arrival time). Equal-time cross-stream ordering is still approximate.
+  // SCXML timestamp originates at the backend; slot timestamps are UI SSE
+  // reception times. Cross-stream ordering at equal timestamps is approximate.
   return changes.sort((a, b) => {
     const aTime = Number.isFinite(a.timeMs) ? a.timeMs : asTime(a.timestamp);
     const bTime = Number.isFinite(b.timeMs) ? b.timeMs : asTime(b.timestamp);

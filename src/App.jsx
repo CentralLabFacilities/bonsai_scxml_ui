@@ -54,7 +54,7 @@ import {
   observationForRuntimeFrame,
 } from "./utils/runtimeMemorySlots.js";
 import { traceSlot, summarizeSlot } from "./utils/slotReplayTrace.js";
-import { useLiveExecution, resolveRuntimeSkill } from "./hooks/editor/useLiveExecution.js";
+import { useLiveExecution, resolveRuntimeSkill, resolveRuntimeSnapshotLocation } from "./hooks/editor/useLiveExecution.js";
 import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
 import RuntimeAssignmentsDrawer, { RuntimeAssignmentsLedge } from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
 import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
@@ -93,6 +93,8 @@ function AppContent() {
   const [runtimeManualSkillSelection, setRuntimeManualSkillSelection] = useState(false);
   // Explicitly refocus a selected historical snapshot without making ordinary timeline seeking move the camera.
   const [runtimeFocusRequest, setRuntimeFocusRequest] = useState(0);
+  const [snapshotNavigation, setSnapshotNavigation] = useState(null);
+  const snapshotOpenAttemptRef = useRef(null);
   const [liveExecution, setLiveExecution] = useState(null);
   const [runtimeExpandedContainers, setRuntimeExpandedContainers] = useState({});
   // Container resizing updates frame geometry continuously but defers
@@ -101,7 +103,6 @@ function AppContent() {
   const onContainerResizeStart = useCallback((id) => setResizingContainerId(id), []);
 
   const liveRunRef = useRef(null);
-  const openRootRef = useRef(null);
   const liveOptionsRef = useRef({ followCamera: true });
   const {
     timeline: runtimeEventTimeline,
@@ -114,13 +115,6 @@ function AppContent() {
     seedBaseline: seedRuntimeBaseline,
     confirmResume: confirmRuntimeResume,
   } = useRuntimeEventTimeline();
-  const focusRuntimeSnapshot = useCallback((index) => {
-    setRuntimeManualSkillSelection(false);
-    seekRuntimeEvent(index);
-    // The Run window owns its Follow focus control; keep the shared option in sync.
-    liveOptionsRef.current = { ...liveOptionsRef.current, followCamera: true };
-    setRuntimeFocusRequest((request) => request + 1);
-  }, [seekRuntimeEvent]);
   // Fast automatic transitions may enter the next state before React paints.
   // Keep the transition's canvas highlight briefly without delaying events.
   const runtimeMemory = useRuntimeMemorySlots();
@@ -1256,6 +1250,8 @@ function AppContent() {
     markRuntimeGap();
   }, [markRuntimeGap]);
   const handleRuntimeReset = useCallback(() => {
+    setSnapshotNavigation(null);
+    snapshotOpenAttemptRef.current = null;
     resetRuntimeEvents();
     runtimeMemoryRef.current.reset();
     runtimeSkillEntriesRef.current.clear();
@@ -1263,26 +1259,10 @@ function AppContent() {
     setRecentRuntimeTransition(null);
   }, [resetRuntimeEvents]);
 
-  // Only changing top-level documents resets runtime data. Switching into a
-  // sub-SM tab leaves its parent execution and historical inspection intact.
-  const openRoot = (() => {
-    const byId = new Map((tabs || []).map((tab) => [tab.id, tab]));
-    let current = byId.get(activeTabId);
-    const visited = new Set();
-    while (current?.parentTabId && byId.has(current.parentTabId) && !visited.has(current.id)) {
-      visited.add(current.id);
-      current = byId.get(current.parentTabId);
-    }
-    return current?.id || null;
-  })();
-  useEffect(() => {
-    if (!openRoot) return;
-    if (openRootRef.current !== null && openRootRef.current !== openRoot) {
-      handleRuntimeReset();
-      liveRunRef.current = null;
-    }
-    openRootRef.current = openRoot;
-  }, [openRoot, handleRuntimeReset]);
+  // Runtime history belongs to the engine execution, not the selected tab.
+  // Opening a sub-SM, switching tabs, or completing the run while a child is
+  // being hydrated must never erase it. An explicit Load or Start resets the
+  // history via RuntimeCommander instead.
 
   useEffect(() => {
     const loaded = liveRunRef.current;
@@ -1488,6 +1468,9 @@ function AppContent() {
     unresolvedStates,
     runtimeParallelViews,
     runtimeActiveSubMachines,
+    snapshotInvocationSuffixes,
+    runtimeTabContexts,
+    runtimeParameterNodeIds,
   } = useLiveExecution({
     liveExecution: runtimeLog ? null : liveExecution,
     onOpenSubMachine: handleOpenSubMachine,
@@ -1518,6 +1501,74 @@ function AppContent() {
         contextMenu,
       ),
   });
+
+  // Select the historical event immediately, then navigate only after its
+  // owning document is ready. Child tabs may still be opening asynchronously;
+  // never resolve a parent Wait by matching the child's short `Wait` label.
+  const focusRuntimeSnapshot = useCallback((index) => {
+    const frame = runtimeEventTimeline.frames[index];
+    if (!frame) return;
+    setRuntimeManualSkillSelection(false);
+    setLiveExecution((current) => (current ? { ...current, watching: false } : current));
+    seekRuntimeEvent(index);
+    liveOptionsRef.current = { ...liveOptionsRef.current, followCamera: true };
+    snapshotOpenAttemptRef.current = null;
+    setSnapshotNavigation((previous) => ({
+      index,
+      frameId: frame.id,
+      token: (previous?.token || 0) + 1,
+    }));
+  }, [runtimeEventTimeline.frames, seekRuntimeEvent]);
+
+  useEffect(() => {
+    if (!snapshotNavigation) return;
+    const frame = runtimeEventTimeline.frames[snapshotNavigation.index];
+    if (!frame || frame.id !== snapshotNavigation.frameId || !liveRunRef.current?.workflow) {
+      setSnapshotNavigation(null);
+      return;
+    }
+    const run = liveRunRef.current;
+    const available = [
+      ...new Map([...(run.tabsSnapshot || []), ...tabs].map((tab) => [tab.id, tab])).values(),
+    ];
+    const owner = resolveRuntimeSnapshotLocation(run.workflow, available, frame);
+    if (owner?.openWrapper) {
+      const wrapper = owner.openWrapper;
+      if (activeTabId !== wrapper.parentTabId) {
+        switchTab(wrapper.parentTabId);
+        return;
+      }
+      if (stateMachineLoading) return;
+      const attempt = `${snapshotNavigation.token}:${wrapper.parentTabId}:${wrapper.suffix}`;
+      if (snapshotOpenAttemptRef.current === attempt) return;
+      snapshotOpenAttemptRef.current = attempt;
+      void handleOpenSubMachine(wrapper.src, wrapper.identity, { runtimeNavigation: true });
+      return;
+    }
+    if (owner?.tabId && activeTabId !== owner.tabId) {
+      switchTab(owner.tabId);
+      return;
+    }
+    // A newly opened child must finish hydration and have a measured canvas
+    // before the requested camera move. Otherwise a tab switch can consume the
+    // one-shot focus request while React Flow still renders the previous tab.
+    if (stateMachineLoading) return;
+    if (isCanvasPlacementReady && !isCanvasPlacementReady(getActiveDocumentIdentity?.())) return;
+    setSnapshotNavigation(null);
+    snapshotOpenAttemptRef.current = null;
+    setRuntimeFocusRequest((request) => request + 1);
+  }, [
+    snapshotNavigation,
+    runtimeEventTimeline.frames,
+    tabs,
+    activeTabId,
+    switchTab,
+    handleOpenSubMachine,
+    stateMachineLoading,
+    canvasReadyIdentity,
+    getActiveDocumentIdentity,
+    isCanvasPlacementReady,
+  ]);
 
   const {
     handleLibraryDragOver,
@@ -1706,26 +1757,50 @@ function AppContent() {
     return match ? { ...match, state } : null;
   }, [selectedRuntimeFrame?.id, activeTabId, tabs]);
 
+  // The Run Assignments slot inspector is scoped to the OPEN editor tab,
+  // not every document in the run. A child MemorySlot is addressed by its
+  // runtime invocation suffix, but displayed using its original XPath.
   const runtimeConfiguredSlots = useMemo(() => {
-    const all = [...nodes, ...tabs.flatMap((tab) => tab.nodes || [])];
+    const contexts = runtimeTabContexts.filter((context) => context.tabId === activeTabId);
+    const frameStates = [
+      selectedRuntimeFrame?.transition?.source,
+      selectedRuntimeFrame?.state,
+      selectedRuntimeFrame?.transition?.target,
+      ...(selectedRuntimeFrame?.activeStates || []),
+    ].filter(Boolean);
+    const matched = contexts.filter(({ suffix }) =>
+      suffix && frameStates.some((state) => String(state).endsWith(suffix))
+    ).sort((a, b) => b.suffix.length - a.suffix.length);
+    const context = matched[0] || (contexts.length === 1 ? contexts[0] : null);
+    // When a child cannot be matched to a verified runtime invocation,
+    // showing the unsuffixed root value would be worse than no value.
+    if (!context && (contexts.length > 1 || activeWorkflowTab?.parentTabId)) return [];
+    const suffix = context?.suffix || "";
     const seen = new Map();
-    for (const node of all) {
-      for (const slot of configuredSkillSlots(node)) {
-        if (slot.path && !seen.has(slot.path)) seen.set(slot.path, slot);
-      }
-    }
-    for (const slot of slotNodes || []) {
+    const add = (slot) => {
+      const displayPath = normalizeMemoryPath(slot.path);
+      if (!displayPath) return;
+      const path = suffix && !displayPath.endsWith(suffix) ? `${displayPath}${suffix}` : displayPath;
+      if (!seen.has(path)) seen.set(path, { ...slot, path, displayPath });
+    };
+    // Only declarations and skills of this file are part of this inspector.
+    // A submachine wrapper's inherited child requirements are NOT additional
+    // slots declared in the parent state machine.
+    nodes.filter((node) => node.type === "custom").forEach((node) => configuredSkillSlots(node).forEach(add));
+    manualSlots.forEach((slot) => add({
+      path: slot.inherited?.xpath || slot.path || slot.xpath,
+      key: slot.key || "",
+      type: slot.type || "",
+      access: "read/write",
+    }));
+    const declared = new Set([...seen.values()].map((slot) => slot.displayPath));
+    slotNodes.forEach((slot) => {
       const path = normalizeMemoryPath(slot.data?.path || slot.data?.label);
-      if (path && !seen.has(path))
-        seen.set(path, {
-          path,
-          key: slot.data?.label || path,
-          access: "read/write",
-          type: "",
-        });
-    }
+      if (path && declared.has(path))
+        add({ path, key: slot.data?.label || path, access: "read/write", type: "" });
+    });
     return [...seen.values()];
-  }, [nodes, tabs, slotNodes]);
+  }, [nodes, manualSlots, slotNodes, activeTabId, activeWorkflowTab?.parentTabId, runtimeTabContexts, selectedRuntimeFrame]);
 
   const canvasRuntimeNodes = useMemo(() => {
     if (runtimeLog || !selectedRuntimeFrame) return liveVisibleNodes;
@@ -1751,7 +1826,7 @@ function AppContent() {
           stale: Boolean(item.stale),
         };
     }
-    return decorateLiveRuntimeNodes(liveVisibleNodes, { ...selectedRuntimeFrame, slots });
+    return decorateLiveRuntimeNodes(liveVisibleNodes, { ...selectedRuntimeFrame, slots }, runtimeParameterNodeIds);
   }, [
     runtimeLog,
     liveActive,
@@ -1762,6 +1837,7 @@ function AppContent() {
     runtimeMemory.observations,
     runtimeMemory.writes,
     runtimeMemory.skillExecutions,
+    runtimeParameterNodeIds,
   ]);
 
   // Diagnostic only: prove whether replay resolved the value and whether the
@@ -2161,13 +2237,25 @@ function AppContent() {
             configuredSlots={runtimeConfiguredSlots}
             selectedSkill={runtimeManualSkillSelection ? selectedNode : runtimeTimelineSkill?.node || selectedNode}
             selectedSkillState={runtimeManualSkillSelection ? null : runtimeTimelineSkill?.state}
-            declaredVariables={[...(inheritedGlobalDataModel || []), ...(globalDataModel || [])]}
+            declaredVariables={[
+              ...(liveRunRef.current?.workflow?.inheritedGlobalDataModel || inheritedGlobalDataModel || []),
+              ...(liveRunRef.current?.workflow?.globalDataModel || globalDataModel || []),
+            ]}
             onSeek={(index) => {
+              // Single-click inspects history without continuing an earlier
+              // double-click navigation into a different document.
+              setSnapshotNavigation(null);
+              snapshotOpenAttemptRef.current = null;
               setRuntimeManualSkillSelection(false);
               seekRuntimeEvent(index);
             }}
             onFocusSnapshot={focusRuntimeSnapshot}
-            onLive={goLiveRuntimeEvent}
+            invocationSuffixes={snapshotInvocationSuffixes}
+            onLive={() => {
+              setSnapshotNavigation(null);
+              snapshotOpenAttemptRef.current = null;
+              goLiveRuntimeEvent();
+            }}
             open={runtimeAssignmentsOpen}
           />
         )}
@@ -2201,7 +2289,6 @@ function AppContent() {
           onRuntimeReset: handleRuntimeReset,
           onLogLoadRequested: handleRunLogLoad,
           onRuntimeGap: handleRuntimeGap,
-          onRuntimeBackendRestart: handleRuntimeReset,
           onRuntimeBaseline: seedRuntimeBaseline,
           runtimeTimeline: runtimeEventTimeline,
           selectedRuntimeFrame,

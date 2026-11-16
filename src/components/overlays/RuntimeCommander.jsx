@@ -52,7 +52,6 @@ export default function RuntimeCommander({
   onRuntimeReset,
   onLogLoadRequested,
   onRuntimeGap,
-  onRuntimeBackendRestart,
   runtimeTimeline,
   selectedRuntimeFrame,
   onRuntimeSeek,
@@ -328,25 +327,25 @@ export default function RuntimeCommander({
     onEvent: (message) => {
       const payload = runtimePayload(message);
       eventVersionRef.current += 1;
-      if (message.type === "status" && payload.value === "LOADING") {
-        setRuntimeNotice("");
-        acceptedRunRef.current = false;
-        followingRef.current = false;
-        setIsFollowing(false);
-        loadedWorkflowRef.current = null;
-        setLoadedWorkflow(null);
-        onRuntimeReset?.();
-      }
+      // Status notifications are not a user-requested Load. A nested SCXML
+      // may initialize while its parent remains active, and even an unexpected
+      // LOADING notification must not erase recorded snapshots. Explicit Load
+      // and Start perform their own reset in runAction below.
+      if (message.type === "status" && payload.value === "LOADING" && acceptedRunRef.current) return;
       if (message.type === "started") {
+        // An already accepted run owns the stream. Another `started` can be
+        // emitted for a nested SCXML: never treat it as a new top-level run,
+        // even when its initial state happens to have the same name.
+        if (acceptedRunRef.current) return;
         const currentWorkflow = loadedWorkflowRef.current || getTabSnapshot?.() || workflowTab;
         if (!matchesLoadedInitial(currentWorkflow, payload.initial)) {
+          // A non-matching, unsolicited run must not erase historical data.
           const expected = initialWorkflowStateIds(currentWorkflow);
           setRuntimeNotice(`Ignored run: backend started at ${String(payload.initial || "(missing)")}.
                         Loaded workflow initial: ${expected.join(" / ") || "not available"}.`);
           acceptedRunRef.current = false;
           followingRef.current = false;
           setIsFollowing(false);
-          onRuntimeReset?.();
           setSnapshot((current) => ({ ...current, status: "RUNNING", currentStates: [], checkedAt: Date.now() }));
           return;
         }
@@ -432,18 +431,16 @@ export default function RuntimeCommander({
       }
     },
     onRestart: () => {
+      // A sequence regression may indicate a backend restart, but the event
+      // stream has no replay API. Keep the existing snapshots for inspection
+      // and mark the gap instead of silently erasing the whole history.
+      onRuntimeGap?.();
       acceptedRunRef.current = false;
       followingRef.current = false;
       setIsFollowing(false);
-      loadedWorkflowRef.current = null;
-      setLoadedWorkflow(null);
-      setSnapshot(null);
-      setHttpConnected(null);
-      setLoadSucceeded(null);
-      setLoadMessages([]);
+      setSnapshot((current) => current ? { ...current, statusStale: true } : current);
       setStatusRecoveryPending(true);
-      setRuntimeNotice("Backend restarted; waiting for the next matching run.");
-      onRuntimeBackendRestart?.();
+      setRuntimeNotice("SCXML event sequence restarted; previous snapshots are retained, but the history may be incomplete.");
     },
     onConnectionIssue: (reason) => setStatusError(reason),
   });
@@ -465,17 +462,9 @@ export default function RuntimeCommander({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eventConnection, shouldObserve]);
 
-  // Loading a different top-level workflow in the editor invalidates the
-  // previously loaded runtime graph; visiting a nested tab does not.
-  useEffect(() => {
-    if (!workflowTab || workflowTab.parentTabId) return;
-    if (!loadedWorkflowRef.current || loadedWorkflowRef.current.id === workflowTab.id) return;
-    loadedWorkflowRef.current = null;
-    acceptedRunRef.current = false;
-    followingRef.current = false;
-    setLoadedWorkflow(null);
-    setIsFollowing(false);
-  }, [workflowTab?.id, workflowTab?.parentTabId]);
+  // The loaded workflow is the engine's run identity, not the currently
+  // selected editor tab. Opening a sub-SM (or another editor document) while
+  // running must not detach the WebSocket listener from that run.
 
   const close = () => {
     // Hiding the window is never the same as stopping or cancelling the engine.

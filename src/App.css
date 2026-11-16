@@ -11915,6 +11915,47 @@ dialog.skill-paste-choice-overlay {
   min-width: 0;
 }
 
+/* The runtime ID retains its full invocation suffix internally. Only the
+   presentation replaces the known sub-SM suffix with a compact context badge. */
+.runtime-drawer-event-label,
+.runtime-snapshot-heading-label {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+/* Use the exact runtime identifier for lookups, but keep only its local
+   name visible and show the owning sub-state-machine as a small badge. */
+.runtime-contextual-identifier {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 4px;
+  row-gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.runtime-change-identifier {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+.runtime-snapshot-submachine-badge {
+  display: inline-block;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--ui-border, #64748b66);
+  border-radius: 5px;
+  color: var(--ui-text-secondary, #94a3b8);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+
 /* Collapsible runtime sections; summary remains compact and keyboard-accessible. */
 .runtime-collapsible {
   min-width: 0;

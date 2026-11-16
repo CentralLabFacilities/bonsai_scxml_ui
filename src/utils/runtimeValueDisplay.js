@@ -1,4 +1,5 @@
 import { isInternalRuntimeName } from "./runtimeEventFrames.js";
+import { isChildInvocationVariable } from "./runtimeReplayContexts.js";
 
 /** Read-only runtime values. Populate declared variables before applying observed writes.
  * The engine does not publish the initial value for every variable: in that case
@@ -106,4 +107,28 @@ export function getRuntimeBaselineValues(snapshot) {
     for (const key of keys) collect(snapshot[key] ?? datamodel[key], scope);
   }
   return result;
+}
+
+/** The run drawer shows the loaded ROOT workflow's declared variables only.
+ * Do not flatten every child's datamodel scope into the root display: names
+ * can collide, and the selected editor tab is not the variable's owner. */
+export function getRootRuntimeVariableValues(declarations = [], timeline, frame, invocationSuffixes = []) {
+  const names = new Set((declarations || []).map((item) => String(item?.id || "")).filter(Boolean));
+  const latest = timeline?.frames?.at(-1)?.id === frame?.id;
+  const scopes = (latest && timeline?.watching ? timeline?.scopes : null) ||
+    frame?.finalScopes || frame?.scopes || {};
+  const observations = {};
+  for (const [owner, values] of Object.entries(scopes)) {
+    if (isChildInvocationVariable("", owner, "", invocationSuffixes)) continue;
+    for (const [name, value] of Object.entries(values || {})) {
+      if (!names.has(name) || isChildInvocationVariable(name, owner, value?.source, invocationSuffixes)) continue;
+      const previous = observations[name];
+      if (!previous || (Number(value?.sequence) || 0) >= (Number(previous?.sequence) || 0))
+        observations[name] = value;
+    }
+  }
+  return getRuntimeVariableValues(declarations, observations).filter((entry) =>
+    names.has(entry.name) &&
+    !isChildInvocationVariable(entry.name, entry.owner || entry.scope, entry.source, invocationSuffixes)
+  );
 }

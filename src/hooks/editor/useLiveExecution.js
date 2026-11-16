@@ -102,8 +102,12 @@ function compileContexts(workflow, tabsSnapshot) {
   const duplicates = new Set();
   (tabsSnapshot || EMPTY).forEach((tab) => {
     if (!tab?.id || tab.id === workflow.id) return;
-    // Only the root is staged; unsaved child tabs do not describe the files the engine loads.
-    if (tab.isModified || tab.fingerprint !== tab.savedFingerprint) return;
+    // Only source-verified, semantically compatible child documents may join the
+    // staged root. Geometry-only movement must not invalidate an invocation.
+    // Newly opened sub-SM tabs are checkpointed with savedFingerprint but do
+    // not necessarily carry a separate fingerprint field until their first
+    // edit. Missing current fingerprint is not a modified document.
+    if (!sameRuntimeDocumentIgnoringPositions(tab.savedFingerprint, tab.fingerprint ?? tab.savedFingerprint)) return;
     if (documents.has(tab.id)) duplicates.add(tab.id);
     else documents.set(tab.id, compileDocument(tab));
   });
@@ -151,6 +155,74 @@ function compileContexts(workflow, tabsSnapshot) {
   return { workflow, contexts, states, containerStates, wrappers };
 }
 
+/** Find the document that owns a selectable runtime snapshot. Runtime suffixes
+ * are invocation identities, not display labels: `Wait` and `Wait#child`
+ * must never be resolved against each other's tabs. If a child has not been
+ * opened, return its verified wrapper so navigation can load it first. */
+export function resolveRuntimeSnapshotLocation(workflow, tabsSnapshot, frame) {
+  const model = compileContexts(workflow, tabsSnapshot || []);
+  if (!model || !frame) return null;
+  const candidates = [
+    frame.transition?.source,
+    frame.state,
+    frame.transition?.target,
+  ].map(runnerId).filter(Boolean);
+  const unique = [...new Set(candidates)];
+  const contexts = model.wrappers || EMPTY;
+  const depth = (id) => Math.max(0, ...contexts.flatMap((wrapper) => {
+    if (id.length > wrapper.suffix.length && id.endsWith(wrapper.suffix)) return [wrapper.suffix.length + 1];
+    // A wrapper target is the entry into a child document, not an ordinary
+    // root skill. Prefer it over an unrelated parent transition endpoint.
+    if (runnerId(wrapper.group.identity + wrapper.context.suffix) === id)
+      return [wrapper.context.suffix.length + 1];
+    return [];
+  }));
+  // A transition crossing a document boundary belongs to its deeper endpoint;
+  // for transitions at the same depth, retain the source-first behavior.
+  unique.sort((a, b) => depth(b) - depth(a));
+  for (const id of unique) {
+    const matches = model.states.get(id) || model.containerStates.get(id) || EMPTY;
+    if (matches.length === 1) {
+      const entry = matches[0];
+      return { tabId: entry.context.document.tab.id, nodeId: entry.group.id, state: id };
+    }
+    const nested = contexts
+      .filter((wrapper) => id.length > wrapper.suffix.length && id.endsWith(wrapper.suffix))
+      .sort((a, b) => b.suffix.length - a.suffix.length);
+    if (nested.length) {
+      const wrapper = nested[0];
+      const child = model.contexts.find((context) => context.parent === wrapper.context && context.wrapper === wrapper.group);
+      if (child) return { tabId: child.document.tab.id, nodeId: null, state: id };
+      return {
+        state: id,
+        openWrapper: {
+          parentTabId: wrapper.context.document.tab.id,
+          identity: wrapper.group.identity,
+          src: wrapper.group.src,
+          suffix: wrapper.suffix,
+        },
+      };
+    }
+    const matchingWrappers = contexts.filter((wrapper) => runnerId(wrapper.group.identity + wrapper.context.suffix) === id);
+    if (matchingWrappers.length === 1) {
+      const wrapper = matchingWrappers[0];
+      // A snapshot for the wrapper itself navigates to its child document.
+      const child = model.contexts.find((context) => context.parent === wrapper.context && context.wrapper === wrapper.group);
+      if (child) return { tabId: child.document.tab.id, nodeId: null, state: id };
+      return {
+        state: id,
+        openWrapper: {
+          parentTabId: wrapper.context.document.tab.id,
+          identity: wrapper.group.identity,
+          src: wrapper.group.src,
+          suffix: wrapper.suffix,
+        },
+      };
+    }
+  }
+  return null;
+}
+
 /** Resolve a runtime skill ID against the same proven invocation contexts
  * used by active-state highlighting. A child state can have an instance suffix. */
 export function resolveRuntimeSkill(workflow, tabsSnapshot, stateId) {
@@ -190,7 +262,11 @@ function projectLive(previous, model, stateIds, validTabs, activeTabId, visibleN
   const entries = [];
   stateIds.forEach((id) => {
     const matches = model?.states.get(id) || model?.containerStates.get(id) || EMPTY;
+    const wrapperEntries = (model?.wrappers || EMPTY).filter(
+      (wrapper) => runnerId(wrapper.group.identity + wrapper.context.suffix) === id,
+    );
     if (matches.length === 1) entries.push(matches[0]);
+    else if (wrapperEntries.length === 1) entries.push(wrapperEntries[0]);
     else {
       unresolvedStates.push(id);
       const candidates = (model?.wrappers || EMPTY).filter(
@@ -279,13 +355,31 @@ export function useLiveExecution({
     const atLoad = new Set((tabsSnapshot || EMPTY).map((tab) => tab.id));
     const available = [
       ...(tabsSnapshot || EMPTY),
-      ...tabs.filter((tab) => !atLoad.has(tab.id) && !tab.isModified && tab.fingerprint === tab.savedFingerprint),
+      ...tabs.filter((tab) => !atLoad.has(tab.id)).map((tab) => ({
+        ...tab,
+        // `checkpointTab()` sets savedFingerprint but not fingerprint.
+        // For the active document use the live semantic fingerprint, not an
+        // optional/stale tab field. Position-only edits are compatible with
+        // the running state machine; actual semantic edits are not.
+        fingerprint: tab.id === activeTabId
+          ? activeFingerprint
+          : tab.fingerprint ?? tab.savedFingerprint,
+      })),
     ];
     return compileContexts(workflow, available);
-  }, [workflow, tabsSnapshot, tabs]);
+  }, [workflow, tabsSnapshot, tabs, activeTabId, activeFingerprint]);
   // Preserve WebSocket entry order for deterministic first-lane following.
   const orderedStates = [...new Set((liveExecution?.snapshot?.currentStates || EMPTY).map(runnerId).filter(Boolean))];
-  const statesKey = JSON.stringify(orderedStates);
+  // Snapshot ownership must remain visible when an entering/exiting child has
+  // no active leaf left (e.g. the transition just exited its last skill).
+  // This also paints the enclosing sub-SM node when viewing its parent tab.
+  const snapshot = liveExecution?.snapshot;
+  const contextualState = snapshot?.transition?.source ||
+    (liveExecution?.watching === false || snapshot?.enteredStates?.length ? snapshot?.state : null);
+  const highlightedStates = contextualState
+    ? [...new Set([...orderedStates, runnerId(contextualState)].filter(Boolean))]
+    : orderedStates;
+  const statesKey = JSON.stringify(highlightedStates);
   const validTabs = useMemo(() => {
     const result = new Set();
     const currentTabs = new Map(tabs.map((tab) => [tab.id, tab]));
@@ -315,7 +409,8 @@ export function useLiveExecution({
       model?.contexts.some((context) => context.document.tab.id === activeTabId && contextValid(context, validTabs)),
     ) &&
     following &&
-    ["RUNNING", "PAUSED"].includes(status);
+    (["RUNNING", "PAUSED"].includes(status) ||
+      (liveExecution?.watching === false && Boolean(liveExecution?.snapshot)));
   const transition = liveExecution?.snapshot?.transition;
   const transitions = liveExecution?.snapshot?.transitions?.length
     ? liveExecution.snapshot.transitions
@@ -358,14 +453,20 @@ export function useLiveExecution({
     for (const item of transitions) {
       const source = find(item.source);
       const target = find(item.target);
-      if (!source || !target || source.context.document.tab.id !== activeTabId) continue;
+      if (!source || source.context.document.tab.id !== activeTabId) continue;
       const from = new Set(source.group.visualIds);
+      // The transition may lead to a final state or a different invocation
+      // context. In that case the source is still a valid focus target in
+      // the currently opened child, but no cross-document edge can be drawn.
+      from.forEach((id) => sourceIds.add(id));
+      if (!target || target.context.document.tab.id !== activeTabId) continue;
       const to = new Set(target.group.visualIds);
       findRuntimeTransitionEdgeIds(visibleEdges, from, to, item).forEach((id) => ids.add(id));
-      from.forEach((id) => sourceIds.add(id));
       to.forEach((id) => targetIds.add(id));
     }
-    return { ids, cameraIds: [...new Set([...sourceIds, ...targetIds])], sourceIds, targetIds };
+    return sourceIds.size
+      ? { ids, cameraIds: [...new Set([...sourceIds, ...targetIds])], sourceIds, targetIds }
+      : null;
   }, [transitions, model, liveActive, activeTabId, visibleEdges]);
   const runtimeEdges = useMemo(() => {
     if (!activeTransition?.ids.size) return visibleEdges;
@@ -411,6 +512,41 @@ export function useLiveExecution({
     lastTab: null,
     expectedTab: null,
   });
+  // Invocation suffixes are the authoritative context identifiers used by
+  // Bonsai runtime IDs. Keep them available to the timeline even after a
+  // child execution finishes, so only the sub-SM part becomes a display badge.
+  const runtimeTabContexts = useMemo(
+    () => (model?.contexts || []).filter((context) => contextValid(context, validTabs)).map((context) => ({
+      tabId: context.document.tab.id,
+      suffix: context.suffix,
+    })),
+    [model, validTabs],
+  );
+  // Runtime state IDs include the invoking sub-SM context. Map each unique
+  // qualified state to a node in THIS tab; a parent `Wait` must not decorate
+  // a child `Wait` merely because their visible names match.
+  const runtimeParameterNodeIds = useMemo(() => {
+    const owned = new Map();
+    for (const [runtimeState, matches] of model?.states || EMPTY) {
+      if (matches.length !== 1) continue;
+      const { context, group } = matches[0];
+      if (context.document.tab.id !== activeTabId || !contextValid(context, validTabs)) continue;
+      owned.set(runtimeState, group.id);
+    }
+    return owned;
+  }, [model, validTabs, activeTabId]);
+  const snapshotInvocationSuffixes = useMemo(
+    () => (model?.wrappers || []).map((wrapper) => {
+      const names = [wrapper.group.identity];
+      for (let context = wrapper.context; context?.wrapper; context = context.parent)
+        names.push(context.wrapper.identity);
+      return {
+        suffix: wrapper.suffix,
+        names: names.reverse().map((name) => runnerId(name)),
+      };
+    }),
+    [model],
+  );
   const activeSubMachines = useMemo(
     () =>
       model?.wrappers
@@ -461,11 +597,14 @@ export function useLiveExecution({
     }
     if (!activeKeys.size) nav.manualTab = false;
     if (!following || !["RUNNING", "PAUSED"].includes(status) || suspendFollow || !rootValid || !model) return;
+    // Historical snapshot navigation is explicit. Never re-open a child or
+    // return to a Parallel lane while the user is inspecting an older frame.
+    const automaticNavigation = liveExecution?.watching !== false;
 
     // When the followed invocation has finished, return to its Parallel.
     // Do NOT jump to a different lane, and do not override manual tabs.
     for (const [key, suffix] of nav.parallelLocks) {
-      if (nav.manualTab || currentStates.some((state) => state.length > suffix.length && state.endsWith(suffix)))
+      if (!automaticNavigation || nav.manualTab || currentStates.some((state) => state.length > suffix.length && state.endsWith(suffix)))
         continue;
       const owner = parallelViews.find((view) => view.key === key);
       if (owner && !owner.exiting && activeTabId !== owner.context.document.tab.id && switchTab) {
@@ -479,7 +618,7 @@ export function useLiveExecution({
     // the WebSocket state-entry order. Once selected, other lanes cannot
     // steal navigation even when the first lane finishes earlier.
     // Opening nested documents is a navigation option, not a camera-follow option.
-    if (liveExecution?.autoOpenSubMachines && onOpenSubMachine && !nav.manualTab) {
+    if (automaticNavigation && liveExecution?.autoOpenSubMachines && onOpenSubMachine && !nav.manualTab) {
       const history = liveExecution?.snapshot?.stateEntryHistory || [];
       for (const view of parallelViews) {
         if (nav.parallelLocks.has(view.key) || view.exiting) continue;
@@ -568,6 +707,7 @@ export function useLiveExecution({
     statesKey,
     wantsCamera,
     liveExecution?.autoOpenSubMachines,
+    liveExecution?.watching,
     liveExecution?.autoExpandCompounds,
     liveExecution?.autoExpandParallels,
     activeTabId,
@@ -641,7 +781,12 @@ export function useLiveExecution({
       });
       frames.add(frame);
     };
-    if (!parallelViews.length && projection.targetTabId && projection.targetTabId !== activeTabId && switchTab) {
+    // A transition can occur after the source skill exited, with no active
+    // states remaining in the child. In that case projectLive() falls back
+    // to the root, but the transition still belongs to the open sub-SM.
+    // Focus its resolved source/target here instead of switching tabs.
+    if (!parallelViews.length && !activeTransition?.cameraIds.length &&
+        projection.targetTabId && projection.targetTabId !== activeTabId && switchTab) {
       schedule(() => {
         request.expectedTabId = projection.targetTabId;
         switchTab(projection.targetTabId);
@@ -697,5 +842,8 @@ export function useLiveExecution({
     unresolvedStates: projection.unresolvedStates,
     runtimeParallelViews: parallelViews,
     runtimeActiveSubMachines: activeSubMachines,
+    snapshotInvocationSuffixes,
+    runtimeTabContexts,
+    runtimeParameterNodeIds,
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FiChevronLeft, FiChevronRight, FiActivity } from "react-icons/fi";
 import { inferLiteralValueType } from "../../utils/valueTypes.js";
-import { getRuntimeVariableValues } from "../../utils/runtimeValueDisplay.js";
+import { getRootRuntimeVariableValues } from "../../utils/runtimeValueDisplay.js";
 import {
   latestSlotObservation,
   historicalSlotValue,
@@ -10,10 +10,14 @@ import {
 } from "../../utils/runtimeMemorySlots.js";
 import { traceSlot, summarizeSlot } from "../../utils/slotReplayTrace.js";
 import {
+  runtimeSnapshotStateLabel,
+  runtimeVariableContextLabel,
+  assignmentBelongsToRuntimeSnapshot,
+} from "../../utils/runtimeReplayContexts.js";
+import {
   changesForRuntimeSnapshot,
   chronologicalRuntimeFrames,
   formatRuntimeChangeValue,
-  snapshotVariableValues,
 } from "../../utils/runtimeSnapshotChanges.js";
 
 const valueType = (value, declaredType = "") => {
@@ -60,13 +64,16 @@ function CollapsibleSection({ title, count, children, className = "", defaultOpe
   );
 }
 
-function CurrentValues({ title, values, emptyText }) {
+function CurrentValues({ title, values, emptyText, invocationSuffixes = [], showContextBadges = true }) {
   return (
     <CollapsibleSection title={title} count={values.length} className="datamodel-parameter-section">
       {values.length ? (
         <div className="datamodel-compact-list">
           {values.map((entry) => {
             const type = valueType(entry.value, entry.dataType);
+            const label = showContextBadges
+              ? runtimeVariableContextLabel(entry.name, invocationSuffixes)
+              : { name: entry.name, subMachines: [] };
             return (
               <div
                 key={`${entry.owner || entry.scope}:${entry.name}`}
@@ -74,7 +81,7 @@ function CurrentValues({ title, values, emptyText }) {
               >
                 <div className="datamodel-compact-id-cell">
                   <div className="datamodel-compact-id" title={`${entry.owner || entry.scope}: ${entry.name}`}>
-                    {entry.name}
+                    <RuntimeContextLabel label={label} />
                     {entry.owner && entry.owner !== "global" ? <small> · {entry.owner}</small> : null}
                   </div>
                   <span className={`datamodel-value-type-badge datamodel-value-type-${type}`}>{type}</span>
@@ -184,6 +191,7 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
         <div className="datamodel-compact-list">
           {values.map((entry) => {
             const type = valueType(entry.value, entry.type || entry.observed?.type);
+            const label = { name: entry.displayPath || entry.path, subMachines: [] };
             const inferred = replay && entry.observed?.inferred;
             const tooltip = [
               entry.path,
@@ -199,7 +207,7 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
               >
                 <div className="datamodel-compact-id-cell">
                   <div className="datamodel-compact-id" title={entry.path}>
-                    {entry.path}
+                    <RuntimeContextLabel label={label} />
                   </div>
                   <span className={`datamodel-value-type-badge datamodel-value-type-${type}`}>{type}</span>
                 </div>
@@ -225,16 +233,19 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
   );
 }
 
-function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, declaredVariables = [] }) {
+function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, configuredSlots = [], declaredVariables = [], invocationSuffixes = [] }) {
   const frame = timeline?.frames?.[timeline?.index ?? -1];
-  const writerPaths =
-    frame?.type === "state_entered" && selectedSkillState === frame.state
-      ? configuredSkillSlots(selectedSkill)
-          .filter((slot) => slot.access?.includes("write"))
-          .map((slot) => slot.path)
-          .filter(Boolean)
-      : [];
-  const changes = changesForRuntimeSnapshot(timeline, frame, memory, { writerPaths });
+  const allowedSlots = new Map(configuredSlots.map((slot) => [slot.path, slot.displayPath || slot.path]));
+  const writable = new Set(configuredSkillSlots(selectedSkill)
+    .filter((slot) => slot.access?.includes("write"))
+    .map((slot) => slot.path));
+  const writerPaths = frame?.type === "state_entered" && selectedSkillState === frame.state
+    ? configuredSlots.filter((slot) => writable.has(slot.displayPath || slot.path)).map((slot) => slot.path)
+    : [];
+  const changes = changesForRuntimeSnapshot(timeline, frame, memory, { writerPaths })
+    .filter((change) => change.kind === "slot"
+      ? allowedSlots.has(change.path)
+      : assignmentBelongsToRuntimeSnapshot(change, frame, invocationSuffixes));
   // Some runtime assignments have no declared type in their event payload.
   // Prefer the local variable's SCXML declaration before inferring a type
   // from its current value (for example, a String currently holding "null").
@@ -248,6 +259,20 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
           {changes.map((change, index) => {
             const local = change.kind === "variable" && change.scope === "local";
             const type = local ? valueType(change.value, change.dataType || declaredTypeByName.get(change.name)) : null;
+            const variableLabel = runtimeVariableContextLabel(change.name, invocationSuffixes);
+            const snapshotContext = runtimeSnapshotStateLabel(
+              frame?.type === "transition" ? frame?.transition?.source || frame?.state : frame?.state,
+              invocationSuffixes,
+            ).subMachines;
+            const sameChildContext = snapshotContext.length > 0 &&
+              snapshotContext.length === variableLabel.subMachines.length &&
+              snapshotContext.every((name, position) => name === variableLabel.subMachines[position]);
+            const label = {
+              name: change.kind === "slot"
+                ? allowedSlots.get(change.path)
+                : sameChildContext ? variableLabel.name : change.name,
+              subMachines: [],
+            };
             return (
               <div
                 key={change.id}
@@ -271,7 +296,7 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
                           : `${change.scope}: ${change.name}`
                   }
                 >
-                  <strong>{change.name}:</strong>
+                  <strong className="runtime-change-identifier"><RuntimeContextLabel label={label} />:</strong>
                   <code className="runtime-change-previous">
                     {formatRuntimeChangeValue(change.previous, change.dataType, change.previousKnown)}
                   </code>
@@ -291,13 +316,60 @@ function SnapshotChanges({ timeline, memory, selectedSkill, selectedSkillState, 
   );
 }
 
-function RuntimeEventHistory({ timeline, orderedFrames, selectedOrder, onSeek, onLive, onFocusSnapshot }) {
+function SnapshotSubMachineBadges({ names = [] }) {
+  return names.map((name, index) => (
+    <span
+      key={`${index}:${name}`}
+      className="runtime-snapshot-submachine-badge"
+      title={`Sub-state machine: ${name}`}
+    >
+      {name}
+    </span>
+  ));
+}
+
+function RuntimeContextLabel({ label }) {
+  return (
+    <span className="runtime-contextual-identifier">
+      <span>{label.name}</span>
+      <SnapshotSubMachineBadges names={label.subMachines} />
+    </span>
+  );
+}
+
+function RuntimeSnapshotLabel({ entry, invocationSuffixes = [] }) {
+  const transition = entry?.transition;
+  if (!transition) {
+    const state = runtimeSnapshotStateLabel(entry?.state, invocationSuffixes);
+    return (
+      <>
+        <span>{state.name}</span>
+        <SnapshotSubMachineBadges names={state.subMachines} />
+      </>
+    );
+  }
+  const source = runtimeSnapshotStateLabel(transition.source, invocationSuffixes);
+  const target = runtimeSnapshotStateLabel(transition.target, invocationSuffixes);
+  const sharedContext = source.subMachines.length === target.subMachines.length &&
+    source.subMachines.every((name, index) => name === target.subMachines[index]);
+  return sharedContext ? (
+    <>
+      <span>{source.name} → {target.name}</span>
+      <SnapshotSubMachineBadges names={source.subMachines} />
+    </>
+  ) : (
+    <>
+      <span>{source.name}</span>
+      <SnapshotSubMachineBadges names={source.subMachines} />
+      <span>→ {target.name}</span>
+      <SnapshotSubMachineBadges names={target.subMachines} />
+    </>
+  );
+}
+
+function RuntimeEventHistory({ timeline, orderedFrames, selectedOrder, onSeek, onLive, onFocusSnapshot, invocationSuffixes }) {
   const start = Math.max(0, Math.min(Math.max(0, orderedFrames.length - 100), selectedOrder - 55));
   const shown = orderedFrames.slice(start, start + 100);
-  const eventLabel = (entry) =>
-    entry.type === "transition"
-      ? `${displayState(entry.transition?.source)} → ${displayState(entry.transition?.target)}`
-      : displayState(entry.state);
   return (
     <CollapsibleSection
       title="Skill & transition snapshots"
@@ -341,7 +413,7 @@ function RuntimeEventHistory({ timeline, orderedFrames, selectedOrder, onSeek, o
                   title={[entry.timestamp, "Double-click to focus this snapshot and enable Follow focus"].filter(Boolean).join(" · ")}
                 >
                   <span className="runtime-drawer-event-sequence">{order + 1}.</span>
-                  <span className="runtime-drawer-event-label">{eventLabel(entry)}</span>
+                  <span className="runtime-drawer-event-label"><RuntimeSnapshotLabel entry={entry} invocationSuffixes={invocationSuffixes} /></span>
                 </button>
               );
             })}
@@ -372,8 +444,9 @@ export default function RuntimeAssignmentsDrawer({
   onSeek,
   onLive,
   onFocusSnapshot,
+  invocationSuffixes = [],
 }) {
-  const variables = getRuntimeVariableValues(declaredVariables, snapshotVariableValues(timeline, frame));
+  const variables = getRootRuntimeVariableValues(declaredVariables, timeline, frame, invocationSuffixes);
   // Bonsai's Global/Local convention is name-based, NOT Java SCXML context:
   // _foo is globally accessible; foo is local, even if it lives in the root context.
   // Resolved #_SKILL parameters are displayed on skill nodes, never here.
@@ -401,12 +474,8 @@ export default function RuntimeAssignmentsDrawer({
           </strong>
           <small>{frames.length ? `Snapshot ${selectedOrder + 1} of ${frames.length}` : "No snapshots yet"}</small>
           {frame && (
-            <span title={frame.timestamp}>
-              {frame.kind === "state"
-                ? displayState(frame.state)
-                : frame.transition
-                  ? `${displayState(frame.transition.source)} → ${displayState(frame.transition.target)}`
-                  : ""}
+            <span className="runtime-snapshot-heading-label" title={frame.timestamp}>
+              <RuntimeSnapshotLabel entry={frame} invocationSuffixes={invocationSuffixes} />
             </span>
           )}
           {timeline?.outcome && <small>Run: {timeline.outcome}</small>}
@@ -419,6 +488,7 @@ export default function RuntimeAssignmentsDrawer({
             onSeek={onSeek}
             onLive={onLive}
             onFocusSnapshot={onFocusSnapshot}
+            invocationSuffixes={invocationSuffixes}
           />
           <SnapshotChanges
             timeline={timeline}
@@ -426,9 +496,11 @@ export default function RuntimeAssignmentsDrawer({
             selectedSkill={selectedSkill}
             selectedSkillState={selectedSkillState}
             declaredVariables={declaredVariables}
+            configuredSlots={configuredSlots}
+            invocationSuffixes={invocationSuffixes}
           />
-          <CurrentValues title="Global Variables" values={globalVariables} emptyText="No global variables defined." />
-          <CurrentValues title="Local Variables" values={localVariables} emptyText="No local variables defined." />
+          <CurrentValues title="Global Variables" values={globalVariables} emptyText="No global variables defined." invocationSuffixes={invocationSuffixes} />
+          <CurrentValues title="Local Variables" values={localVariables} emptyText="No root-local variables defined." invocationSuffixes={invocationSuffixes} showContextBadges={false} />
           <RuntimeMemorySlots memory={memory} slots={configuredSlots} frame={frame} timeline={timeline} />
           {timeline?.hasGap && (
             <p className="runtime-assignments-warning">

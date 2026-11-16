@@ -46,20 +46,27 @@ export function getManualRuntimeEvents(workflow, activeStates = []) {
   return results;
 }
 
-/** Add ephemeral decorations, never mutate persisted workflow node data. */
-export function decorateLiveRuntimeNodes(nodes, frame) {
+/** Add ephemeral decorations, never mutate persisted workflow node data.
+ * In a running multi-document workflow, parameter values must be resolved by
+ * the exact invocation-qualified runtime state, not by the visible skill name.
+ * A missing ownership mapping means no parameter overlay is safe to show.
+ */
+export function decorateLiveRuntimeNodes(nodes, frame, parameterNodeIds = null) {
   if (!frame) return nodes;
   const slots = frame.slots || {};
-  const active = new Set(frame.activeStates || []);
-  if (frame.kind === "state" && frame.state) active.add(frame.state);
+  const active = new Set((frame.activeStates || []).map(shortState));
+  if (frame.kind === "state" && frame.state) active.add(shortState(frame.state));
   const parametersByNode = new Map();
   for (const entry of Object.values(frame.parameters || {})) {
-    if (!active.has(entry.state)) continue;
-    const node = findUniqueSkill(nodes, entry.state);
-    if (!node) continue;
-    const values = parametersByNode.get(node.id) || {};
+    const qualifiedState = shortState(entry.state);
+    if (!active.has(qualifiedState)) continue;
+    const nodeId = parameterNodeIds instanceof Map
+      ? parameterNodeIds.get(qualifiedState)
+      : findUniqueSkill(nodes, entry.state)?.id;
+    if (!nodeId) continue;
+    const values = parametersByNode.get(nodeId) || {};
     values[entry.name] = { value: entry.value, timestamp: entry.timestamp };
-    parametersByNode.set(node.id, values);
+    parametersByNode.set(nodeId, values);
   }
   return nodes.map((node) => {
     if (node.type === "slot") {
