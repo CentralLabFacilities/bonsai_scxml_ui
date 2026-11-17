@@ -10894,13 +10894,25 @@ dialog.skill-paste-choice-overlay {
 .runtime-value-row .datamodel-value-type-badge {
   flex-shrink: 0;
 }
-.runtime-commander-toolbar .runtime-commander-auto-events {
+.runtime-commander-toolbar .runtime-commander-manual-mode {
   gap: 4px;
 }
-.runtime-commander-toolbar .runtime-commander-auto-events[aria-pressed="true"] {
-  background: #e9f8ed;
-  color: #166534;
-  border-color: #65a87a;
+.runtime-commander-toolbar .runtime-commander-manual-mode[aria-pressed="true"] {
+  background: #fff7ed;
+  color: #9a3412;
+  border-color: #fb923c;
+}
+.runtime-commander-last-sent {
+  min-width: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c2410c;
+  font-size: 11px;
+}
+.runtime-commander-last-sent strong {
+  color: inherit;
 }
 .runtime-commander-auto-state {
   font-size: 10px;
@@ -10922,9 +10934,19 @@ dialog.skill-paste-choice-overlay {
   background: #fef3c7;
   color: #92400e;
 }
-.runtime-commander-manual-event .runtime-commander-event-select {
+/* Render the event choices in the WebView rather than a native <option>
+   popup: WebKitGTK ignores option text colors in some themes. */
+.runtime-commander-event-picker {
+  position: relative;
   flex: 1 1 180px;
   min-width: 0;
+}
+.runtime-commander-manual-event .runtime-commander-event-select {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   padding: 7px 9px;
@@ -10932,11 +10954,71 @@ dialog.skill-paste-choice-overlay {
   color: #0f172a;
   font: inherit;
   font-size: 12px;
-  color-scheme: light;
+  text-align: left;
+  cursor: pointer;
 }
-.runtime-commander-manual-event .runtime-commander-event-select option {
-  background: #ffffff;
+.runtime-commander-event-select > span:first-child {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.runtime-commander-manual-event .runtime-commander-event-select.runtime-commander-event-selected-sent {
+  color: #c2410c;
+  font-weight: 700;
+}
+.runtime-commander-event-ready-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #c2410c;
+  flex: none;
+}
+.runtime-commander-event-options {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 5px);
+  z-index: 100;
+  max-height: min(240px, 38vh);
+  overflow: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.15);
+}
+.runtime-commander-event-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  padding: 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
   color: #0f172a;
+  cursor: pointer;
+}
+.runtime-commander-event-option > span:first-child {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.runtime-commander-event-option:hover,
+.runtime-commander-event-option:focus-visible,
+.runtime-commander-event-option[aria-selected="true"] {
+  background: #f1f5f9;
+}
+.runtime-commander-event-option.runtime-commander-event-was-sent {
+  color: #c2410c;
+  font-weight: 700;
+  background: #fff7ed;
+}
+.runtime-commander-event-option.runtime-commander-event-was-sent:hover,
+.runtime-commander-event-option.runtime-commander-event-was-sent:focus-visible {
+  background: #ffedd5;
 }
 .runtime-commander-manual-event .runtime-commander-event-select:focus-visible {
   outline: 2px solid #2563eb;
@@ -12353,4 +12435,21 @@ dialog.skill-paste-choice-overlay {
   .react-flow__node.runtime-live-running-node::after {
     animation: none;
   }
+}
+
+/* A skill that has emitted its exit token in Manual Events mode is waiting
+   for the user, not still executing. Remove the running ring and its old full
+   yellow outline; preserve real editor selection and problem styling. */
+.react-flow__node.runtime-live-manual-ready-node:not(.editor-node-problem) {
+  outline: none;
+  box-shadow: none;
+}
+/* A ready notification takes precedence even if React Flow briefly retains
+   the active-running class while reconciling its node decorations. */
+.react-flow__node.runtime-live-manual-ready-node::after {
+  content: none;
+  animation: none;
+}
+.react-flow__node.runtime-live-manual-ready-node.selected:not(.editor-node-problem) {
+  box-shadow: var(--ui-state-selected-ring);
 }

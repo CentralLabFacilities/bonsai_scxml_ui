@@ -98,6 +98,7 @@ export function useRuntimeEventTimeline() {
       enteredStates: latest?.type === "state_entered" ? [latest.state] : [],
       exitedStates: latest?.type === "state_exited" ? [latest.state] : [],
       activeStates: timeline.activeStates,
+      manualReadyStates: timeline.manualReadyStates,
       stateEntryHistory: timeline.stateEntryHistory,
       scopes: timeline.scopes,
       variables: timeline.variables,

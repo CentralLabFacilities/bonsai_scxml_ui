@@ -1289,6 +1289,7 @@ function AppContent() {
       snapshot: {
         status: runtimeEventTimeline.watching ? runtimeEventTimeline.status : "RUNNING",
         currentStates,
+        manualReadyStates: runtimeEventTimeline.watching ? runtimeEventTimeline.manualReadyStates : [],
         transition,
         transitions,
         enteredStates: selectedRuntimeFrame.enteredStates || [],
@@ -1309,6 +1310,7 @@ function AppContent() {
     runtimeEventTimeline.index,
     runtimeEventTimeline.watching,
     runtimeEventTimeline.status,
+    runtimeEventTimeline.manualReadyStates,
     recentRuntimeTransition,
     runtimeFocusRequest,
   ]);

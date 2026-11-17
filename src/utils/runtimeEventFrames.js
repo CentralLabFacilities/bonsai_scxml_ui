@@ -9,6 +9,47 @@ export const runtimePayload = (message) =>
     : message?.data && typeof message.data === "object"
       ? message.data
       : {};
+// A backend SCXML <send> notification describes an event emitted by a skill,
+// not the user's later fire_event request. Newer typed serializers may use a
+// different `type` for the same send payload. Recognize the complete send
+// signature as well as the names used by previous runtime backends.
+const SEND_EVENT_TYPES = new Set([
+  "send", "send_event", "event_sent", "event_send", "send_dispatched", "scxml_send",
+]);
+const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
+export function emittedRuntimeEventName(message) {
+  const data = runtimePayload(message);
+  const hasSendShape = hasOwn(data, "event") && hasOwn(data, "id") &&
+    hasOwn(data, "target") && hasOwn(data, "targetType") && hasOwn(data, "delayMs");
+  if (!SEND_EVENT_TYPES.has(message?.type) && !hasSendShape) return "";
+  // A transition also has an `event` field. It must never be interpreted as
+  // an emitted event (even if a future serializer adds similar metadata).
+  if (["transition", "fire_event", "external_event"].includes(message?.type)) return "";
+  // Only untargeted, immediate sends can be manually dispatched as skill
+  // completion events. A delayed/directed send must not stop the running ring.
+  if (data.target || data.targetType || (data.delayMs != null && Number(data.delayMs) !== 0)) return "";
+  const name = data.event;
+  return typeof name === "string" ? name.trim() : "";
+}
+
+/** Attribute a send notification only when its emitting state can be proved.
+ * With two parallel Wait skills and no sourceState on the wire, `Wait.success`
+ * is ambiguous: never mark both skills as completed by guessing.
+ */
+export function emittingRuntimeState(message, activeStates = []) {
+  const event = emittedRuntimeEventName(message);
+  if (!event) return null;
+  const data = runtimePayload(message);
+  const source = String(data.sourceState || data.state || "").trim();
+  if (source && activeStates.includes(source)) return source;
+  const skillName = event.split(".")[0];
+  const matches = activeStates.filter((id) => {
+    const skill = String(id).split("#")[0].split(".").at(-1);
+    return skill === skillName;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
 const has = (object, key) => Object.prototype.hasOwnProperty.call(object || {}, key);
 const truth = (value) => value === true || value === "true";
 
@@ -27,6 +68,9 @@ export const emptyRuntimeTimeline = () => ({
   parameters: {},
   slots: {},
   completedStates: [],
+  // Active skills that emitted an event in Manual Events mode and now wait
+  // for the user to send it. These are still SCXML-active, just not running.
+  manualReadyStates: [],
   stateEntryHistory: [],
   pendingEntryAssignments: [],
   lastEvent: null,
@@ -121,6 +165,7 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
   const data = runtimePayload(message);
   const type = message.type;
   const active = new Set(previous.activeStates || []);
+  const manualReadyStates = new Set(previous.manualReadyStates || []);
   let scopes = previous.scopes || {};
   let parameters = previous.parameters || {};
   let status = previous.status;
@@ -130,6 +175,7 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
   let skillEntryCounts = previous.skillEntryCounts || {};
   if (type === "status") status = String(data.value || "UNKNOWN");
   if (type === "started") {
+    manualReadyStates.clear();
     status = "RUNNING";
     outcome = null;
     partiallyUnknown = false;
@@ -138,13 +184,17 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
     outcome = data.outcome === "failure" ? "failure" : "success";
     status = outcome === "failure" ? "FAILED" : "COMPLETED";
     active.clear();
+    manualReadyStates.clear();
   }
   if (type === "stopped") {
     status = "STOPPED";
     outcome = "stopped";
     active.clear();
+    manualReadyStates.clear();
   }
   if (type === "state_entered" && data.state) {
+    // A subsequent invocation of the same state runs again.
+    manualReadyStates.delete(String(data.state));
     // Skill parameters are execution-local: never show previous invocation's
     // resolved values while the next invocation has not resolved its own.
     const prefix = `${String(data.state)}:`;
@@ -155,7 +205,14 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
       skillEntryCounts = { ...skillEntryCounts, [String(data.state)]: (skillEntryCounts[String(data.state)] || 0) + 1 };
     }
   }
-  if (type === "state_exited" && data.state) active.delete(String(data.state));
+  if (type === "state_exited" && data.state) {
+    active.delete(String(data.state));
+    manualReadyStates.delete(String(data.state));
+  }
+  if (message.manualMode && emittedRuntimeEventName(message)) {
+    const source = emittingRuntimeState(message, [...active]);
+    if (source) manualReadyStates.add(source);
+  }
   if (type === "datamodel_scope_initialized" && data.scope) {
     scopes = { ...scopes, [String(data.scope)]: initializedValues(data, message) };
   }
@@ -300,6 +357,7 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
     status,
     outcome,
     activeStates: [...active],
+    manualReadyStates: [...manualReadyStates],
     stateEntryHistory: history,
     scopes,
     variables,
@@ -325,6 +383,7 @@ export function invalidateRuntimeTimeline(previous) {
     hasGap: true,
     partiallyUnknown: true,
     activeStates: [],
+    manualReadyStates: [],
     scopes,
     variables: flattenScopes(scopes),
     parameters: stale(previous.parameters || {}),

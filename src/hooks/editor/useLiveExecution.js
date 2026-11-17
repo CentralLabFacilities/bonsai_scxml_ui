@@ -485,22 +485,43 @@ export function useLiveExecution({
     [model, statesKey, validTabs, activeTabId, visibleNodes, liveActive],
     (previous) => projectLive(previous, model, JSON.parse(statesKey), validTabs, activeTabId, visibleNodes, liveActive),
   );
+  // The runtime still considers a skill active after it emits an exit event
+  // while Manual Events is enabled. Its running ring must nevertheless stop.
+  // Resolve by the same invocation-qualified state map as other highlights;
+  // matching only "Wait" would stop the parent and the child together.
+  const manualReadyNodeIds = useMemo(() => {
+    if (!model || liveExecution?.watching === false) return new Set();
+    const visibleById = new Map(visibleNodes.filter((node) => !node.hidden).map((node) => [node.id, node]));
+    const ready = new Set((liveExecution?.snapshot?.manualReadyStates || EMPTY).map(runnerId));
+    const visualIds = (state) => {
+      const matches = model.states.get(state) || EMPTY;
+      if (matches.length !== 1) return EMPTY;
+      return projectEntry(matches[0], activeTabId, validTabs, visibleById).ids;
+    };
+    const finished = new Set([...ready].flatMap(visualIds));
+    // If two concurrent skills project to a single collapsed/wrapper node,
+    // keep that node animating while *any* represented skill is still running.
+    orderedStates.filter((id) => !ready.has(id)).flatMap(visualIds).forEach((id) => finished.delete(id));
+    return finished;
+  }, [model, validTabs, activeTabId, visibleNodes, statesKey, liveExecution?.snapshot?.manualReadyStates, liveExecution?.watching]);
   const runtimeNodes = useMemo(() => {
     return projection.nodes.map((node) => {
       const existing = String(node.className || "").split(/\s+/).filter(Boolean);
       const active = existing.includes("runtime-log-target-node") || existing.includes("runtime-live-context-node");
-      const animate = liveActive && liveExecution?.watching !== false && status === "RUNNING" && active;
+      const readyForManualDispatch = manualReadyNodeIds.has(node.id) && active;
+      const animate = liveActive && liveExecution?.watching !== false && status === "RUNNING" && active && !readyForManualDispatch;
       const transitionSource = activeTransition?.sourceIds.has(node.id);
       const transitionTarget = activeTransition?.targetIds.has(node.id);
-      if (!animate && !transitionSource && !transitionTarget) return node;
+      if (!animate && !readyForManualDispatch && !transitionSource && !transitionTarget) return node;
       if (animate) existing.push("runtime-live-running-node");
+      if (readyForManualDispatch) existing.push("runtime-live-manual-ready-node");
       // Transition focus is a second overlay. Never remove the active
       // state highlight while decorating its incoming/outgoing edge.
       if (transitionSource) existing.push("runtime-live-transition-source");
       if (transitionTarget) existing.push("runtime-live-transition-target");
       return { ...node, className: existing.join(" ") };
     });
-  }, [projection.nodes, activeTransition, liveActive, status, liveExecution?.watching]);
+  }, [projection.nodes, activeTransition, liveActive, status, liveExecution?.watching, manualReadyNodeIds]);
   const wantsCamera = following && Boolean(liveExecution?.followCamera) && status === "RUNNING";
   const action = liveExecution?.action;
   const followRef = useRef({ model: null, statesKey: null, enabled: false, pending: null });

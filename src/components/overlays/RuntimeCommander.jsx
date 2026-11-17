@@ -7,7 +7,6 @@ import {
   FiChevronLeft,
   FiChevronRight,
   FiFolder,
-  FiPause,
   FiPlay,
   FiRefreshCw,
   FiSettings,
@@ -28,7 +27,7 @@ import {
 import { loadRuntimeConfiguration, saveRuntimeConfiguration } from "../../utils/editorPreferences.js";
 import { Button, InlineFeedback, TextInput } from "../ui/index.js";
 import { useBonsaiRuntimeSocket } from "../../hooks/editor/useBonsaiRuntimeSocket.js";
-import { runtimePayload } from "../../utils/runtimeEventFrames.js";
+import { emittedRuntimeEventName, runtimePayload } from "../../utils/runtimeEventFrames.js";
 import { matchesLoadedInitial, initialWorkflowStateIds } from "../../utils/runtimeWorkflowIdentity.js";
 import { getManualRuntimeEvents } from "../../utils/runtimeLiveValues.js";
 import {
@@ -65,6 +64,9 @@ export default function RuntimeCommander({
   const [configuration, setConfiguration] = useState(loadRuntimeConfiguration);
   const [forceConfigure, setForceConfigure] = useState(false);
   const [eventName, setEventName] = useState("");
+  const [lastSentEvent, setLastSentEvent] = useState("");
+  const [pendingSkillEvent, setPendingSkillEvent] = useState("");
+  const [eventMenuOpen, setEventMenuOpen] = useState(false);
   const [snapshot, setSnapshot] = useState(null);
   const [loadedWorkflow, setLoadedWorkflow] = useState(null);
   const [loadMessages, setLoadMessages] = useState([]);
@@ -78,6 +80,7 @@ export default function RuntimeCommander({
   const [autoExpandCompounds, setAutoExpandCompounds] = useState(false);
   const [autoExpandParallels, setAutoExpandParallels] = useState(false);
   const [automaticEnabled, setAutomaticEnabled] = useState(true);
+  const manualModeRef = useRef(false);
   const [error, setError] = useState("");
   const [statusError, setStatusError] = useState("");
   // Verified by the HTTP status endpoint, not the runtime-event WebSocket.
@@ -93,6 +96,7 @@ export default function RuntimeCommander({
   const [previouslyOpen, setPreviouslyOpen] = useState(isOpen);
   const configurationRef = useRef(null);
   const panelRef = useRef(null);
+  const eventPickerRef = useRef(null);
   const [optionsPosition, setOptionsPosition] = useState(null);
   const openerRef = useRef(null);
   const ownerRef = useRef(null);
@@ -169,6 +173,25 @@ export default function RuntimeCommander({
       observer?.disconnect();
     };
   }, [isOpen, optionsOpen]);
+
+  // The native <option> popup is rendered by WebKitGTK and does not reliably
+  // honor custom option colors. Use an in-app listbox so emitted events are
+  // visibly orange both in the closed picker and inside its dropdown.
+  useEffect(() => {
+    if (!eventMenuOpen) return undefined;
+    const onPointerDown = (event) => {
+      if (!eventPickerRef.current?.contains(event.target)) setEventMenuOpen(false);
+    };
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") setEventMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [eventMenuOpen]);
 
   // The drawer is a sibling portal, so Escape must work regardless of whether
   // keyboard focus is inside the Run window or the options drawer.
@@ -327,6 +350,12 @@ export default function RuntimeCommander({
     onEvent: (message) => {
       const payload = runtimePayload(message);
       eventVersionRef.current += 1;
+      const emittedEvent = emittedRuntimeEventName(message);
+      if (emittedEvent && manualModeRef.current && acceptedRunRef.current) {
+        // This is the skill's *published* event, not a user-issued fire_event.
+        setPendingSkillEvent(emittedEvent);
+        setEventName(emittedEvent); // default Send selection, including nested skills
+      }
       // Status notifications are not a user-requested Load. A nested SCXML
       // may initialize while its parent remains active, and even an unexpected
       // LOADING notification must not erase recorded snapshots. Explicit Load
@@ -411,7 +440,9 @@ export default function RuntimeCommander({
       // Initial attachment to an in-progress run is deliberately ignored.
       // After reconnecting, a previously observed run remains accepted.
       if (acceptedRunRef.current) {
-        onRuntimeEvent?.(message);
+        // Keep manual-mode context with this event so the timeline can stop
+        // only the emitting skill's ring without changing SCXML active states.
+        onRuntimeEvent?.(emittedEvent ? { ...message, manualMode: manualModeRef.current } : message);
       }
       if (message.type === "stopped" || message.type === "completed") acceptedRunRef.current = false;
     },
@@ -503,10 +534,24 @@ export default function RuntimeCommander({
   // The live engine's active state is authoritative, even with auto events off.
   // Never offer exit tokens from a manually scrubbed historical snapshot.
   const currentStates = snapshot?.currentStates || [];
-  const manualEvents = getManualRuntimeEvents(loadedWorkflow, currentStates);
+  const manualMode = !automaticEnabled;
+  const configuredManualEvents = getManualRuntimeEvents(loadedWorkflow, currentStates);
+  // An observed send is authoritative even when its child skill is not in
+  // the root document's static event list or the state has already exited.
+  const manualEvents = manualMode && pendingSkillEvent && !configuredManualEvents.some((entry) => entry.value === pendingSkillEvent)
+    ? [{ value: pendingSkillEvent, label: pendingSkillEvent }, ...configuredManualEvents]
+    : configuredManualEvents;
   const selectedEventName = manualEvents.some((entry) => entry.value === eventName)
     ? eventName
-    : manualEvents[0]?.value || "";
+    : pendingSkillEvent && manualMode ? pendingSkillEvent : manualEvents[0]?.value || "";
+  // Keep the last sent event visible at the top of the selector, even when
+  // the skill has already transitioned and that event is no longer available.
+  const lastSentEventIsAvailable = manualEvents.some((entry) => entry.value === lastSentEvent);
+  const highlightedEvent = manualMode ? pendingSkillEvent || lastSentEvent : "";
+  const orderedManualEvents = highlightedEvent && manualEvents.some((entry) => entry.value === highlightedEvent)
+    ? [...manualEvents.filter((entry) => entry.value === highlightedEvent),
+        ...manualEvents.filter((entry) => entry.value !== highlightedEvent)]
+    : manualEvents;
 
   const execute = async (action, enabled) => {
     if (operationRef.current || browseRef.current || !ownerRef.current) return;
@@ -517,6 +562,7 @@ export default function RuntimeCommander({
     readRef.current = null;
     setIsRefreshing(false);
     setBusyAction(action);
+    setEventMenuOpen(false);
     setError("");
     let sent = false;
     try {
@@ -558,7 +604,10 @@ export default function RuntimeCommander({
         setDiagnosticsPopupOpen(false);
         setTimelineExpanded(false);
         setAutomaticEnabled(true);
+        manualModeRef.current = false;
         setEventName("");
+        setLastSentEvent("");
+        setPendingSkillEvent("");
         setSnapshot(null);
         setStatusError("");
         acceptedRunRef.current = false;
@@ -629,6 +678,8 @@ export default function RuntimeCommander({
         if (action === "start") {
           stopReadyPendingRef.current = false;
           setTimelineExpanded(false);
+          setLastSentEvent("");
+          setPendingSkillEvent("");
           terminalStopRequestedRef.current = false;
           setTerminalStopPending(false);
           onRuntimeReset?.();
@@ -644,7 +695,11 @@ export default function RuntimeCommander({
           console.info(`[Bonsai Runtime] Stop HTTP acknowledgement took ${Math.round(performance.now() - controlSentAt)} ms after the request was sent.`);
         }
         if (ownerRef.current !== owner) return;
-        if (action === "stop_events") setAutomaticEnabled(enabled);
+        if (action === "stop_events") {
+          manualModeRef.current = !enabled;
+          setAutomaticEnabled(enabled);
+          if (enabled) setPendingSkillEvent("");
+        }
         // The engine may not publish a live status event while paused.
         // A successful control acknowledgment must still expose the
         // matching Resume/Pause action immediately; the HTTP snapshot
@@ -666,8 +721,13 @@ export default function RuntimeCommander({
             action,
           });
         }
-        if (action === "fire_event") eventRef.current = { name: body, sentAt: Date.now() };
+        if (action === "fire_event") {
+          eventRef.current = { name: body, sentAt: Date.now() };
+          setLastSentEvent(body);
+          if (body === pendingSkillEvent) setPendingSkillEvent("");
+        }
         if (action === "stop") {
+          setPendingSkillEvent("");
           followingRef.current = false;
           observedRunningRef.current = false;
           setIsFollowing(false);
@@ -961,6 +1021,14 @@ export default function RuntimeCommander({
                 {loadedWorkflow?.fileName || workflowTab?.fileName || workflowTab?.title || "No workflow open"}
               </span>
             </div>
+            {manualMode && (pendingSkillEvent || lastSentEvent) && (
+              <span
+                className="runtime-commander-last-sent"
+                title={pendingSkillEvent ? `Skill emitted ${pendingSkillEvent}; awaiting manual dispatch` : `Last manually sent event: ${lastSentEvent}`}
+              >
+                {pendingSkillEvent ? "Ready:" : "Sent:"} <strong>{pendingSkillEvent || lastSentEvent}</strong>
+              </span>
+            )}
             <span className={`runtime-commander-status-pill ${statusTone}`} role="status" aria-live="polite">
               <span className="runtime-commander-status-dot" />
               {statusLabel}
@@ -1097,24 +1165,6 @@ export default function RuntimeCommander({
             </div>
             <button
               type="button"
-              onClick={() => void execute("pause")}
-              disabled={!canControl || snapshot?.status !== "RUNNING"}
-              title="Pause"
-            >
-              <FiPause />
-              <span>Pause</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => void execute("resume")}
-              disabled={!canControl || snapshot?.status !== "PAUSED"}
-              title="Resume"
-            >
-              <FiPlay />
-              <span>Resume</span>
-            </button>
-            <button
-              type="button"
               onClick={() => void execute("stop")}
               disabled={!canControl || !["RUNNING", "PAUSED"].includes(snapshot?.status)}
               title="Stop"
@@ -1124,15 +1174,19 @@ export default function RuntimeCommander({
             </button>
             <button
               type="button"
-              className="runtime-commander-auto-events"
-              aria-pressed={automaticEnabled === true}
+              className="runtime-commander-manual-mode"
+              aria-pressed={manualMode}
               disabled={!canControl || !loadedWorkflow}
-              onClick={() => void execute("stop_events", automaticEnabled !== true)}
-              title={`Automatic transition events ${automaticEnabled ? "enabled" : "disabled"}`}
+              // stop_events sends the desired *automatic* state to the engine.
+              // Turning Manual Events on sends false and disables automatic dispatch.
+              onClick={() => void execute("stop_events", manualMode)}
+              title={manualMode
+                ? "Manual Events on: automatic transition events are disabled"
+                : "Manual Events off: automatic transition events are enabled"}
             >
               <FiRadio />
-              <span>Auto events</span>
-              <span className="runtime-commander-auto-state">{automaticEnabled ? "On" : "Off"}</span>
+              <span>Manual Events</span>
+              <span className="runtime-commander-auto-state">{manualMode ? "On" : "Off"}</span>
             </button>
           </div>
           {(eventConnection !== "connected" || snapshot?.statusStale || statusError) && (
@@ -1169,21 +1223,59 @@ export default function RuntimeCommander({
             }}
           >
             <label htmlFor={`${id}-manual-event`}>Send event</label>
-            <select
-              id={`${id}-manual-event`}
-              className="runtime-commander-event-select"
-              value={selectedEventName}
-              onChange={(event) => setEventName(event.target.value)}
-              disabled={!canControl || !manualEvents.length}
-              aria-label="Events of the currently active skill"
-            >
-              {!manualEvents.length && <option value="">No events available for active skill</option>}
-              {manualEvents.map((entry) => (
-                <option key={entry.value} value={entry.value}>
-                  {entry.label}
-                </option>
-              ))}
-            </select>
+            <div className="runtime-commander-event-picker" ref={eventPickerRef}>
+              <button
+                type="button"
+                id={`${id}-manual-event`}
+                className={`runtime-commander-event-select${highlightedEvent && selectedEventName === highlightedEvent ? " runtime-commander-event-selected-sent" : ""}`}
+                aria-label="Events of the currently active skill"
+                aria-haspopup="listbox"
+                aria-expanded={eventMenuOpen}
+                aria-controls={`${id}-manual-event-options`}
+                disabled={!canControl || !manualEvents.length}
+                onClick={() => setEventMenuOpen((open) => !open)}
+                onKeyDown={(event) => {
+                  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+                  event.preventDefault();
+                  if (!manualEvents.length) return;
+                  const index = orderedManualEvents.findIndex((entry) => entry.value === selectedEventName);
+                  const direction = event.key === "ArrowDown" ? 1 : -1;
+                  const next = (index + direction + orderedManualEvents.length) % orderedManualEvents.length;
+                  setEventName(orderedManualEvents[next].value);
+                  setEventMenuOpen(true);
+                }}
+              >
+                <span>{selectedEventName || "No events available for active skill"}</span>
+                {highlightedEvent && selectedEventName === highlightedEvent && (
+                  <span className="runtime-commander-event-ready-label">{pendingSkillEvent ? "Ready" : "Sent"}</span>
+                )}
+                <FiChevronDown aria-hidden="true" />
+              </button>
+              {eventMenuOpen && manualEvents.length > 0 && (
+                <div id={`${id}-manual-event-options`} role="listbox" aria-label="Available skill events" className="runtime-commander-event-options">
+                  {manualMode && lastSentEvent && !lastSentEventIsAvailable && !pendingSkillEvent && (
+                    <div role="option" aria-selected={false} className="runtime-commander-event-option runtime-commander-event-was-sent" aria-disabled="true">
+                      Last sent: {lastSentEvent}
+                    </div>
+                  )}
+                  {orderedManualEvents.map((entry) => (
+                    <button
+                      key={entry.value}
+                      type="button"
+                      role="option"
+                      aria-selected={entry.value === selectedEventName}
+                      className={`runtime-commander-event-option${highlightedEvent === entry.value ? " runtime-commander-event-was-sent" : ""}`}
+                      onClick={() => { setEventName(entry.value); setEventMenuOpen(false); }}
+                    >
+                      <span>{entry.label}</span>
+                      {highlightedEvent === entry.value && (
+                        <span className="runtime-commander-event-ready-label">{pendingSkillEvent ? "Ready" : "Sent"}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button
               type="submit"
               className="runtime-commander-send-button"
