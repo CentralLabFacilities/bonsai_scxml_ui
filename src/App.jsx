@@ -55,7 +55,7 @@ import {
   resolveRuntimeSlotObservation,
   observationForRuntimeFrame,
 } from "./utils/runtimeMemorySlots.js";
-import { traceSlot, summarizeSlot } from "./utils/slotReplayTrace.js";
+import { traceSlot, summarizeSlot, slotTraceEnabled } from "./utils/slotReplayTrace.js";
 import { useLiveExecution, resolveRuntimeSkill, resolveRuntimeSnapshotLocation } from "./hooks/editor/useLiveExecution.js";
 import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.js";
 import RuntimeAssignmentsDrawer, { RuntimeAssignmentsLedge } from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
@@ -1777,15 +1777,33 @@ function AppContent() {
   // liveRunRef holds the loaded runtime workflow; reading it here avoids
   // passing it through props while still keeping the memo fresh via deps.
   // eslint-disable-next-line react-hooks/refs
+  // Runtime events can update parameters/status many times without changing
+  // which skill or invocation is being displayed. Resolve ownership only
+  // when that identity changes, not once per WebSocket event sequence.
+  const runtimeSkillState = selectedRuntimeFrame?.state || selectedRuntimeFrame?.transition?.source || "";
   const runtimeTimelineSkill = useMemo(() => {
-    if (!selectedRuntimeFrame || !liveRunRef.current?.workflow) return null;
-    const state = selectedRuntimeFrame.state || selectedRuntimeFrame.transition?.source || "";
+    if (!runtimeSkillState || !liveRunRef.current?.workflow) return null;
+    const state = runtimeSkillState;
     const tabsForRun = [
       ...new Map([...(liveRunRef.current.tabsSnapshot || []), ...tabs].map((tab) => [tab.id, tab])).values(),
     ];
     const match = resolveRuntimeSkill(liveRunRef.current.workflow, tabsForRun, state);
     return match ? { ...match, state } : null;
-  }, [selectedRuntimeFrame?.id, activeTabId, tabs]);
+  }, [runtimeSkillState, activeTabId, tabs, liveRunRef.current?.workflow, liveRunRef.current?.tabsSnapshot]);
+
+  // Slot visibility depends on runtime state identity, not the event's
+  // sequence/timestamp. Preserve a stable identity across assignments and
+  // other notifications that leave the active configuration unchanged.
+  const runtimeFrameStatesKey = [
+    selectedRuntimeFrame?.transition?.source,
+    selectedRuntimeFrame?.state,
+    selectedRuntimeFrame?.transition?.target,
+    ...(selectedRuntimeFrame?.activeStates || []),
+  ].filter(Boolean).join("\u001f");
+  const runtimeFrameStateIds = useMemo(
+    () => runtimeFrameStatesKey ? runtimeFrameStatesKey.split("\u001f") : [],
+    [runtimeFrameStatesKey],
+  );
 
   // A canvas slot is a file-local XPath, but a runtime MemorySlot may live
   // under an invocation suffix. Derive the same verified context for the node
@@ -1793,12 +1811,7 @@ function AppContent() {
   // opened state machine for an identically named slot.
   const runtimeSlotContext = useMemo(() => {
     const contexts = runtimeTabContexts.filter((context) => context.tabId === activeTabId);
-    const frameStates = [
-      selectedRuntimeFrame?.transition?.source,
-      selectedRuntimeFrame?.state,
-      selectedRuntimeFrame?.transition?.target,
-      ...(selectedRuntimeFrame?.activeStates || []),
-    ].filter(Boolean);
+    const frameStates = runtimeFrameStateIds;
     const matches = contexts.filter(({ suffix }) =>
       suffix && frameStates.some((state) => String(state).endsWith(suffix))
     ).sort((a, b) => b.suffix.length - a.suffix.length);
@@ -1809,21 +1822,16 @@ function AppContent() {
       // silently collapsed to the unsuffixed/root MemorySlot.
       ambiguous: !context && (contexts.length > 1 || Boolean(activeWorkflowTab?.parentTabId)),
     };
-  }, [runtimeTabContexts, activeTabId, activeWorkflowTab?.parentTabId, selectedRuntimeFrame]);
+  }, [runtimeTabContexts, activeTabId, activeWorkflowTab?.parentTabId, runtimeFrameStateIds]);
 
   // Only accept descendant paths for slots the current document explicitly
   // exposes to a child via <inheritSlot>. Validate child identity against the
   // wrapper and the actual opened child tab (or the selected runtime state).
   const runtimeChildSlotSuffixes = useMemo(() => {
     const byPath = new Map();
-    const frameStates = [
-      selectedRuntimeFrame?.state,
-      selectedRuntimeFrame?.transition?.source,
-      selectedRuntimeFrame?.transition?.target,
-      ...(selectedRuntimeFrame?.activeStates || []),
-    ].filter(Boolean).map(String);
-    const wrappers = new Map(nodes.filter((node) => node.type === "submachine").map((node) => [node.id, node]));
-    for (const slotNode of slotNodes) {
+    const frameStates = runtimeFrameStateIds;
+    const wrappers = new Map(semanticNodes.filter((node) => node.type === "submachine").map((node) => [node.id, node]));
+    for (const slotNode of semanticSlotNodes) {
       const path = normalizeMemoryPath(slotNode.data?.path || slotNode.data?.label);
       if (!path) continue;
       const suffixes = new Set();
@@ -1848,7 +1856,7 @@ function AppContent() {
       if (suffixes.size) byPath.set(path, [...suffixes]);
     }
     return byPath;
-  }, [nodes, slotNodes, tabs, activeTabId, runtimeTabContexts, runtimeSlotContext.suffix, selectedRuntimeFrame]);
+  }, [semanticNodes, semanticSlotNodes, tabs, activeTabId, runtimeTabContexts, runtimeSlotContext.suffix, runtimeFrameStateIds]);
 
   // The Run Assignments slot inspector is scoped to the OPEN editor tab.
   // Keep the exact runtime path for event lookups and a separate displayPath.
@@ -1873,10 +1881,10 @@ function AppContent() {
         existing.candidatePaths = [...new Set([...existing.candidatePaths, ...paths])];
       } else seen.set(path, { ...slot, path, displayPath, candidatePaths: paths });
     };
-    nodes.filter((node) => node.type === "custom").forEach((node) => configuredSkillSlots(node).forEach(add));
+    semanticNodes.filter((node) => node.type === "custom").forEach((node) => configuredSkillSlots(node).forEach(add));
     manualSlots.forEach(add);
     const declared = new Set([...seen.values()].map((slot) => slot.displayPath));
-    slotNodes.forEach((slot) => {
+    semanticSlotNodes.forEach((slot) => {
       const path = normalizeMemoryPath(slot.data?.path || slot.data?.label);
       if (path && declared.has(path)) add({
         path,
@@ -1887,7 +1895,7 @@ function AppContent() {
       });
     });
     return [...seen.values()];
-  }, [nodes, manualSlots, slotNodes, runtimeSlotContext, runtimeChildSlotSuffixes]);
+  }, [semanticNodes, manualSlots, semanticSlotNodes, runtimeSlotContext, runtimeChildSlotSuffixes]);
 
   const canvasRuntimeNodes = useMemo(() => {
     if (runtimeLog || (!selectedRuntimeFrame && !runtimeEventTimeline.watching)) return liveVisibleNodes;
@@ -1940,7 +1948,7 @@ function AppContent() {
   // Diagnostic only: prove whether replay resolved the value and whether the
   // decorated React Flow slot node actually received runtimeSlotValueMeta.
   useEffect(() => {
-    if (!selectedRuntimeFrame || runtimeEventTimeline.watching) return;
+    if (!slotTraceEnabled() || !selectedRuntimeFrame || runtimeEventTimeline.watching) return;
     const linked = observationForRuntimeFrame(runtimeMemory.observations, selectedRuntimeFrame);
     const nodesToCheck = liveVisibleNodes.filter((node) => node.type === "slot");
     const configuredByPath = new Map(runtimeConfiguredSlots.map((slot) => [slot.displayPath, slot]));
@@ -2005,6 +2013,30 @@ function AppContent() {
     runtimeConfiguredSlots,
     runtimeSlotContext,
     runtimeChildSlotSuffixes,
+  ]);
+
+  // Keep callback identities stable so unrelated editor renders do not force
+  // the (potentially expensive) Run Assignments history to rerender.
+  const handleRuntimeSeek = useCallback((index) => {
+    setSnapshotNavigation(null);
+    snapshotOpenAttemptRef.current = null;
+    setRuntimeManualSkillSelection(false);
+    seekRuntimeEvent(index);
+  }, [seekRuntimeEvent]);
+  const handleRuntimeGoLive = useCallback(() => {
+    setSnapshotNavigation(null);
+    snapshotOpenAttemptRef.current = null;
+    goLiveRuntimeEvent();
+  }, [goLiveRuntimeEvent]);
+
+  const runtimeDeclaredVariables = useMemo(() => [
+    ...(liveRunRef.current?.workflow?.inheritedGlobalDataModel || inheritedGlobalDataModel || []),
+    ...(liveRunRef.current?.workflow?.globalDataModel || globalDataModel || []),
+  ], [
+    liveRunRef.current?.workflow?.inheritedGlobalDataModel,
+    liveRunRef.current?.workflow?.globalDataModel,
+    inheritedGlobalDataModel,
+    globalDataModel,
   ]);
 
   return (
@@ -2346,25 +2378,11 @@ function AppContent() {
             configuredSlots={runtimeConfiguredSlots}
             selectedSkill={runtimeManualSkillSelection ? selectedNode : runtimeTimelineSkill?.node || selectedNode}
             selectedSkillState={runtimeManualSkillSelection ? null : runtimeTimelineSkill?.state}
-            declaredVariables={[
-              ...(liveRunRef.current?.workflow?.inheritedGlobalDataModel || inheritedGlobalDataModel || []),
-              ...(liveRunRef.current?.workflow?.globalDataModel || globalDataModel || []),
-            ]}
-            onSeek={(index) => {
-              // Single-click inspects history without continuing an earlier
-              // double-click navigation into a different document.
-              setSnapshotNavigation(null);
-              snapshotOpenAttemptRef.current = null;
-              setRuntimeManualSkillSelection(false);
-              seekRuntimeEvent(index);
-            }}
+            declaredVariables={runtimeDeclaredVariables}
+            onSeek={handleRuntimeSeek}
             onFocusSnapshot={focusRuntimeSnapshot}
             invocationSuffixes={snapshotInvocationSuffixes}
-            onLive={() => {
-              setSnapshotNavigation(null);
-              snapshotOpenAttemptRef.current = null;
-              goLiveRuntimeEvent();
-            }}
+            onLive={handleRuntimeGoLive}
             open={runtimeAssignmentsOpen}
           />
         )}

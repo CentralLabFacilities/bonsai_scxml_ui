@@ -19,8 +19,11 @@ export function useRuntimeEventTimeline() {
       const previous = currentRef.current;
       const next = appendRuntimeEvent(previous, message);
       if (next === previous) return;
-      const selectedId = previous.frames[previous.index]?.id;
-      const retainedIndex = next.frames.findIndex((frame) => frame.id === selectedId);
+      // Live mode always follows the tail; searching the entire (up to 5000
+      // frame) history on each WebSocket message is unnecessary.
+      const retainedIndex = previous.watching
+        ? -1
+        : next.frames.findIndex((frame) => frame.id === previous.frames[previous.index]?.id);
       commit({
         ...next,
         index: previous.watching ? next.frames.length - 1 : Math.max(0, retainedIndex),

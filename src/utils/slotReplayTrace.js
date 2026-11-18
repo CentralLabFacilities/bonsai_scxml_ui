@@ -5,6 +5,14 @@
 const MAX_ENTRIES = 300;
 const lastSignature = new Map();
 
+// Recording every memory write and replay scan was intended for debugging,
+// but JSON serialization and console output on the hot runtime path can stall
+// WebKitGTK. Enable explicitly in DevTools when investigating a slot issue:
+//   window.BONSAI_SLOT_DEBUG = true
+// Turn off with: window.BONSAI_SLOT_DEBUG = false
+export const slotTraceEnabled = () =>
+  typeof window !== "undefined" && window.BONSAI_SLOT_DEBUG === true;
+
 export const summarizeSlot = (entry) =>
   entry
     ? {
@@ -22,7 +30,7 @@ export const summarizeSlot = (entry) =>
     : null;
 
 export function traceSlot(stage, fields = {}, signature = null) {
-  if (typeof window === "undefined") return;
+  if (!slotTraceEnabled()) return;
   if (signature !== null && lastSignature.get(stage) === signature) return;
   if (signature !== null) lastSignature.set(stage, signature);
   const row = { time: new Date().toISOString(), stage, ...fields };

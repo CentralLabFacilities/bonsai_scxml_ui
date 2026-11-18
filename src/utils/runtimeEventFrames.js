@@ -275,7 +275,9 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
     ? [...(previous.pendingChanges || []), change].slice(-2000)
     : previous.pendingChanges || [];
   const transition = type === "transition" ? transitionOf(data) : null;
-  const variables = flattenScopes(scopes);
+  // Status/entry/exit/transition events do not change datamodel scopes.
+  // Rebuilding every scoped variable on each such event is wasted work.
+  const variables = scopes === previous.scopes ? previous.variables : flattenScopes(scopes);
   const frames = focused
     ? [
         ...previous.frames,
@@ -332,9 +334,16 @@ export function appendRuntimeEvent(previous, message, maxFrames = 5000) {
   // Preserve a skill's changing parameters and datamodel over its execution;
   // the entry snapshot is its execution summary, finalized at exit.
   if (type === "state_exited" && data.state) {
-    const index = [...frames]
-      .map((item) => item.type === "state_entered" && item.state === String(data.state) && !item.closed)
-      .lastIndexOf(true);
+    // Most exits match one of the most recent entries. Scan backwards and
+    // stop at the first match instead of allocating two full history arrays.
+    let index = -1;
+    for (let i = frames.length - 1; i >= 0; i -= 1) {
+      const item = frames[i];
+      if (item.type === "state_entered" && item.state === String(data.state) && !item.closed) {
+        index = i;
+        break;
+      }
+    }
     if (index >= 0) {
       const prior = frames[index];
       finalized = [...frames];

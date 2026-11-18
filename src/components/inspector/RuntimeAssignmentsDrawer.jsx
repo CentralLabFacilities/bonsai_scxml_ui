@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { FiChevronLeft, FiChevronRight, FiActivity } from "react-icons/fi";
 import { inferLiteralValueType } from "../../utils/valueTypes.js";
 import { getRootRuntimeVariableValues } from "../../utils/runtimeValueDisplay.js";
@@ -9,7 +9,7 @@ import {
   observationForRuntimeFrame,
   configuredSkillSlots,
 } from "../../utils/runtimeMemorySlots.js";
-import { traceSlot, summarizeSlot } from "../../utils/slotReplayTrace.js";
+import { traceSlot, summarizeSlot, slotTraceEnabled } from "../../utils/slotReplayTrace.js";
 import {
   runtimeSnapshotStateLabel,
   runtimeVariableContextLabel,
@@ -133,7 +133,7 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
   const replay = !timeline?.watching;
   const eventSnapshot = replay ? observationForRuntimeFrame(observations, frame) : null;
   useEffect(() => {
-    if (!replay || !frame) return;
+    if (!slotTraceEnabled() || !replay || !frame) return;
     const checks = slots.map((slot) => ({
       path: slot.path,
       resolved: summarizeSlot(
@@ -437,7 +437,7 @@ function RuntimeEventHistory({ timeline, orderedFrames, selectedOrder, onSeek, o
   );
 }
 
-export default function RuntimeAssignmentsDrawer({
+function RuntimeAssignmentsDrawer({
   timeline,
   frame,
   declaredVariables = [],
@@ -517,3 +517,7 @@ export default function RuntimeAssignmentsDrawer({
     </aside>
   );
 }
+
+// Other editor interactions (drag, pan, selection) do not change runtime values.
+// Preserve the drawer tree until its actual runtime props change.
+export default memo(RuntimeAssignmentsDrawer);
