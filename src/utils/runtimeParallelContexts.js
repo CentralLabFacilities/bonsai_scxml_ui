@@ -25,14 +25,22 @@ export function ancestorContainers(context, nodeId) {
 
 export const parallelKey = ({ node, context }) => `${context.document.tab.id}:${context.suffix}:${node.id}`;
 
-export function parallelOf(context, nodeId) {
+/** All enclosing Parallels, outermost last. A nested Parallel must not hide
+ * its parent's active lane from the camera or the runtime overview. */
+function enclosingParallels(context, nodeId) {
   const self = context.document.byId.get(nodeId);
-  if (self?.type === "parallel") return { node: self, context, lane: null, key: parallelKey({ node: self, context }) };
   const ancestors = ancestorContainers(context, nodeId);
-  const parallel = ancestors.find(({ node }) => node.type === "parallel");
-  if (!parallel) return null;
-  const lane = ancestors.find(({ node, context: ctx }) => node.type === "parallelLane" && ctx === parallel.context);
-  return { ...parallel, lane: lane?.node || null, key: parallelKey(parallel) };
+  const parents = self?.type === "parallel" ? [{ node: self, context }] : [];
+  return [...parents, ...ancestors.filter(({ node }) => node.type === "parallel")].map((parallel) => {
+    const lane = ancestors.find(({ node, context: owner }) =>
+      node.type === "parallelLane" && owner === parallel.context && node.parentId === parallel.node.id,
+    );
+    return { ...parallel, lane: lane?.node || null, key: parallelKey(parallel) };
+  });
+}
+
+export function parallelOf(context, nodeId) {
+  return enclosingParallels(context, nodeId)[0] || null;
 }
 
 export function getActiveParallelViews(model, activeStates, options = {}) {
@@ -48,33 +56,33 @@ export function getActiveParallelViews(model, activeStates, options = {}) {
     const matches = model.states.get(state) || model.containerStates?.get(state) || [];
     if (matches.length !== 1) continue;
     const { context, group } = matches[0];
-    const parallel = parallelOf(context, group.id);
-    if (!parallel || (!current.has(state) && !exitedParallelKeys.has(parallel.key))) continue;
-    if (!views.has(parallel.key))
-      views.set(parallel.key, { ...parallel, lanes: new Map(), exiting: exitedParallelKeys.has(parallel.key) });
-    const view = views.get(parallel.key);
-    // Structural Parallel entry is not itself a lane.
-    if (group.id === parallel.node.id) continue;
-    const laneId = parallel.lane?.id || "";
-    const lane = view.lanes.get(laneId) || {
-      id: laneId,
-      name: parallel.lane?.data?.label || "Lane",
-      states: [],
-      previouslyActive: [],
-      finished: false,
-      status: "pending",
-    };
-    const final =
-      completedStates.has(state) ||
-      String(group.identity || "")
-        .split("#")[0]
-        .split(".")
-        .at(-1)
-        .toLowerCase() === "end";
-    if (current.has(state)) lane.states.push(state);
-    else lane.previouslyActive.push(state);
-    if (final) lane.finished = true;
-    view.lanes.set(laneId, lane);
+    for (const parallel of enclosingParallels(context, group.id)) {
+      if (!current.has(state) && !exitedParallelKeys.has(parallel.key)) continue;
+      if (!views.has(parallel.key))
+        views.set(parallel.key, { ...parallel, lanes: new Map(), exiting: exitedParallelKeys.has(parallel.key) });
+      const view = views.get(parallel.key);
+      if (group.id === parallel.node.id) continue;
+      const laneId = parallel.lane?.id || "";
+      const lane = view.lanes.get(laneId) || {
+        id: laneId,
+        name: parallel.lane?.data?.label || "Lane",
+        states: [],
+        previouslyActive: [],
+        finished: false,
+        status: "pending",
+      };
+      const final =
+        completedStates.has(state) ||
+        String(group.identity || "")
+          .split("#")[0]
+          .split(".")
+          .at(-1)
+          .toLowerCase() === "end";
+      if (current.has(state)) lane.states.push(state);
+      else lane.previouslyActive.push(state);
+      if (final) lane.finished = true;
+      view.lanes.set(laneId, lane);
+    }
   }
   // Preserve completed lanes while their sibling lanes are still running.
   // A previously completed Parallel must not reappear simply because its
@@ -82,19 +90,20 @@ export function getActiveParallelViews(model, activeStates, options = {}) {
   for (const state of completedStates) {
     const matches = model.states.get(state) || model.containerStates?.get(state) || [];
     if (matches.length !== 1) continue;
-    const parallel = parallelOf(matches[0].context, matches[0].group.id);
-    const view = parallel && views.get(parallel.key);
-    if (!view || !parallel.lane) continue;
-    const lane = view.lanes.get(parallel.lane.id) || {
-      id: parallel.lane.id,
-      name: parallel.lane.data?.label || "Lane",
-      states: [],
-      previouslyActive: [],
-      finished: false,
-      status: "pending",
-    };
-    lane.finished = true;
-    view.lanes.set(lane.id, lane);
+    for (const parallel of enclosingParallels(matches[0].context, matches[0].group.id)) {
+      const view = views.get(parallel.key);
+      if (!view || !parallel.lane) continue;
+      const lane = view.lanes.get(parallel.lane.id) || {
+        id: parallel.lane.id,
+        name: parallel.lane.data?.label || "Lane",
+        states: [],
+        previouslyActive: [],
+        finished: false,
+        status: "pending",
+      };
+      lane.finished = true;
+      view.lanes.set(lane.id, lane);
+    }
   }
   return [...views.values()].map((view) => {
     // Display the complete lane list, including lanes not entered yet.
@@ -124,6 +133,100 @@ export function getActiveParallelViews(model, activeStates, options = {}) {
   });
 }
 
+/** Choose one stable camera owner. Concurrent sibling activity must not change
+ * the whole-Parallel key, nor the selected lane's camera target. The caller
+ * resolves runtime state IDs against its loaded, invocation-qualified model. */
+export function parallelCameraPlan(views, selection, tabId, resolveStateIds) {
+  const visible = (views || []).filter(
+    (view) => !view.exiting && view.context.document.tab.id === tabId,
+  ).sort((a, b) => {
+    const depth = (view) => {
+      let ancestor = view.context;
+      let n = 0;
+      while (ancestor.parent) { n += 1; ancestor = ancestor.parent; }
+      return n + ancestorContainers(view.context, view.node.id).length;
+    };
+    return depth(a) - depth(b);
+  });
+  // The selected lane might be executing in a sub-SM tab. In that case
+  // project just its states into the current document; never follow siblings.
+  const selectedView = (views || []).find((view) => !view.exiting && view.key === selection?.parallelKey);
+  const selectedLane = selectedView?.lanes.find((item) => item.id === selection?.laneId);
+  // Once the chosen lane finishes, show its enclosing Parallel rather than
+  // automatically chasing an unrelated still-active sibling lane.
+  if (selectedLane?.finished && !selectedLane.states.length) {
+    return {
+      view: selectedView,
+      lane: null,
+      cameraIds: selectedView.context.document.tab.id === tabId ? [selectedView.node.id] : [],
+      key: `parallel:${selectedView.key}:selected-lane-completed:${tabId}`,
+    };
+  }
+  if (selectedLane && selectedView.context.document.tab.id !== tabId) {
+    const states = [...new Set(selectedLane.states || [])].sort();
+    const ids = [...new Set(states.flatMap((state) => resolveStateIds(state) || []))];
+    return {
+      view: selectedView,
+      lane: selectedLane,
+      cameraIds: ids,
+      key: `lane:${selectedView.key}:${selectedLane.id}:${tabId}:${states.join("|")}`,
+    };
+  }
+  const view = visible.find((item) => item.key === selection?.parallelKey) || visible[0];
+  if (!view) {
+    // The user manually opened another document while the parent Parallel is
+    // active. Keep this tab stationary rather than following sibling events.
+    const elsewhere = (views || []).find((item) => !item.exiting);
+    return elsewhere ? {
+      view: elsewhere,
+      lane: null,
+      cameraIds: [],
+      key: `parallel:${elsewhere.key}:other-tab:${tabId}`,
+    } : null;
+  }
+  const lane = selection?.parallelKey === view.key
+    ? view.lanes.find((item) => item.id === selection?.laneId)
+    : null;
+  if (!lane) {
+    return {
+      view,
+      lane: null,
+      cameraIds: [view.node.id],
+      key: `parallel:${view.key}`,
+    };
+  }
+  const stateIds = [...new Set(lane.states || [])].sort();
+  const cameraIds = [...new Set(stateIds.flatMap((state) => resolveStateIds(state) || []))];
+  return {
+    view,
+    lane,
+    cameraIds: cameraIds.length ? cameraIds : [lane.id || view.node.id],
+    key: `lane:${view.key}:${lane.id}:${tabId}:${stateIds.join("|")}`,
+  };
+}
+
+/** A brief empty active-state set between callbacks is not proof that a
+ * Parallel exited. Keep the last camera owner until a verified exit or a
+ * state outside the Parallel takes over. */
+export function retainParallelCameraPlan(current, previous, exitingKeys, activeStates, model, status) {
+  if (current) return current;
+  if (!previous || status !== "RUNNING" || (exitingKeys || []).includes(previous.view.key)) return null;
+  if (!(activeStates || []).length) return previous;
+  let hasUnresolved = false;
+  const stillInside = activeStates.some((state) => {
+    const matches = model?.states.get(state) || model?.containerStates?.get(state) || [];
+    if (matches.length !== 1) {
+      // A child tab may not be compiled yet. Do not release the Parallel
+      // lock merely because an invocation-qualified state is unresolved.
+      hasUnresolved = true;
+      return false;
+    }
+    return enclosingParallels(matches[0].context, matches[0].group.id)
+      .some((parallel) => parallel.key === previous.view.key);
+  });
+  return stillInside || hasUnresolved ? previous : null;
+}
+
 /** Check the actual source/target hierarchy. Only a transition with a source
  * inside a Parallel and a target outside it cancels sibling lanes. */
 export function getExitedParallelKeys(model, transitions = []) {
@@ -133,9 +236,9 @@ export function getExitedParallelKeys(model, transitions = []) {
     const sources = model.states.get(edge.source) || model.containerStates?.get(edge.source) || [];
     const targets = model.states.get(edge.target) || model.containerStates?.get(edge.target) || [];
     if (sources.length !== 1 || targets.length !== 1) continue;
-    const from = parallelOf(sources[0].context, sources[0].group.id);
-    const to = parallelOf(targets[0].context, targets[0].group.id);
-    if (from && to?.key !== from.key) result.add(from.key);
+    const sourceParallels = enclosingParallels(sources[0].context, sources[0].group.id);
+    const targetKeys = new Set(enclosingParallels(targets[0].context, targets[0].group.id).map((view) => view.key));
+    for (const from of sourceParallels) if (!targetKeys.has(from.key)) result.add(from.key);
   }
   return [...result];
 }

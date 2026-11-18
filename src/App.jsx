@@ -51,6 +51,8 @@ import {
   skillForRuntimeState,
   historicalSlotValue,
   normalizeMemoryPath,
+  runtimeSlotPathCandidates,
+  resolveRuntimeSlotObservation,
   observationForRuntimeFrame,
 } from "./utils/runtimeMemorySlots.js";
 import { traceSlot, summarizeSlot } from "./utils/slotReplayTrace.js";
@@ -59,7 +61,7 @@ import { useRuntimeEventTimeline } from "./hooks/editor/useRuntimeEventTimeline.
 import RuntimeAssignmentsDrawer, { RuntimeAssignmentsLedge } from "./components/inspector/RuntimeAssignmentsDrawer.jsx";
 import { decorateLiveRuntimeNodes } from "./utils/runtimeLiveValues.js";
 import { getRefreshableSkillNodeIds } from "./utils/skillDefinitionRefresh.js";
-import { resolveRightPanelSwitch } from "./utils/rightPanelSwitch.js";
+import { resolveRightPanelSwitch, resolveVisibleRightPanel } from "./utils/rightPanelSwitch.js";
 import { useEditorFind } from "./hooks/interaction/useEditorFind";
 import { useGlobalEditorShortcuts } from "./hooks/interaction/useGlobalEditorShortcuts";
 import { useEditorLibraryDrop } from "./hooks/library/useEditorLibraryDrop";
@@ -289,13 +291,25 @@ function AppContent() {
   useEffect(() => {
     collapseLibraryRef.current = () => basePanels.closePanel("library");
   }, [basePanels]);
+  // The Inspector and Run Assignments share one grid track. Runtime startup
+  // and selection can schedule independent updates in the same React batch.
+  // Derive one visible owner so an old Inspector-open preference never covers
+  // Run Assignments or makes the editor allocate a phantom second panel.
+  const assignmentsAvailable = isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0;
+  const { inspectorVisible, assignmentsVisible } = resolveVisibleRightPanel({
+    inspectorOpen: basePanels.inspectorOpen,
+    assignmentsOpen: runtimeAssignmentsOpen,
+    assignmentsAvailable,
+  });
   // Both right-side panels act as tabs: opening either closes the other.
   // Library visibility and inspector width preferences remain independent.
   const switchRightPanel = useCallback(
     (action) => {
       const next = resolveRightPanelSwitch(
         {
-          inspectorOpen: basePanels.inspectorOpen,
+          // The visible state (not a hidden stale preference) determines what
+          // an Inspector-ledge click should do while Run Assignments is open.
+          inspectorOpen: inspectorVisible,
           assignmentsOpen: runtimeAssignmentsOpen,
         },
         action,
@@ -308,7 +322,7 @@ function AppContent() {
         setRuntimeAssignmentsOpen(next.assignmentsOpen);
       }
     },
-    [basePanels.inspectorOpen, basePanels.showPanel, basePanels.closePanel, runtimeAssignmentsOpen],
+    [inspectorVisible, basePanels.inspectorOpen, basePanels.showPanel, basePanels.closePanel, runtimeAssignmentsOpen],
   );
   const showPanel = useCallback(
     (side) => {
@@ -324,11 +338,24 @@ function AppContent() {
     },
     [switchRightPanel, basePanels.togglePanel],
   );
-  const panels = { ...basePanels, showPanel, togglePanel };
+  const panels = {
+    ...basePanels,
+    inspectorOpen: inspectorVisible,
+    // An Inspector drawer suppressed by Run Assignments must not leave an
+    // invisible backdrop intercepting input in the editor.
+    drawer: assignmentsVisible && basePanels.drawer === "inspector" ? null : basePanels.drawer,
+    showPanel,
+    togglePanel,
+  };
   const toggleRuntimeAssignments = useCallback(() => switchRightPanel("toggle-assignments"), [switchRightPanel]);
   const showRuntimeAssignments = useCallback(() => switchRightPanel("open-assignments"), [switchRightPanel]);
-  const assignmentsVisible =
-    runtimeAssignmentsOpen && (isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0);
+  // Reconcile stale underlying Inspector state caused by concurrent updates.
+  // The derived visibility above prevents any transient overlap before this
+  // effect runs; this reconciliation also preserves correct ledge behavior
+  // when Run Assignments is subsequently closed.
+  useEffect(() => {
+    if (assignmentsVisible && basePanels.inspectorOpen) basePanels.closePanel("inspector");
+  }, [assignmentsVisible, basePanels.inspectorOpen, basePanels.closePanel]);
   const maxAssignmentsWidth = Math.max(0, panels.inspectorMaxWidth - (panels.isDocked ? 6 : 0));
   const minAssignmentsWidth = Math.min(190, maxAssignmentsWidth);
   const constrainAssignmentsWidth = (value) => Math.max(minAssignmentsWidth, Math.min(maxAssignmentsWidth, value));
@@ -1222,6 +1249,7 @@ function AppContent() {
           autoOpenSubMachines: update.autoOpenSubMachines,
           autoExpandCompounds: update.autoExpandCompounds,
           autoExpandParallels: update.autoExpandParallels,
+          parallelFocus: update.parallelFocus,
         };
         setLiveExecution((previous) => (previous ? { ...previous, ...liveOptionsRef.current } : previous));
       }
@@ -1759,10 +1787,11 @@ function AppContent() {
     return match ? { ...match, state } : null;
   }, [selectedRuntimeFrame?.id, activeTabId, tabs]);
 
-  // The Run Assignments slot inspector is scoped to the OPEN editor tab,
-  // not every document in the run. A child MemorySlot is addressed by its
-  // runtime invocation suffix, but displayed using its original XPath.
-  const runtimeConfiguredSlots = useMemo(() => {
+  // A canvas slot is a file-local XPath, but a runtime MemorySlot may live
+  // under an invocation suffix. Derive the same verified context for the node
+  // overlay and the Run Assignments inspector, rather than searching every
+  // opened state machine for an identically named slot.
+  const runtimeSlotContext = useMemo(() => {
     const contexts = runtimeTabContexts.filter((context) => context.tabId === activeTabId);
     const frameStates = [
       selectedRuntimeFrame?.transition?.source,
@@ -1770,68 +1799,131 @@ function AppContent() {
       selectedRuntimeFrame?.transition?.target,
       ...(selectedRuntimeFrame?.activeStates || []),
     ].filter(Boolean);
-    const matched = contexts.filter(({ suffix }) =>
+    const matches = contexts.filter(({ suffix }) =>
       suffix && frameStates.some((state) => String(state).endsWith(suffix))
     ).sort((a, b) => b.suffix.length - a.suffix.length);
-    const context = matched[0] || (contexts.length === 1 ? contexts[0] : null);
-    // When a child cannot be matched to a verified runtime invocation,
-    // showing the unsuffixed root value would be worse than no value.
-    if (!context && (contexts.length > 1 || activeWorkflowTab?.parentTabId)) return [];
-    const suffix = context?.suffix || "";
+    const context = matches[0] || (contexts.length === 1 ? contexts[0] : null);
+    return {
+      suffix: context?.suffix || "",
+      // Multiple live invocations of one open child document must never be
+      // silently collapsed to the unsuffixed/root MemorySlot.
+      ambiguous: !context && (contexts.length > 1 || Boolean(activeWorkflowTab?.parentTabId)),
+    };
+  }, [runtimeTabContexts, activeTabId, activeWorkflowTab?.parentTabId, selectedRuntimeFrame]);
+
+  // Only accept descendant paths for slots the current document explicitly
+  // exposes to a child via <inheritSlot>. Validate child identity against the
+  // wrapper and the actual opened child tab (or the selected runtime state).
+  const runtimeChildSlotSuffixes = useMemo(() => {
+    const byPath = new Map();
+    const frameStates = [
+      selectedRuntimeFrame?.state,
+      selectedRuntimeFrame?.transition?.source,
+      selectedRuntimeFrame?.transition?.target,
+      ...(selectedRuntimeFrame?.activeStates || []),
+    ].filter(Boolean).map(String);
+    const wrappers = new Map(nodes.filter((node) => node.type === "submachine").map((node) => [node.id, node]));
+    for (const slotNode of slotNodes) {
+      const path = normalizeMemoryPath(slotNode.data?.path || slotNode.data?.label);
+      if (!path) continue;
+      const suffixes = new Set();
+      for (const requirement of slotNode.data?.requiredByChildren || []) {
+        const wrapper = wrappers.get(requirement.childNodeId);
+        if (!wrapper) continue;
+        const label = String(wrapper.data?.label || wrapper.data?.fullSkillName || "").trim();
+        const src = String(wrapper.data?.src || "").trim();
+        for (const tab of tabs) {
+          if (tab.parentTabId !== activeTabId) continue;
+          if (!((src && tab.sourcePath === src) || (label && tab.title === label))) continue;
+          for (const context of runtimeTabContexts) {
+            if (context.tabId === tab.id && context.suffix) suffixes.add(context.suffix);
+          }
+        }
+        // Even before opening the child tab, its invocation can be verified
+        // from an actual selected runtime state carrying the wrapper suffix.
+        const observedSuffix = label ? `#${label}${runtimeSlotContext.suffix}` : "";
+        if (observedSuffix && frameStates.some((state) => state.endsWith(observedSuffix)))
+          suffixes.add(observedSuffix);
+      }
+      if (suffixes.size) byPath.set(path, [...suffixes]);
+    }
+    return byPath;
+  }, [nodes, slotNodes, tabs, activeTabId, runtimeTabContexts, runtimeSlotContext.suffix, selectedRuntimeFrame]);
+
+  // The Run Assignments slot inspector is scoped to the OPEN editor tab.
+  // Keep the exact runtime path for event lookups and a separate displayPath.
+  // An inheritSlot can read the same underlying path via its parent; a slot
+  // explicitly required by a child may have a child-qualified write.
+  const runtimeConfiguredSlots = useMemo(() => {
+    if (runtimeSlotContext.ambiguous) return [];
     const seen = new Map();
     const add = (slot) => {
-      const displayPath = normalizeMemoryPath(slot.path);
+      const displayPath = normalizeMemoryPath(slot.inherited?.xpath || slot.path || slot.xpath);
       if (!displayPath) return;
-      const path = suffix && !displayPath.endsWith(suffix) ? `${displayPath}${suffix}` : displayPath;
-      if (!seen.has(path)) seen.set(path, { ...slot, path, displayPath });
+      const inherited = Boolean(slot.inherited || slot.currentMachineInherited || slot.slotKind === "inheritSlot");
+      const paths = runtimeSlotPathCandidates(displayPath, {
+        suffix: runtimeSlotContext.suffix,
+        inherited,
+        childSuffixes: runtimeChildSlotSuffixes.get(displayPath) || [],
+      });
+      const path = paths[0];
+      if (!path) return;
+      const existing = seen.get(path);
+      if (existing) {
+        existing.candidatePaths = [...new Set([...existing.candidatePaths, ...paths])];
+      } else seen.set(path, { ...slot, path, displayPath, candidatePaths: paths });
     };
-    // Only declarations and skills of this file are part of this inspector.
-    // A submachine wrapper's inherited child requirements are NOT additional
-    // slots declared in the parent state machine.
     nodes.filter((node) => node.type === "custom").forEach((node) => configuredSkillSlots(node).forEach(add));
-    manualSlots.forEach((slot) => add({
-      path: slot.inherited?.xpath || slot.path || slot.xpath,
-      key: slot.key || "",
-      type: slot.type || "",
-      access: "read/write",
-    }));
+    manualSlots.forEach(add);
     const declared = new Set([...seen.values()].map((slot) => slot.displayPath));
     slotNodes.forEach((slot) => {
       const path = normalizeMemoryPath(slot.data?.path || slot.data?.label);
-      if (path && declared.has(path))
-        add({ path, key: slot.data?.label || path, access: "read/write", type: "" });
+      if (path && declared.has(path)) add({
+        path,
+        key: slot.data?.label || path,
+        access: "read/write",
+        type: "",
+        currentMachineInherited: slot.data?.currentMachineInherited,
+      });
     });
     return [...seen.values()];
-  }, [nodes, manualSlots, slotNodes, activeTabId, activeWorkflowTab?.parentTabId, runtimeTabContexts, selectedRuntimeFrame]);
+  }, [nodes, manualSlots, slotNodes, runtimeSlotContext, runtimeChildSlotSuffixes]);
 
   const canvasRuntimeNodes = useMemo(() => {
-    if (runtimeLog || !selectedRuntimeFrame) return liveVisibleNodes;
+    if (runtimeLog || (!selectedRuntimeFrame && !runtimeEventTimeline.watching)) return liveVisibleNodes;
     const slots = {};
+    const configuredByPath = new Map(runtimeConfiguredSlots.map((slot) => [slot.displayPath, slot]));
     for (const node of liveVisibleNodes) {
       if (node.type !== "slot") continue;
       const path = normalizeMemoryPath(node.data?.path || node.data?.label);
-      if (!path) continue;
-      const item = runtimeEventTimeline.watching
-        ? runtimeMemory.live[path]
-        : historicalSlotValue(
-            runtimeMemory.observations,
-            selectedRuntimeFrame,
-            path,
-            runtimeMemory.writes,
-            runtimeMemory.skillExecutions,
-          );
-      if (item?.status === "available")
-        slots[path] = {
-          value: item.value,
-          timestamp: item.observedAt || (item.stale ? "Stale" : "live"),
-          dataType: item.type,
-          stale: Boolean(item.stale),
-        };
+      if (!path || runtimeSlotContext.ambiguous) continue;
+      const configured = configuredByPath.get(path);
+      const paths = configured?.candidatePaths || runtimeSlotPathCandidates(path, {
+        suffix: runtimeSlotContext.suffix,
+        inherited: Boolean(node.data?.currentMachineInherited || node.data?.inherited || node.data?.slotKind === "inheritSlot"),
+        childSuffixes: runtimeChildSlotSuffixes.get(path) || [],
+      });
+      const item = resolveRuntimeSlotObservation(paths, (candidate) =>
+        runtimeEventTimeline.watching
+          ? runtimeMemory.live[candidate]
+          : historicalSlotValue(
+              runtimeMemory.observations,
+              selectedRuntimeFrame,
+              candidate,
+              runtimeMemory.writes,
+              runtimeMemory.skillExecutions,
+            ),
+      );
+      if (item) slots[path] = {
+        value: item.value,
+        timestamp: item.observedAt || (item.stale ? "Stale" : "live"),
+        dataType: item.type,
+        stale: Boolean(item.stale),
+      };
     }
-    return decorateLiveRuntimeNodes(liveVisibleNodes, { ...selectedRuntimeFrame, slots }, runtimeParameterNodeIds);
+    return decorateLiveRuntimeNodes(liveVisibleNodes, { ...(selectedRuntimeFrame || {}), slots }, runtimeParameterNodeIds);
   }, [
     runtimeLog,
-    liveActive,
     liveVisibleNodes,
     selectedRuntimeFrame,
     runtimeEventTimeline.watching,
@@ -1840,6 +1932,9 @@ function AppContent() {
     runtimeMemory.writes,
     runtimeMemory.skillExecutions,
     runtimeParameterNodeIds,
+    runtimeConfiguredSlots,
+    runtimeSlotContext,
+    runtimeChildSlotSuffixes,
   ]);
 
   // Diagnostic only: prove whether replay resolved the value and whether the
@@ -1848,17 +1943,26 @@ function AppContent() {
     if (!selectedRuntimeFrame || runtimeEventTimeline.watching) return;
     const linked = observationForRuntimeFrame(runtimeMemory.observations, selectedRuntimeFrame);
     const nodesToCheck = liveVisibleNodes.filter((node) => node.type === "slot");
+    const configuredByPath = new Map(runtimeConfiguredSlots.map((slot) => [slot.displayPath, slot]));
     const checks = nodesToCheck.map((node) => {
       const path = normalizeMemoryPath(node.data?.path || node.data?.label);
-      const chosen = historicalSlotValue(
-        runtimeMemory.observations,
-        selectedRuntimeFrame,
-        path,
-        runtimeMemory.writes,
-        runtimeMemory.skillExecutions,
+      const candidatePaths = configuredByPath.get(path)?.candidatePaths || runtimeSlotPathCandidates(path, {
+        suffix: runtimeSlotContext.suffix,
+        inherited: Boolean(node.data?.currentMachineInherited || node.data?.inherited),
+        childSuffixes: runtimeChildSlotSuffixes.get(path) || [],
+      });
+      const chosen = !runtimeSlotContext.ambiguous && resolveRuntimeSlotObservation(candidatePaths, (candidate) =>
+        historicalSlotValue(
+          runtimeMemory.observations,
+          selectedRuntimeFrame,
+          candidate,
+          runtimeMemory.writes,
+          runtimeMemory.skillExecutions,
+        ),
       );
       const decorated = canvasRuntimeNodes.find((item) => item.id === node.id);
       return {
+        candidatePaths,
         nodeId: node.id,
         rawPath: node.data?.path || node.data?.label || "",
         normalizedPath: path,
@@ -1898,6 +2002,9 @@ function AppContent() {
     runtimeMemory.skillExecutions,
     liveVisibleNodes,
     canvasRuntimeNodes,
+    runtimeConfiguredSlots,
+    runtimeSlotContext,
+    runtimeChildSlotSuffixes,
   ]);
 
   return (
@@ -1956,7 +2063,7 @@ function AppContent() {
           // Inspector and Run Assignments share one right-hand dock width.
           // No collapsed track is reserved merely to hold the ledges.
           "--right-dock-width":
-            runtimeAssignmentsOpen && (isRuntimeCommanderOpen || runtimeEventTimeline.frames.length > 0)
+            assignmentsVisible
               ? `${effectiveAssignmentsWidth}px`
               : panels.isDocked && panels.inspectorOpen
                 ? `${panels.inspectorWidth}px`

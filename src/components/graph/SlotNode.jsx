@@ -110,10 +110,10 @@ function SlotNode({ id, data, selected = false }) {
       {runtimeSlotValue && (
         <div
           className="slot-node-runtime-value"
-          title={`Observed at ${runtimeSlotValue.timestamp || "runtime"}${runtimeSlotValue.stale ? " · Stale" : ""}`}
+          title={`${runtimeValueText}\nObserved at ${runtimeSlotValue.timestamp || "runtime"}${runtimeSlotValue.stale ? " · Stale" : ""}`}
         >
           <span className="slot-node-runtime-value-label">Value</span>
-          <code>{runtimeValueText}</code>
+          <code className="nodrag nopan" title={runtimeValueText}>{runtimeValueText}</code>
         </div>
       )}
 

@@ -33,6 +33,60 @@ export function chronologicalMemoryWrites(writes = []) {
   });
 }
 
+/** Resolve a slot's actual runtime path without confusing separate sub-SM
+ * invocations. Non-inherited slots belong only to their owning invocation.
+ * An inheritSlot may share its ancestor's path, and a parent slot explicitly
+ * required by child machines may receive writes under a child path. The
+ * related child suffixes must come from verified child/wrapper mappings.
+ */
+export function runtimeSlotPathCandidates(path, { suffix = "", inherited = false, childSuffixes = [] } = {}) {
+  const normalized = normalizeMemoryPath(path);
+  if (!normalized) return [];
+  const context = String(suffix || "");
+  const base = context && normalized.endsWith(context)
+    ? normalized.slice(0, -context.length)
+    : normalized;
+  const paths = [];
+  const add = (candidate) => {
+    if (candidate && !paths.includes(candidate)) paths.push(candidate);
+  };
+  add(`${base}${context}`);
+  if (inherited && context) {
+    // #grandchild#child -> #child -> root. Never borrow a sibling's slot.
+    const parts = context.split("#").filter(Boolean);
+    for (let i = 1; i <= parts.length; i += 1)
+      add(`${base}${i === parts.length ? "" : `#${parts.slice(i).join("#")}`}`);
+  }
+  for (const childSuffix of childSuffixes) {
+    const child = String(childSuffix || "");
+    if (child && child !== context) add(`${base}${child}`);
+  }
+  return paths;
+}
+
+/** A slot may have been written through its verified inherited parent/child
+ * path. Prefer the most recently observed value at this timeline position,
+ * falling back to the exact invocation on equal timestamps. The caller's
+ * resolver must enforce historical cutoffs before returning a candidate.
+ */
+export function resolveRuntimeSlotObservation(paths, lookup) {
+  let best = null;
+  let bestAt = -Infinity;
+  for (const path of paths || []) {
+    const value = lookup(path);
+    if (value?.status !== "available") continue;
+    const at = Number.isFinite(value.observedAtMs)
+      ? value.observedAtMs
+      : Date.parse(value.observedAt || "");
+    const time = Number.isFinite(at) ? at : -Infinity;
+    if (!best || time > bestAt) {
+      best = { ...value, path };
+      bestAt = time;
+    }
+  }
+  return best;
+}
+
 /** The mappings belong to the editor's semantic skill node, never to a slot
  * globally discovered via Memory WebSupport. inheritSlot's xpath wins. */
 export function configuredSkillSlots(node) {
@@ -274,12 +328,20 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
   // carries no resolved request at all. Treat the latter as a possible writer
   // of that same path, unless its declared outputs explicitly exclude it.
   const outputsOf = (skill) => (skill.slots || []).filter((slot) => String(slot.access || "").includes("write"));
+  // Editor mappings use file-local XPaths; SSE events can use invocation-
+  // qualified paths. Only accept a qualified match when the writer's exact
+  // runtime state carries that suffix, never merely because the base path
+  // matches (which would mix independent parallel/sub-SM invocations).
+  const outputMatches = (skill, slot) => {
+    const outputPath = normalizeMemoryPath(slot.path);
+    if (!outputPath || outputPath === normalized) return true;
+    if (!normalized.startsWith(`${outputPath}#`)) return false;
+    const invocation = normalized.slice(outputPath.length);
+    return text(skill.state).endsWith(invocation);
+  };
   const familyOf = (skill) => text(skill.state).replace(/#.*$/, "");
   const directlyEligible = allCandidates.filter((skill) =>
-    outputsOf(skill).some((slot) => {
-      const outputPath = normalizeMemoryPath(slot.path);
-      return !outputPath || outputPath === normalized;
-    }),
+    outputsOf(skill).some((slot) => outputMatches(skill, slot)),
   );
   const writerFamilies = new Set(directlyEligible.map(familyOf));
   const writerCandidates = allCandidates.filter((skill) => {
@@ -287,10 +349,7 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
     const outputs = outputsOf(skill);
     return (
       !outputs.length ||
-      outputs.some((slot) => {
-        const outputPath = normalizeMemoryPath(slot.path);
-        return !outputPath || outputPath === normalized;
-      })
+      outputs.some((slot) => outputMatches(skill, slot))
     );
   });
   // Fall back to proximity only if there is no positive writer information.
@@ -300,7 +359,7 @@ export function inferSlotWriteHistory(writes = [], skillExecutions = [], path) {
   );
   const cost = (event, skill) => {
     const output = (skill.slots || []).filter((slot) => String(slot.access || "").includes("write"));
-    const exact = output.some((slot) => normalizeMemoryPath(slot.path) === normalized);
+    const exact = output.some((slot) => outputMatches(skill, slot) && Boolean(normalizeMemoryPath(slot.path)));
     const unbound = output.some((slot) => !normalizeMemoryPath(slot.path));
     const family = runtimeSkillStateKey(skill.state).replace(/#.*$/, "");
     const hintPenalty = exact ? 0 : unbound ? 0.7 : declaredWriters.has(family) ? 1.5 : output.length ? 30 : 6;

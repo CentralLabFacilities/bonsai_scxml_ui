@@ -19,3 +19,16 @@ export function resolveRightPanelSwitch({ inspectorOpen = false, assignmentsOpen
       return { inspectorOpen, assignmentsOpen };
   }
 }
+
+/**
+ * Run Assignments owns the shared right-hand dock whenever it is visible.
+ * Keep this derived ownership separate from the persisted Inspector preference:
+ * a stale/concurrent Inspector-open update must not display two panels.
+ */
+export function resolveVisibleRightPanel({ inspectorOpen = false, assignmentsOpen = false, assignmentsAvailable = false }) {
+  const assignmentsVisible = Boolean(assignmentsOpen && assignmentsAvailable);
+  return {
+    inspectorVisible: Boolean(inspectorOpen && !assignmentsVisible),
+    assignmentsVisible,
+  };
+}

@@ -314,9 +314,16 @@ export function useRuntimeMemorySlots() {
           : previous.writes,
         live: {
           ...previous.live,
-          [path]: { path, value, type: previous.used[path] || previous.live[path]?.type || "",
-            status: "available", stale: false, observedAt, observedAtMs,
-            timestampSource, observationSource: "sse-write" },
+          // Event delivery may be delayed relative to the Java write-time
+          // timestamp. Preserve the newest actual value, while keeping every
+          // write in historical writes for replay.
+          [path]: timestampSource === "backend" &&
+            Number.isFinite(previous.live[path]?.observedAtMs) &&
+            previous.live[path].observedAtMs > observedAtMs
+              ? previous.live[path]
+              : { path, value, type: previous.used[path] || previous.live[path]?.type || "",
+                  status: "available", stale: false, observedAt, observedAtMs,
+                  timestampSource, observationSource: "sse-write" },
         },
       }));
     };

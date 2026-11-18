@@ -5,6 +5,7 @@ import { getRootRuntimeVariableValues } from "../../utils/runtimeValueDisplay.js
 import {
   latestSlotObservation,
   historicalSlotValue,
+  resolveRuntimeSlotObservation,
   observationForRuntimeFrame,
   configuredSkillSlots,
 } from "../../utils/runtimeMemorySlots.js";
@@ -165,9 +166,13 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
   const values = slots.map((slot) => {
     // The selected skill/transition snapshot owns its post-event GET sample.
     // Other slots use their own most recent observation at this historical point.
-    const observed = replay
+    const observed = resolveRuntimeSlotObservation(slot.candidatePaths || [slot.path], (path) =>
+      replay
+        ? historicalSlotValue(observations, frame, path, memory?.writes, memory?.skillExecutions)
+        : memory?.live?.[path] || latestSlotObservation(observations, path),
+    ) || (replay
       ? historicalSlotValue(observations, frame, slot.path, memory?.writes, memory?.skillExecutions)
-      : memory?.live?.[slot.path] || latestSlotObservation(observations, slot.path);
+      : memory?.live?.[slot.path] || latestSlotObservation(observations, slot.path));
     const available = observed?.status === "available";
     return {
       ...slot,
@@ -213,7 +218,7 @@ function RuntimeMemorySlots({ memory, slots = [], frame, timeline }) {
                 </div>
                 <div
                   className={`datamodel-compact-value-input runtime-readonly-value ${entry.observed?.stale ? "runtime-stale-value" : ""}`}
-                  title={tooltip}
+                  title={[String(entry.value ?? ""), tooltip].filter(Boolean).join("\n")}
                 >
                   {entry.value}
                 </div>

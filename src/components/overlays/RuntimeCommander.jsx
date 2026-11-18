@@ -57,6 +57,7 @@ export default function RuntimeCommander({
   onRuntimeLive,
   onRuntimeFocusSnapshot,
   focusCameraRequest,
+  runtimeParallelViews = [],
   onRuntimeStarted,
   onBeforeRuntimeStart,
   behaviorDirectories = [],
@@ -73,6 +74,7 @@ export default function RuntimeCommander({
   const [loadSucceeded, setLoadSucceeded] = useState(null);
   const [isFollowing, setIsFollowing] = useState(false);
   const [followCamera, setFollowCamera] = useState(true);
+  const [parallelFocus, setParallelFocus] = useState(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [timelineExpanded, setTimelineExpanded] = useState(false);
   const [diagnosticsPopupOpen, setDiagnosticsPopupOpen] = useState(false);
@@ -116,6 +118,7 @@ export default function RuntimeCommander({
     autoOpenSubMachines: false,
     autoExpandCompounds: false,
     autoExpandParallels: false,
+    parallelFocus: null,
   });
   const observedRunningRef = useRef(false);
   const terminalStopRequestedRef = useRef(false);
@@ -603,6 +606,8 @@ export default function RuntimeCommander({
         setLoadSucceeded(null);
         setDiagnosticsPopupOpen(false);
         setTimelineExpanded(false);
+        setParallelFocus(null);
+        displayOptionsRef.current.parallelFocus = null;
         setAutomaticEnabled(true);
         manualModeRef.current = false;
         setEventName("");
@@ -676,6 +681,9 @@ export default function RuntimeCommander({
           action === "fire_event" ? selectedEventName : action === "stop_events" ? JSON.stringify(enabled) : undefined;
         if (action === "fire_event" && !body) throw new Error("Enter a transition event first.");
         if (action === "start") {
+          // A new run starts with whole-Parallel focus, not an old lane lock.
+          setParallelFocus(null);
+          displayOptionsRef.current.parallelFocus = null;
           stopReadyPendingRef.current = false;
           setTimelineExpanded(false);
           setLastSentEvent("");
@@ -963,6 +971,30 @@ export default function RuntimeCommander({
                       Follow focus
                     </button>
                   </div>
+                  {runtimeParallelViews.filter((view) => !view.exiting && view.lanes?.length > 1).map((view) => (
+                    <label key={view.key} className="runtime-commander-parallel-focus">
+                      <span>Follow in {view.node.data?.label || "Parallel"}</span>
+                      <select
+                        value={parallelFocus?.parallelKey === view.key ? parallelFocus.laneId : ""}
+                        onChange={(event) => {
+                          const selection = event.target.value
+                            ? { parallelKey: view.key, laneId: event.target.value }
+                            : null;
+                          setParallelFocus(selection);
+                          setFollowCamera(true);
+                          followCameraRef.current = true;
+                          publishOptions({ parallelFocus: selection });
+                        }}
+                      >
+                        <option value="">Whole Parallel</option>
+                        {view.lanes.filter((lane) => lane.id).map((lane, index) => (
+                          <option key={lane.id} value={lane.id}>
+                            {lane.name || `Lane ${index + 1}`}{lane.status === "completed" ? " (completed)" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
                   <div
                     className="runtime-commander-toggle-stack"
                     role="group"

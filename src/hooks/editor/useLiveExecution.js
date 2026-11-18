@@ -8,7 +8,8 @@ import {
   getActiveParallelViews,
   getExitedParallelKeys,
   parallelOf,
-  firstActiveSubMachine,
+  parallelCameraPlan,
+  retainParallelCameraPlan,
 } from "../../utils/runtimeParallelContexts.js";
 
 const EMPTY = [];
@@ -417,12 +418,16 @@ export function useLiveExecution({
     : transition
       ? [transition]
       : EMPTY;
+  const exitedParallelKeys = useMemo(
+    () => getExitedParallelKeys(model, transitions),
+    [model, transitions],
+  );
   const parallelViews = useMemo(() => {
     const snapshot = liveExecution?.snapshot || {};
     return getActiveParallelViews(model, orderedStates, {
       exitingStates: snapshot.exitingStates,
       completedStates: snapshot.finishedStates || snapshot.completedStates,
-      exitedParallelKeys: getExitedParallelKeys(model, snapshot.transitions),
+      exitedParallelKeys,
     });
   }, [
     model,
@@ -431,8 +436,28 @@ export function useLiveExecution({
     liveExecution?.snapshot?.finishedStates,
     liveExecution?.snapshot?.completedStates,
     liveExecution?.snapshot?.transitions,
+    exitedParallelKeys,
   ]);
-  const focusedParallel = parallelViews.find((view) => !view.exiting && view.context.document.tab.id === activeTabId);
+  const visibleById = useMemo(
+    () => new Map(visibleNodes.filter((node) => !node.hidden).map((node) => [node.id, node])),
+    [visibleNodes],
+  );
+  const currentParallelPlan = useMemo(() => parallelCameraPlan(
+    parallelViews, liveExecution?.parallelFocus, activeTabId, (state) => {
+      const matches = model?.states.get(state) || model?.containerStates?.get(state) || EMPTY;
+      if (matches.length !== 1) return EMPTY;
+      return projectEntry(matches[0], activeTabId, validTabs, visibleById).cameraIds;
+    },
+  ), [parallelViews, liveExecution?.parallelFocus, activeTabId, model, validTabs, visibleById]);
+  const lastParallelPlanRef = useRef({ workflow: null, plan: null });
+  const previousParallelPlan = lastParallelPlanRef.current.workflow === workflow
+    ? lastParallelPlanRef.current.plan : null;
+  const parallelPlan = retainParallelCameraPlan(
+    currentParallelPlan, previousParallelPlan, exitedParallelKeys, orderedStates, model, status,
+  );
+  useLayoutEffect(() => {
+    lastParallelPlanRef.current = { workflow, plan: parallelPlan };
+  }, [workflow, parallelPlan]);
   const activeTransition = useMemo(() => {
     if (!transitions.length || !model || !liveActive) return null;
     const find = (state) => {
@@ -524,7 +549,7 @@ export function useLiveExecution({
   }, [projection.nodes, activeTransition, liveActive, status, liveExecution?.watching, manualReadyNodeIds]);
   const wantsCamera = following && Boolean(liveExecution?.followCamera) && status === "RUNNING";
   const action = liveExecution?.action;
-  const followRef = useRef({ model: null, statesKey: null, enabled: false, pending: null });
+  const followRef = useRef({ model: null, focusKey: null, enabled: false, pending: null });
   const attemptedOpenRef = useRef({
     workflow: null,
     keys: new Set(),
@@ -613,10 +638,27 @@ export function useLiveExecution({
     nav.lastTab = activeTabId;
     const currentStates = orderedStates;
     const activeKeys = new Set(parallelViews.map((view) => view.key));
+    // An unresolved child state during tab hydration is not a Parallel exit.
+    // Keep lane ownership until an explicit exit or a configuration of
+    // entirely resolved states outside every active Parallel proves it ended.
+    const allKnownOutside = currentStates.length > 0 && !activeKeys.size &&
+      currentStates.every((state) => {
+        const matches = model?.states.get(state) || model?.containerStates?.get(state) || EMPTY;
+        return matches.length === 1;
+      });
     for (const key of nav.parallelLocks.keys()) {
-      if (!activeKeys.has(key)) nav.parallelLocks.delete(key);
+      if (exitedParallelKeys.includes(key) || allKnownOutside) nav.parallelLocks.delete(key);
     }
-    if (!activeKeys.size) nav.manualTab = false;
+    if (allKnownOutside) nav.manualTab = false;
+    // The default is always the whole Parallel. Only an explicitly selected
+    // lane may claim automatic navigation into a sibling invocation.
+    const choice = liveExecution?.parallelFocus;
+    const choiceKey = choice ? `${choice.parallelKey}:${choice.laneId}` : "whole";
+    if (nav.choiceKey !== choiceKey) {
+      nav.parallelLocks.clear();
+      nav.choiceKey = choiceKey;
+      nav.manualTab = false;
+    }
     if (!following || !["RUNNING", "PAUSED"].includes(status) || suspendFollow || !rootValid || !model) return;
     // Historical snapshot navigation is explicit. Never re-open a child or
     // return to a Parallel lane while the user is inspecting an older frame.
@@ -625,9 +667,11 @@ export function useLiveExecution({
     // When the followed invocation has finished, return to its Parallel.
     // Do NOT jump to a different lane, and do not override manual tabs.
     for (const [key, suffix] of nav.parallelLocks) {
-      if (!automaticNavigation || nav.manualTab || currentStates.some((state) => state.length > suffix.length && state.endsWith(suffix)))
-        continue;
       const owner = parallelViews.find((view) => view.key === key);
+      const selectedLaneDone = owner?.lanes.find((lane) => lane.id === choice?.laneId)?.finished;
+      if (!automaticNavigation || nav.manualTab ||
+          (!selectedLaneDone && currentStates.some((state) => state.length > suffix.length && state.endsWith(suffix))))
+        continue;
       if (owner && !owner.exiting && activeTabId !== owner.context.document.tab.id && switchTab) {
         nav.expectedTab = owner.context.document.tab.id;
         switchTab(nav.expectedTab);
@@ -649,8 +693,17 @@ export function useLiveExecution({
           runnerId(view.node.data?.scxmlStateId || view.node.data?.label || view.node.id) + view.context.suffix;
         const index = history.findLastIndex((item) => runnerId(item.state) === label);
         const candidates = (index < 0 ? history : history.slice(index + 1)).map((item) => runnerId(item.state));
-        const first = firstActiveSubMachine(model, candidates.length ? candidates : currentStates, view.key);
-        if (first) nav.parallelLocks.set(view.key, first.wrapper.suffix);
+        if (choice?.parallelKey !== view.key) continue;
+        // The first active invocation is not necessarily in the selected
+        // lane; selecting another lane must never follow this one instead.
+        const selected = (candidates.length ? candidates : currentStates).flatMap((state) =>
+          model.wrappers.filter((wrapper) =>
+            state.length > wrapper.suffix.length && state.endsWith(wrapper.suffix) &&
+            parallelOf(wrapper.context, wrapper.group.id)?.key === view.key &&
+            parallelOf(wrapper.context, wrapper.group.id)?.lane?.id === choice.laneId,
+          ),
+        )[0];
+        if (selected) nav.parallelLocks.set(view.key, selected.suffix);
       }
       // Allow the same wrapper to auto-open again on a later invocation.
       const activeWrapperKeys = new Set(model.wrappers.filter((wrapper) =>
@@ -728,6 +781,7 @@ export function useLiveExecution({
     statesKey,
     wantsCamera,
     liveExecution?.autoOpenSubMachines,
+    liveExecution?.parallelFocus,
     liveExecution?.watching,
     liveExecution?.autoExpandCompounds,
     liveExecution?.autoExpandParallels,
@@ -736,6 +790,7 @@ export function useLiveExecution({
     onOpenSubMachine,
     onExpandContainer,
     parallelViews,
+    exitedParallelKeys,
     switchTab,
   ]);
 
@@ -743,14 +798,17 @@ export function useLiveExecution({
     const follow = followRef.current;
     // Model identity can change when the editor graph moves or a tab updates;
     // that is not a state transition and must never recenter the viewport.
-    const changed = follow.workflow !== workflow || follow.statesKey !== statesKey;
+    // Parallel camera identity remains stable while sibling lanes execute.
+    // Following a particular lane changes only when THAT lane changes.
+    const focusKey = parallelPlan?.key || `states:${statesKey}`;
+    const changed = follow.workflow !== workflow || follow.focusKey !== focusKey;
     // Explicit historical snapshot focus must also work when the active state
     // did not change (or when the editor camera was moved manually).
     const requested = follow.focusRequest !== liveExecution?.focusRequest;
     // Resume/toggling Run options must not recenter a manually moved viewport.
     follow.workflow = workflow;
     follow.model = model;
-    follow.statesKey = statesKey;
+    follow.focusKey = focusKey;
     follow.enabled = wantsCamera;
     follow.action = action;
     follow.focusRequest = liveExecution?.focusRequest;
@@ -806,18 +864,18 @@ export function useLiveExecution({
     // states remaining in the child. In that case projectLive() falls back
     // to the root, but the transition still belongs to the open sub-SM.
     // Focus its resolved source/target here instead of switching tabs.
-    if (!parallelViews.length && !activeTransition?.cameraIds.length &&
+    if (!parallelPlan && !activeTransition?.cameraIds.length &&
         projection.targetTabId && projection.targetTabId !== activeTabId && switchTab) {
       schedule(() => {
         request.expectedTabId = projection.targetTabId;
         switchTab(projection.targetTabId);
       });
-    } else if ((focusedParallel || activeTransition?.cameraIds.length || projection.cameraIds.length) && fitView) {
+    } else if ((parallelPlan?.cameraIds.length || (!parallelPlan && (activeTransition?.cameraIds.length || projection.cameraIds.length))) && fitView) {
       if (isCanvasPlacementReady && !isCanvasPlacementReady(identity)) return undefined;
       const fit = () => {
         follow.pending = null;
-        const ids = focusedParallel
-          ? [focusedParallel.node.id]
+        const ids = parallelPlan
+          ? parallelPlan.cameraIds
           : activeTransition?.cameraIds.length
             ? activeTransition.cameraIds
             : projection.cameraIds;
@@ -850,8 +908,8 @@ export function useLiveExecution({
     fitView,
     switchTab,
     getActiveDocumentIdentity,
-    focusedParallel?.key,
-    parallelViews.length,
+    parallelPlan?.key,
+    parallelPlan?.cameraIds,
     canvasReadyIdentity,
     isCanvasPlacementReady,
   ]);
